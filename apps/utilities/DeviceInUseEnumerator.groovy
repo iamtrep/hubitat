@@ -300,7 +300,7 @@ String buildReport(List<Map> devs, Map refs, Map parents, Map opts) {
 
     StringBuilder sb = new StringBuilder()
     if (opts.loopback) {
-        sb << "<div style='padding:6px;margin-bottom:8px;border:1px solid #c80;border-radius:4px'>"
+        sb << "<div style='padding:6px;margin-bottom:8px;border:1px solid var(--hubitat-warning-color, #8a5a00);border-radius:4px'>"
         sb << "Using the slower loopback method (${esc(opts.reason as String)}). "
         sb << "App-type namespaces and mobile dashboards are not shown.</div>"
     }

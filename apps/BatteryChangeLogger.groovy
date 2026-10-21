@@ -52,7 +52,7 @@ Map mainPage() {
                 title: "Battery increase threshold (%)",
                 description: "Treat a battery level increase of at least this amount as a replacement",
                 required: true, defaultValue: 20, range: "1..99"
-            paragraph "<span style='color:red'>EXPERIMENTAL</span>"
+            paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f)'>EXPERIMENTAL</span>"
             input "updateDeviceNotes", "bool",
                 title: "Update device notes on replacement",
                 description: "Append a timestamped entry to the device's Notes field when a replacement is detected",
@@ -81,10 +81,10 @@ Map mainPage() {
             }
             section("Replacement History", hideable: true, hidden: false) {
                 // Summary table: one row per device, latest entry only
-                String td = "style='border:1px solid #999;padding:4px 8px'"
-                String tdC = "style='border:1px solid #999;padding:4px 8px;text-align:center'"
+                String td = "style='border:1px solid var(--surface-border);padding:4px 8px'"
+                String tdC = "style='border:1px solid var(--surface-border);padding:4px 8px;text-align:center'"
                 String table = "<table style='border-collapse:collapse;width:100%'>" +
-                    "<thead><tr style='background:#ddd'>" +
+                    "<thead><tr style='background:var(--surface-200)'>" +
                     "<th ${td}>Device</th><th ${td}>Last Changed</th>" +
                     "<th ${tdC}>Prev</th><th ${tdC}>New</th><th ${tdC}>Notes</th>" +
                     "</tr></thead><tbody>"
@@ -145,10 +145,10 @@ Map historyPage() {
             String deviceLabel = (entries[0].label ?: deviceId) as String
             section(deviceLabel) {
                 paragraph "<a href='/device/edit/${deviceId}'>Open device page</a>"
-                String td = "style='border:1px solid #999;padding:4px 8px'"
-                String tdC = "style='border:1px solid #999;padding:4px 8px;text-align:center'"
+                String td = "style='border:1px solid var(--surface-border);padding:4px 8px'"
+                String tdC = "style='border:1px solid var(--surface-border);padding:4px 8px;text-align:center'"
                 String table = "<table style='border-collapse:collapse;width:100%'>" +
-                    "<thead><tr style='background:#ddd'>" +
+                    "<thead><tr style='background:var(--surface-200)'>" +
                     "<th ${td}>Date</th><th ${tdC}>Prev</th><th ${tdC}>New</th><th ${tdC}>Notes</th>" +
                     "</tr></thead><tbody>"
                 entries.each { entry ->

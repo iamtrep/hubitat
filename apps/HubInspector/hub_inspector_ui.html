@@ -14,23 +14,45 @@ SPDX-License-Identifier: MIT
 <link rel="apple-touch-icon" sizes="180x180" href="/ui2/images/apple-touch-icon.png">
 <link rel="mask-icon" href="/ui2/images/safari-pinned-tab.svg" color="#5bbad5">
 <script>if(window.REPORT_DATA)document.documentElement.classList.add('report-mode')</script>
+<script>
+// Follow the hub UI theme, which the hub keeps in this origin's localStorage (absent on firmware without dark mode).
+(function(){
+  const apply=v=>{document.documentElement.dataset.hubitatTheme=v==='dark'?'dark':'light'};
+  try{apply(localStorage.getItem('hubitat-ui-theme'))}catch(e){apply(null)}
+  addEventListener('storage',e=>{if(e.key==='hubitat-ui-theme')apply(e.newValue)});
+})();
+</script>
 <style>
-:root { --primary:#1A77C9; --link:#1A77C9; --ok:#388e3c; --warn:#ff9800; --crit:#d32f2f; --bg:#f5f5f5; --card:#fff; --border:#ddd; --text:#333; --muted:#777; --alt:#f9f9f9; --hover:#e3f2fd; --lqi-poor:#d32f2f; --lqi-marginal:#f57c00; --lqi-acceptable:#fbc02d; --lqi-good:#7cb342; --lqi-excellent:#388e3c; }
+:root { --primary:#1A77C9; --link:#1A77C9; --ok:#388e3c; --warn:#ff9800; --crit:#d32f2f; --bg:#f5f5f5; --card:#fff; --border:#ddd; --text:#333; --muted:#777; --alt:#f9f9f9; --hover:#e3f2fd; --lqi-poor:#d32f2f; --lqi-marginal:#f57c00; --lqi-acceptable:#fbc02d; --lqi-good:#7cb342; --lqi-excellent:#388e3c;
+  --on-primary:#fff; --primary-hover:#1565a7; --primary-disabled:#90caf9; --row-line:#eee; --summary-hover:#f0f0f0; --shadow:rgba(0,0,0,.08); --shadow-strong:rgba(0,0,0,.15);
+  --ok-bg:#e8f5e9; --warn-bg:#fff3e0; --warn-text:#e65100; --crit-bg:#ffebee; --crit-bg-hover:#ffcdd2; --muted-bg:#eee; --info:#1976d2; --info-bg:#e3f2fd; --info-text:#0d47a1;
+  --banner-bg:#fff3cd; --banner-text:#856404; --banner-border:#ffc107;
+  --tag-builtin-bg:#e8eaf6; --tag-builtin:#3949ab; --tag-community-bg:#fce4ec; --tag-community:#c62828; --tag-platform-bg:#f3e8ff; --tag-platform:#7c3aed;
+  --menu-auto-bg:#dbeafe; --menu-auto:#1e40af; --menu-integ-bg:#d1fae5; --menu-integ:#065f46; --menu-apps-bg:#ede9fe; --menu-apps:#5b21b6;
+  --chart-grid:#eee; --chart-axis:#bbb; --chart-line:#666; --chart-text:#888; --chart-text-strong:#555; --chart-series:#1A77C9; --chart-temp:#C0392B; --chart-live:#e3f2fd; --chart-band:rgba(0,0,0,.07); --chart-hatch:#ccc; --track:#e6e6e6; }
+/* Dark palette follows the hub's dark theme; the script above sets data-hubitat-theme. */
+:root[data-hubitat-theme="dark"] { color-scheme:dark; --link:#75baf5; --ok:#bbdc94; --warn:#ffd773; --crit:#ffb4ab; --bg:#121212; --card:#1e1e1e; --border:rgba(255,255,255,.12); --text:rgba(255,255,255,.87); --muted:rgba(255,255,255,.6); --alt:#262626; --hover:rgba(117,186,245,.14);
+  --primary-hover:#2a87d9; --primary-disabled:#3a5a78; --row-line:rgba(255,255,255,.06); --summary-hover:rgba(255,255,255,.06); --shadow:rgba(0,0,0,.5); --shadow-strong:rgba(0,0,0,.6);
+  --ok-bg:rgba(187,220,148,.14); --warn-bg:rgba(255,215,115,.14); --warn-text:#ffd773; --crit-bg:rgba(255,180,171,.14); --crit-bg-hover:rgba(255,180,171,.24); --muted-bg:rgba(255,255,255,.08); --info:#75baf5; --info-bg:rgba(117,186,245,.12); --info-text:#b6dafa;
+  --banner-bg:rgba(255,215,115,.14); --banner-text:#ffd773; --banner-border:rgba(255,215,115,.4);
+  --tag-builtin-bg:rgba(159,168,218,.16); --tag-builtin:#9fa8da; --tag-community-bg:rgba(244,143,177,.16); --tag-community:#f48fb1; --tag-platform-bg:rgba(196,181,253,.16); --tag-platform:#c4b5fd;
+  --menu-auto-bg:rgba(147,197,253,.16); --menu-auto:#93c5fd; --menu-integ-bg:rgba(110,231,183,.16); --menu-integ:#6ee7b7; --menu-apps-bg:rgba(196,181,253,.16); --menu-apps:#c4b5fd;
+  --chart-grid:rgba(255,255,255,.08); --chart-axis:rgba(255,255,255,.25); --chart-line:rgba(255,255,255,.4); --chart-text:rgba(255,255,255,.55); --chart-text-strong:rgba(255,255,255,.8); --chart-series:#75baf5; --chart-temp:#ff8a80; --chart-live:rgba(117,186,245,.12); --chart-band:rgba(255,255,255,.07); --chart-hatch:rgba(255,255,255,.25); --track:#333; }
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:14px}
-a{color:var(--primary);text-decoration:none} a:hover{text-decoration:underline}
+a{color:var(--link);text-decoration:none} a:hover{text-decoration:underline}
 
-.hdr{background:var(--primary);color:#fff;padding:10px 20px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:100;box-shadow:0 2px 4px rgba(0,0,0,.15)}
+.hdr{background:var(--primary);color:#fff;padding:10px 20px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:100;box-shadow:0 2px 4px var(--shadow-strong)}
 .hdr h1{font-size:17px;font-weight:600} .hdr .info{margin-left:auto;font-size:12px;opacity:.85}
 
-.tabs{display:flex;background:#fff;border-bottom:2px solid var(--border);overflow-x:auto;position:sticky;top:42px;z-index:99}
+.tabs{display:flex;background:var(--card);border-bottom:2px solid var(--border);overflow-x:auto;position:sticky;top:42px;z-index:99}
 .tab{padding:9px 16px;cursor:pointer;font-size:13px;font-weight:500;border-bottom:3px solid transparent;white-space:nowrap;color:var(--muted);transition:all .15s}
-.tab:hover{color:var(--text);background:var(--alt)} .tab.active{color:var(--primary);border-bottom-color:var(--primary)}
+.tab:hover{color:var(--text);background:var(--alt)} .tab.active{color:var(--link);border-bottom-color:var(--primary)}
 
 .content{max-width:1400px;margin:0 auto;padding:16px}
 .panel{display:none} .panel.active{display:block}
 
-.card{background:var(--card);border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:14px;overflow:hidden}
+.card{background:var(--card);border-radius:8px;box-shadow:0 1px 3px var(--shadow);margin-bottom:14px;overflow:hidden}
 .card-h{padding:10px 14px;font-size:13px;font-weight:600;border-bottom:1px solid var(--border);background:var(--alt)}
 .card-b{padding:14px}
 .hub-lnk{float:right;font-size:12px;font-weight:500}
@@ -41,49 +63,49 @@ a{color:var(--primary);text-decoration:none} a:hover{text-decoration:underline}
 
 .pills{display:flex;flex-wrap:wrap;gap:6px}
 .pill{padding:5px 12px;border-radius:14px;font-size:12px;font-weight:500;background:var(--hover)}
-.pill b{color:var(--primary);margin-left:4px}
+.pill b{color:var(--link);margin-left:4px}
 
 .tbl-wrap{overflow-x:auto}
 table{width:100%;border-collapse:collapse;font-size:13px}
-th{background:var(--primary);color:#fff;padding:7px 9px;text-align:left;cursor:pointer;white-space:nowrap;user-select:none;position:sticky;top:0}
-th:hover{background:#1565a7} th .arr{font-size:9px;margin-left:3px;opacity:.6}
-td{padding:6px 9px;border-bottom:1px solid #eee}
+th{background:var(--primary);color:var(--on-primary);padding:7px 9px;text-align:left;cursor:pointer;white-space:nowrap;user-select:none;position:sticky;top:0}
+th:hover{background:var(--primary-hover)} th .arr{font-size:9px;margin-left:3px;opacity:.6}
+td{padding:6px 9px;border-bottom:1px solid var(--row-line)}
 tr:nth-child(even){background:var(--alt)} tr:hover{background:var(--hover)}
 
 .badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
-.b-ok{background:#e8f5e9;color:var(--ok)} .b-warn{background:#fff3e0;color:var(--warn)} .b-crit{background:#ffebee;color:var(--crit)} .b-muted{background:#eeeeee;color:var(--muted)}
+.b-ok{background:var(--ok-bg);color:var(--ok)} .b-warn{background:var(--warn-bg);color:var(--warn)} .b-crit{background:var(--crit-bg);color:var(--crit)} .b-muted{background:var(--muted-bg);color:var(--muted)}
 .badge.clk{cursor:pointer} .badge.clk:hover{filter:brightness(.96);text-decoration:underline}
 @keyframes cardflash{0%{box-shadow:0 0 0 3px var(--primary)}100%{box-shadow:0 0 0 0 transparent}} .card.flash{animation:cardflash 1.4s ease-out}
 /* Clear the sticky header (.hdr 42px + .tabs ~40px) when a pill scrolls a card into view. */
 .card{scroll-margin-top:92px}
-.b-builtin{background:#e8eaf6;color:#3949ab} .b-community{background:#fce4ec;color:#c62828} .b-platform{background:#f3e8ff;color:#7c3aed}
+.b-builtin{background:var(--tag-builtin-bg);color:var(--tag-builtin)} .b-community{background:var(--tag-community-bg);color:var(--tag-community)} .b-platform{background:var(--tag-platform-bg);color:var(--tag-platform)}
 
 .alert{padding:8px 12px;border-radius:6px;margin-bottom:6px;font-size:13px;display:flex;align-items:center;gap:6px}
-.a-crit{background:#ffebee;border-left:4px solid var(--crit);color:var(--crit)}
-.a-warn{background:#fff3e0;border-left:4px solid var(--warn);color:#e65100}
-.a-ok{background:#e8f5e9;border-left:4px solid var(--ok);color:var(--ok)}
-.a-info{background:#e3f2fd;border-left:4px solid #1976d2;color:#0d47a1}
+.a-crit{background:var(--crit-bg);border-left:4px solid var(--crit);color:var(--crit)}
+.a-warn{background:var(--warn-bg);border-left:4px solid var(--warn);color:var(--warn-text)}
+.a-ok{background:var(--ok-bg);border-left:4px solid var(--ok);color:var(--ok)}
+.a-info{background:var(--info-bg);border-left:4px solid var(--info);color:var(--info-text)}
 
 .loading{text-align:center;padding:50px 20px;color:var(--muted)}
 .spinner{display:inline-block;width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .8s linear infinite;margin-bottom:8px}
 @keyframes spin{to{transform:rotate(360deg)}}
 .err{text-align:center;padding:30px;color:var(--crit)}
-.err button{margin-top:10px;padding:7px 18px;background:var(--primary);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px}
+.err button{margin-top:10px;padding:7px 18px;background:var(--primary);color:var(--on-primary);border:none;border-radius:4px;cursor:pointer;font-size:13px}
 
 .btn{display:inline-block;padding:7px 14px;border-radius:4px;border:none;cursor:pointer;font-size:13px;font-weight:500;transition:background .15s}
-.btn-p{background:var(--primary);color:#fff} .btn-p:hover{background:#1565a7} .btn-p:disabled{background:#90caf9;cursor:not-allowed}
-.btn-d{background:#ffebee;color:var(--crit)} .btn-d:hover{background:#ffcdd2}
+.btn-p{background:var(--primary);color:var(--on-primary)} .btn-p:hover{background:var(--primary-hover)} .btn-p:disabled{background:var(--primary-disabled);cursor:not-allowed}
+.btn-d{background:var(--crit-bg);color:var(--crit)} .btn-d:hover{background:var(--crit-bg-hover)}
 .btn-s{padding:4px 10px;font-size:12px}
 .share{margin:4px 0 16px} .share-h{display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px} .share-h span{color:var(--muted)}
 .share-bar{display:flex;gap:2px;height:14px;border-radius:7px;overflow:hidden;background:var(--alt)} .share-bar div{min-width:3px}
 .share-lg{display:flex;flex-wrap:wrap;gap:3px 14px;margin-top:6px;font-size:12px} .share-lg i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px} .share-lg em{font-style:normal;color:var(--muted)}
-.share-tip{position:fixed;display:none;pointer-events:none;background:#fff;border:1px solid var(--border);border-radius:4px;box-shadow:0 2px 6px rgba(0,0,0,.15);padding:4px 8px;font-size:12px;z-index:50}
+.share-tip{position:fixed;display:none;pointer-events:none;background:var(--card);border:1px solid var(--border);border-radius:4px;box-shadow:0 2px 6px var(--shadow-strong);padding:4px 8px;font-size:12px;z-index:50}
 .actions{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
 .cfg-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:4px 0}
 .cfg-row label{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
-input[type=number].cfg-n{width:64px;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:13px}
+input[type=number].cfg-n{width:64px;padding:4px 6px;border:1px solid var(--border);background:var(--card);color:var(--text);border-radius:4px;font-size:13px}
 
-.filter input{padding:7px 11px;border:1px solid var(--border);border-radius:4px;font-size:13px;width:280px;max-width:100%;margin-bottom:10px}
+.filter input{padding:7px 11px;border:1px solid var(--border);background:var(--card);color:var(--text);border-radius:4px;font-size:13px;width:280px;max-width:100%;margin-bottom:10px}
 
 .ng{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px}
 .ni{padding:7px 10px;background:var(--alt);border-radius:4px}
@@ -91,34 +113,34 @@ input[type=number].cfg-n{width:64px;padding:4px 6px;border:1px solid var(--borde
 
 .chart-wrap{overflow-x:auto;margin:8px 0}
 
-details{margin:8px 0} summary{cursor:pointer;font-weight:600;font-size:13px;padding:6px 0;color:var(--primary)}
+details{margin:8px 0} summary{cursor:pointer;font-weight:600;font-size:13px;padding:6px 0;color:var(--link)}
 
-select{padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-size:13px;margin-right:8px}
+select{padding:6px 10px;border:1px solid var(--border);background:var(--card);color:var(--text);border-radius:4px;font-size:13px;margin-right:8px}
 
 .diff-add{color:var(--ok)} .diff-rem{color:var(--crit)} .diff-chg{color:var(--warn)} .diff-item{margin:2px 0 2px 16px}
 .pill-menu{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:500}
-.pill-auto{background:#dbeafe;color:#1e40af} .pill-integ{background:#d1fae5;color:#065f46} .pill-apps{background:#ede9fe;color:#5b21b6}
+.pill-auto{background:var(--menu-auto-bg);color:var(--menu-auto)} .pill-integ{background:var(--menu-integ-bg);color:var(--menu-integ)} .pill-apps{background:var(--menu-apps-bg);color:var(--menu-apps)}
 
 @media(max-width:600px){.hdr .info{display:none}.hdr h1{font-size:15px;white-space:nowrap}.hdr a,.hdr button{margin-left:8px!important}.two-col{grid-template-columns:1fr!important}.metrics{grid-template-columns:repeat(2,1fr)}.tab{padding:7px 10px;font-size:12px}.filter input{width:100%}}
 #p-radio-capture .card button{padding:6px 12px;border-radius:4px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:13px;cursor:pointer}
-#p-radio-capture .card button.btn-primary{background:var(--primary);border-color:var(--primary);color:#fff}
+#p-radio-capture .card button.btn-primary{background:var(--primary);border-color:var(--primary);color:var(--on-primary)}
 #p-radio-capture .card button:disabled{opacity:.45;cursor:not-allowed}
 #p-radio-capture .card h3{font-size:13px;font-weight:600}
 .report-only{display:none} .report-mode .report-only{display:inline}
 .report-mode .actions,.report-mode .live-only,.report-mode .hub-lnk,.report-mode .tab[data-tab="config"]{display:none}
-.report-banner{background:#fff3cd;color:#856404;padding:8px 20px;font-size:13px;text-align:center;border-bottom:1px solid #ffc107;position:sticky;top:0;z-index:101}
+.report-banner{background:var(--banner-bg);color:var(--banner-text);padding:8px 20px;font-size:13px;text-align:center;border-bottom:1px solid var(--banner-border);position:sticky;top:0;z-index:101}
 .report-mode .hdr{top:33px}
 
 /* ===== AUDIT MODE — styles not already in the SPA ===== */
-.hdr-audit{background:var(--primary);color:#fff;padding:10px 20px;border-radius:8px 8px 0 0;display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:0}
+.hdr-audit{background:var(--primary);color:var(--on-primary);padding:10px 20px;border-radius:8px 8px 0 0;display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:0}
 .hdr-audit h1{font-size:17px;font-weight:600}.hdr-audit .meta{font-size:12px;opacity:.85;margin-left:auto}
 summary.card-h{cursor:pointer;user-select:none}
 summary.card-h::-webkit-details-marker{color:var(--muted)}
 summary.card-h::marker{color:var(--muted)}
-summary.card-h:hover{background:#f0f0f0}
+summary.card-h:hover{background:var(--summary-hover)}
 details:not([open])>summary.card-h{border-bottom:0}
 table[data-sortable] th{cursor:pointer}
-table[data-sortable] th:hover{background:#1565a7}
+table[data-sortable] th:hover{background:var(--primary-hover)}
 table[data-sortable] th[data-dir] .arr{opacity:1}
 .muted{color:var(--muted)}.warn{color:var(--warn)}.crit{color:var(--crit)}
 </style>
@@ -1020,7 +1042,7 @@ function rcZbDecodeHtml(rawText){
   if(zcl.isZdo){
     lines.push('<b>ZDO message:</b> '+h(zdoName(zcl.cluster))+' (0x'+zcl.cluster+')');
     if(zcl.tsn)lines.push('<b>TSN:</b> 0x'+h(zcl.tsn));
-    if(zcl.truncated)lines.push('<span style="color:var(--warn,#e0a800)">Frame truncated</span>');
+    if(zcl.truncated)lines.push('<span style="color:var(--warn)">Frame truncated</span>');
     const sum=rcZbDecodedSummary(zcl);
     if(sum.full)lines.push('<b>Status:</b> '+h(sum.full.replace(/^Status:\s*/,'')));
   }else{
@@ -1030,7 +1052,7 @@ function rcZbDecodeHtml(rawText){
     if(zcl.disableDefault)parts.push('Default-resp disabled');
     lines.push('<b>Frame control:</b> '+h(fcHex)+' — '+h(parts.join(', ')));
     lines.push('<b>Command:</b> '+h(rcZbDirArrow(zcl)+' '+(resolveCmd(zcl)||'—')));
-    if(zcl.truncated)lines.push('<span style="color:var(--warn,#e0a800)">Frame truncated</span>');
+    if(zcl.truncated)lines.push('<span style="color:var(--warn)">Frame truncated</span>');
     const sum=rcZbDecodedSummary(zcl);
     if(sum.full)lines.push('<b>'+((zcl.global&&zcl.cmd==='0B')?'Default response':'Attributes')+':</b> '+h(sum.full));
   }
@@ -1621,14 +1643,14 @@ function renderZigbeeWifiChart(zbCh,containerId,scan){
     const fill=ol?'rgba(220,60,60,0.25)':std?'rgba(60,180,80,0.12)':'rgba(130,130,130,0.10)';
     const stroke=ol?'rgba(220,60,60,0.6)':std?'rgba(60,180,80,0.4)':'rgba(130,130,130,0.25)';
     svg+=`<rect x="${x1}" y="20" width="${x2-x1}" height="${H-PB-20}" rx="3" fill="${fill}" stroke="${stroke}" stroke-width="0.7"/>`;
-    svg+=`<text x="${(x1+x2)/2}" y="14" text-anchor="middle" fill="${ol?'#dc3c3c':std?'#3cb44c':'#888'}" font-size="10" font-weight="${ol||std?'600':'400'}">W${ch}</text>`});
+    svg+=`<text x="${(x1+x2)/2}" y="14" text-anchor="middle" fill="${ol?'#dc3c3c':std?'#3cb44c':'var(--chart-text)'}" font-size="10" font-weight="${ol||std?'600':'400'}">W${ch}</text>`});
   // All Zigbee channel markers
   for(let ch=11;ch<=26;ch++){const c=2405+5*(ch-11);const cx=x(c);const isCur=ch===zbCh;
     const rec=[15,20,25].includes(ch);
     const fill=isCur?'#2196f3':rec?'rgba(60,180,80,0.7)':'rgba(100,100,100,0.5)';
     const w=isCur?6:3;const ht=isCur?(H-PB-24):rec?(H-PB-34):(H-PB-42);
     svg+=`<rect x="${cx-w/2}" y="${H-PB-ht}" width="${w}" height="${ht}" rx="1" fill="${fill}" opacity="${isCur?1:0.8}"/>`;
-    if(isCur||rec||ch===11||ch===26)svg+=`<text x="${cx}" y="${H-PB+12}" text-anchor="middle" fill="${isCur?'#2196f3':rec?'#3cb44c':'#888'}" font-size="${isCur?'11':'9'}" font-weight="${isCur?'700':'400'}">${ch}</text>`}
+    if(isCur||rec||ch===11||ch===26)svg+=`<text x="${cx}" y="${H-PB+12}" text-anchor="middle" fill="${isCur?'#2196f3':rec?'#3cb44c':'var(--chart-text)'}" font-size="${isCur?'11':'9'}" font-weight="${isCur?'700':'400'}">${ch}</text>`}
   // Scan overlay (v5.12.0): per-channel detected PAN bars stacked side-by-side, height = RSSI strength; drawn after the channel markers so a bar centred on one stays visible
   const scanByChannel={};
   if(scan&&scan.results)scan.results.forEach(r=>{
@@ -1651,13 +1673,13 @@ function renderZigbeeWifiChart(zbCh,containerId,scan){
     });
   });
   // Frequency axis
-  svg+=`<line x1="${PAD}" y1="${H-PB}" x2="${PAD+GW}" y2="${H-PB}" stroke="#666" stroke-width="0.5"/>`;
-  for(let f=2400;f<=2480;f+=10){svg+=`<text x="${x(f)}" y="${H-PB+26}" text-anchor="middle" fill="#888" font-size="9">${f}</text>`}
-  svg+=`<text x="${W/2}" y="${H-2}" text-anchor="middle" fill="#999" font-size="9">MHz</text>`;
+  svg+=`<line x1="${PAD}" y1="${H-PB}" x2="${PAD+GW}" y2="${H-PB}" stroke="var(--chart-line)" stroke-width="0.5"/>`;
+  for(let f=2400;f<=2480;f+=10){svg+=`<text x="${x(f)}" y="${H-PB+26}" text-anchor="middle" fill="var(--chart-text)" font-size="9">${f}</text>`}
+  svg+=`<text x="${W/2}" y="${H-2}" text-anchor="middle" fill="var(--chart-text)" font-size="9">MHz</text>`;
   // Legend
-  svg+=`<rect x="${PAD}" y="${H-PB+30}" width="8" height="8" rx="1" fill="#2196f3"/><text x="${PAD+12}" y="${H-PB+38}" fill="#aaa" font-size="9">Current (${zbCh})</text>`;
-  svg+=`<rect x="${PAD+90}" y="${H-PB+30}" width="8" height="8" rx="1" fill="rgba(60,180,80,0.7)"/><text x="${PAD+102}" y="${H-PB+38}" fill="#aaa" font-size="9">Recommended</text>`;
-  svg+=`<rect x="${PAD+195}" y="${H-PB+30}" width="8" height="8" rx="1" fill="rgba(220,60,60,0.25)" stroke="rgba(220,60,60,0.6)" stroke-width="0.7"/><text x="${PAD+207}" y="${H-PB+38}" fill="#aaa" font-size="9">WiFi overlap</text>`;
+  svg+=`<rect x="${PAD}" y="${H-PB+30}" width="8" height="8" rx="1" fill="#2196f3"/><text x="${PAD+12}" y="${H-PB+38}" fill="var(--chart-text)" font-size="9">Current (${zbCh})</text>`;
+  svg+=`<rect x="${PAD+90}" y="${H-PB+30}" width="8" height="8" rx="1" fill="rgba(60,180,80,0.7)"/><text x="${PAD+102}" y="${H-PB+38}" fill="var(--chart-text)" font-size="9">Recommended</text>`;
+  svg+=`<rect x="${PAD+195}" y="${H-PB+30}" width="8" height="8" rx="1" fill="rgba(220,60,60,0.25)" stroke="rgba(220,60,60,0.6)" stroke-width="0.7"/><text x="${PAD+207}" y="${H-PB+38}" fill="var(--chart-text)" font-size="9">WiFi overlap</text>`;
   svg+='</svg>';
   // Summary text
   const avoid=overlapping.size?[...overlapping].sort((a,b)=>a-b).join(', '):'none';
@@ -1712,9 +1734,9 @@ function renderBarChart(data,containerId,opts={}){
     const c=colors[Math.min(i,colors.length-1)];
     html+=`<div style="display:flex;align-items:center;gap:8px;font-size:12px">`;
     html+=`<div style="width:${opts.labelWidth||140}px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${h(d.label)}">${h(d.label)}</div>`;
-    html+=`<div style="flex:1;height:18px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden">`;
+    html+=`<div style="flex:1;height:18px;background:var(--alt);border-radius:3px;overflow:hidden">`;
     html+=`<div style="width:${barW}%;height:100%;background:${c};border-radius:3px;transition:width 0.3s"></div></div>`;
-    html+=`<div style="width:80px;font-size:11px;color:#aaa">${opts.format?opts.format(d.value):d.value} (${pct}%)</div>`;
+    html+=`<div style="width:80px;font-size:11px;color:var(--chart-text)">${opts.format?opts.format(d.value):d.value} (${pct}%)</div>`;
     html+=`</div>`});
   html+='</div>';
   document.getElementById(containerId).innerHTML=html;
@@ -1781,21 +1803,21 @@ function cloudChart(view,live){
   const S=view.map(segs),tots=S.map(s=>s?s.reduce((t,x)=>t+x.v,0):0);
   const raw=Math.max(4,...tots),mag=Math.pow(10,Math.floor(Math.log10(raw/4))),step=[1,2,5,10].map(m=>m*mag).find(st=>raw/st<=5),max=Math.ceil(raw/step)*step;
   const y=v=>mt+ch-v/max*ch,fmt=ms=>new Date(ms).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),day=ms=>new Date(ms).toLocaleDateString([],{month:'short',day:'numeric'});
-  let g='<defs><pattern id="ccHatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="5" fill="#ccc"/></pattern></defs>';
-  for(let v=0;v<=max;v+=step)g+='<line x1="'+ml+'" x2="'+(W-mr)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="'+(v?'#eee':'#bbb')+'"/><text x="'+(ml-6)+'" y="'+(y(v)+3)+'" font-size="10" fill="#777" text-anchor="end">'+v+'</text>';
-  g+='<text x="'+(ml-6)+'" y="10" font-size="10" fill="#777" text-anchor="end">calls</text>';
+  let g='<defs><pattern id="ccHatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="5" fill="var(--chart-hatch)"/></pattern></defs>';
+  for(let v=0;v<=max;v+=step)g+='<line x1="'+ml+'" x2="'+(W-mr)+'" y1="'+y(v)+'" y2="'+y(v)+'" stroke="'+(v?'var(--chart-grid)':'var(--chart-axis)')+'"/><text x="'+(ml-6)+'" y="'+(y(v)+3)+'" font-size="10" fill="var(--chart-text)" text-anchor="end">'+v+'</text>';
+  g+='<text x="'+(ml-6)+'" y="10" font-size="10" fill="var(--chart-text)" text-anchor="end">calls</text>';
   view.forEach((p,i)=>{
     const x=ml+i*bw+gap/2,w=Math.max(bw-gap,.5),hr=new Date(p.ms).getHours();
-    if(live&&i===n-1)g+='<rect x="'+(ml+i*bw)+'" y="'+mt+'" width="'+bw+'" height="'+ch+'" fill="#e3f2fd"/>';
+    if(live&&i===n-1)g+='<rect x="'+(ml+i*bw)+'" y="'+mt+'" width="'+bw+'" height="'+ch+'" fill="var(--chart-live)"/>';
     if(!S[i]){g+='<rect x="'+x+'" y="'+mt+'" width="'+w+'" height="'+ch+'" fill="url(#ccHatch)"/>';}
     else{let base=0;S[i].forEach((sg,k)=>{const top=y(base+sg.v),hh=y(base)-top-(k<S[i].length-1&&gap?1:0);
       g+='<rect x="'+x+'" y="'+top+'" width="'+w+'" height="'+Math.max(hh,.5)+'" fill="'+sg.a.color+'"'+(k===S[i].length-1&&gap?' rx="1.5"':'')+'/>';base+=sg.v});
-      if(n<=48&&tots[i])g+='<text x="'+(x+w/2)+'" y="'+(y(tots[i])-3)+'" font-size="9" fill="#555" text-anchor="middle">'+tots[i]+'</text>'}
+      if(n<=48&&tots[i])g+='<text x="'+(x+w/2)+'" y="'+(y(tots[i])-3)+'" font-size="9" fill="var(--chart-text-strong)" text-anchor="middle">'+tots[i]+'</text>'}
     const lab=hr===0?day(p.ms):(n<=24&&hr%3===0)||(n<=48&&hr%6===0)?fmt(p.ms):null;
-    if(lab&&(n<=48||hr===0)&&(n<=200||new Date(p.ms).getDate()%3===1))g+='<line x1="'+(ml+i*bw)+'" x2="'+(ml+i*bw)+'" y1="'+(mt+ch)+'" y2="'+(mt+ch+4)+'" stroke="#bbb"/><text x="'+(ml+i*bw)+'" y="'+(H-6)+'" font-size="10" fill="#777" text-anchor="middle"'+(hr===0?' font-weight="600"':'')+'>'+lab+'</text>';
+    if(lab&&(n<=48||hr===0)&&(n<=200||new Date(p.ms).getDate()%3===1))g+='<line x1="'+(ml+i*bw)+'" x2="'+(ml+i*bw)+'" y1="'+(mt+ch)+'" y2="'+(mt+ch+4)+'" stroke="var(--chart-axis)"/><text x="'+(ml+i*bw)+'" y="'+(H-6)+'" font-size="10" fill="var(--chart-text)" text-anchor="middle"'+(hr===0?' font-weight="600"':'')+'>'+lab+'</text>';
   });
-  g+='<rect id="ccBand" y="'+mt+'" width="'+bw+'" height="'+ch+'" fill="rgba(0,0,0,.07)" visibility="hidden" pointer-events="none"/><rect id="ccHit" x="'+ml+'" y="'+mt+'" width="'+(W-ml-mr)+'" height="'+ch+'" fill="transparent"/>';
-  el.innerHTML='<svg width="'+W+'" height="'+H+'" style="display:block;font-family:inherit">'+g+'</svg><div id="ccTip" style="position:absolute;display:none;pointer-events:none;background:#fff;border:1px solid var(--border);border-radius:4px;box-shadow:0 2px 6px rgba(0,0,0,.15);padding:6px 8px;font-size:12px;white-space:nowrap;z-index:5"></div>';
+  g+='<rect id="ccBand" y="'+mt+'" width="'+bw+'" height="'+ch+'" fill="var(--chart-band)" visibility="hidden" pointer-events="none"/><rect id="ccHit" x="'+ml+'" y="'+mt+'" width="'+(W-ml-mr)+'" height="'+ch+'" fill="transparent"/>';
+  el.innerHTML='<svg width="'+W+'" height="'+H+'" style="display:block;font-family:inherit">'+g+'</svg><div id="ccTip" style="position:absolute;display:none;pointer-events:none;background:var(--card);border:1px solid var(--border);border-radius:4px;box-shadow:0 2px 6px rgba(0,0,0,.15);padding:6px 8px;font-size:12px;white-space:nowrap;z-index:5"></div>';
   const hit=document.getElementById('ccHit'),band=document.getElementById('ccBand'),tip=document.getElementById('ccTip');
   hit.onmousemove=e=>{
     const r=el.getBoundingClientRect(),i=Math.min(n-1,Math.max(0,Math.floor((e.clientX-r.left-ml)/bw))),p=view[i];
@@ -1972,17 +1994,17 @@ function renderChart(pts,cid,range){
   let timeLabels='',lastDate='';
   viewPts.forEach((p,i)=>{
     const px=xp(i);const parts=p.time.split(' ');const date=parts[0]||'';const time=parts[1]||'';
-    if(date!==lastDate&&lastDate){timeLabels+=`<line x1="${px}" y1="${mt}" x2="${px}" y2="${mt+ch}" stroke="#ccc" stroke-dasharray="4"/><text x="${px}" y="${mt+ch+14}" font-size="9" fill="#999" text-anchor="middle">${date}</text>`}
+    if(date!==lastDate&&lastDate){timeLabels+=`<line x1="${px}" y1="${mt}" x2="${px}" y2="${mt+ch}" stroke="var(--chart-axis)" stroke-dasharray="4"/><text x="${px}" y="${mt+ch+14}" font-size="9" fill="var(--chart-text)" text-anchor="middle">${date}</text>`}
     lastDate=date;
-    if(i%(Math.floor(viewPts.length/8)||1)===0){timeLabels+=`<text x="${px}" y="${mt+ch+24}" font-size="8" fill="#bbb" text-anchor="middle">${time}</text>`}
+    if(i%(Math.floor(viewPts.length/8)||1)===0){timeLabels+=`<text x="${px}" y="${mt+ch+24}" font-size="8" fill="var(--chart-text)" text-anchor="middle">${time}</text>`}
   });
   let yLabels='';const steps=5;
   for(let i=0;i<=steps;i++){
     const v=maxOS*i/steps;const y=yOS(v);
-    yLabels+=`<line x1="${ml}" y1="${y}" x2="${w-mr}" y2="${y}" stroke="#eee"/><text x="${ml-4}" y="${y+4}" font-size="9" fill="#999" text-anchor="end">${(v/1024).toFixed(0)}</text>`;
+    yLabels+=`<line x1="${ml}" y1="${y}" x2="${w-mr}" y2="${y}" stroke="var(--chart-grid)"/><text x="${ml-4}" y="${y+4}" font-size="9" fill="var(--chart-text)" text-anchor="end">${(v/1024).toFixed(0)}</text>`;
     const cv=maxCpu*i/steps;const cy=yCPU(cv);
     yLabels+=`<text x="${w-mr+4}" y="${cy+4}" font-size="9" fill="var(--warn)">${cv.toFixed(1)}</text>`;
-    if(hasT){const tu=tLo+(tHi-tLo)*i/steps;yLabels+=`<text x="${w-mr+34}" y="${mt+ch-ch*i/steps+4}" font-size="9" fill="#C0392B">${tu}</text>`}
+    if(hasT){const tu=tLo+(tHi-tLo)*i/steps;yLabels+=`<text x="${w-mr+34}" y="${mt+ch-ch*i/steps+4}" font-size="9" fill="var(--chart-temp)">${tu}</text>`}
   }
   const infoBar=isZoomed
     ?`<button class="btn btn-s btn-p" id="${cid}_reset" style="margin-right:8px">Reset Zoom</button><span style="font-size:11px;color:var(--muted)">${viewPts.length} of ${pts.length} samples &mdash; ${viewPts[0].time} to ${viewPts[viewPts.length-1].time}</span>`
@@ -1991,21 +2013,21 @@ function renderChart(pts,cid,range){
     ${yLabels}${timeLabels}
     <line x1="${ml}" y1="${warnY}" x2="${w-mr}" y2="${warnY}" stroke="var(--warn)" stroke-dasharray="6" opacity=".5"/>
     <line x1="${ml}" y1="${critY}" x2="${w-mr}" y2="${critY}" stroke="var(--crit)" stroke-dasharray="6" opacity=".5"/>
-    <polyline points="${osLine}" fill="none" stroke="#1A77C9" stroke-width="2"/>
+    <polyline points="${osLine}" fill="none" stroke="var(--chart-series)" stroke-width="2"/>
     <polyline points="${javaLine}" fill="none" stroke="var(--ok)" stroke-width="1.5" opacity=".7"/>
     <polyline points="${cpuLine}" fill="none" stroke="var(--warn)" stroke-width="1.5" opacity=".7"/>
-    ${hasT?`<path d="${tPath}" fill="none" stroke="#C0392B" stroke-width="1.5" opacity=".8"/>`:''}
-    <text x="${ml-4}" y="${mt-4}" font-size="9" fill="#999" text-anchor="end">MB</text>
+    ${hasT?`<path d="${tPath}" fill="none" stroke="var(--chart-temp)" stroke-width="1.5" opacity=".8"/>`:''}
+    <text x="${ml-4}" y="${mt-4}" font-size="9" fill="var(--chart-text)" text-anchor="end">MB</text>
     <text x="${w-mr+4}" y="${mt-4}" font-size="9" fill="var(--warn)">CPU</text>
-    ${hasT?`<text x="${w-mr+34}" y="${mt-4}" font-size="9" fill="#C0392B">${tSym()}</text>`:''}
+    ${hasT?`<text x="${w-mr+34}" y="${mt-4}" font-size="9" fill="var(--chart-temp)">${tSym()}</text>`:''}
     <rect id="${cid}_sel" x="0" y="${mt}" width="0" height="${ch}" fill="rgba(33,150,243,0.15)" stroke="rgba(33,150,243,0.5)" stroke-width="1" visibility="hidden" pointer-events="none"/>
     <rect x="${ml}" y="${mt}" width="${w-ml-mr}" height="${ch}" fill="transparent" id="${cid}_hover" style="cursor:crosshair"/>
   </svg></div>
   <div style="display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:8px;font-size:12px;color:var(--muted)">
-    <span><span style="display:inline-block;width:16px;height:3px;background:#1A77C9;vertical-align:middle;margin-right:5px;border-radius:1px"></span>Free OS (MB)</span>
+    <span><span style="display:inline-block;width:16px;height:3px;background:var(--chart-series);vertical-align:middle;margin-right:5px;border-radius:1px"></span>Free OS (MB)</span>
     <span><span style="display:inline-block;width:16px;height:3px;background:var(--ok);vertical-align:middle;margin-right:5px;border-radius:1px"></span>Free Java (MB)</span>
     <span><span style="display:inline-block;width:16px;height:3px;background:var(--warn);vertical-align:middle;margin-right:5px;border-radius:1px"></span>CPU Load</span>
-    ${hasT?`<span><span style="display:inline-block;width:16px;height:3px;background:#C0392B;vertical-align:middle;margin-right:5px;border-radius:1px"></span>Hub temp (${tSym()})</span>`:''}
+    ${hasT?`<span><span style="display:inline-block;width:16px;height:3px;background:var(--chart-temp);vertical-align:middle;margin-right:5px;border-radius:1px"></span>Hub temp (${tSym()})</span>`:''}
   </div>
   <div style="margin-top:6px;display:flex;align-items:center;flex-wrap:wrap;gap:4px">${infoBar}</div>`;
   el.innerHTML=svg;
@@ -2013,8 +2035,8 @@ function renderChart(pts,cid,range){
   if(isZoomed){const rb=document.getElementById(cid+'_reset');if(rb)rb.onclick=()=>renderChart(pts,cid)}
   const svgEl=el.querySelector('svg');const hover=document.getElementById(cid+'_hover');const selRect=document.getElementById(cid+'_sel');
   if(hover&&svgEl){
-    const tip=document.createElementNS('http://www.w3.org/2000/svg','text');tip.setAttribute('visibility','hidden');tip.setAttribute('font-size','10');tip.setAttribute('fill','#333');tip.setAttribute('pointer-events','none');svgEl.appendChild(tip);
-    const vline=document.createElementNS('http://www.w3.org/2000/svg','line');vline.setAttribute('y1',mt);vline.setAttribute('y2',mt+ch);vline.setAttribute('stroke','#666');vline.setAttribute('visibility','hidden');vline.setAttribute('pointer-events','none');svgEl.appendChild(vline);
+    const tip=document.createElementNS('http://www.w3.org/2000/svg','text');tip.setAttribute('visibility','hidden');tip.setAttribute('font-size','10');tip.setAttribute('fill','var(--text)');tip.setAttribute('pointer-events','none');svgEl.appendChild(tip);
+    const vline=document.createElementNS('http://www.w3.org/2000/svg','line');vline.setAttribute('y1',mt);vline.setAttribute('y2',mt+ch);vline.setAttribute('stroke','var(--chart-line)');vline.setAttribute('visibility','hidden');vline.setAttribute('pointer-events','none');svgEl.appendChild(vline);
     let dragging=false,dragStartSvgX=0;
     function svgXfromEvent(e){const r=svgEl.getBoundingClientRect();return(e.clientX-r.left)*(w/r.width)}
     function pxToIdx(svgX){return Math.max(0,Math.min(viewPts.length-1,Math.round((svgX-ml)/ppx)))}
@@ -2068,11 +2090,11 @@ function computeResRanges(hh){
 // Range bar: since-restart band, current-value dot (severity color), warning/critical ticks.
 function resBar(cur,band,w,c,min,max,low){
   const pc=v=>Math.max(0,Math.min(100,(v-min)/((max-min)||1)*100));
-  let b='<div style="position:relative;height:8px;background:#e6e6e6;border-radius:4px;margin:10px 0 4px">';
+  let b='<div style="position:relative;height:8px;background:var(--track);border-radius:4px;margin:10px 0 4px">';
   if(band)b+=`<div style="position:absolute;left:${pc(band.lo)}%;width:${Math.max(1,pc(band.hi)-pc(band.lo))}%;top:0;bottom:0;background:var(--primary);opacity:.35;border-radius:4px"></div>`;
   b+=`<div title="Warning" style="position:absolute;left:${pc(w)}%;top:-3px;bottom:-3px;width:2px;background:var(--warn)"></div>`;
   b+=`<div title="Critical" style="position:absolute;left:${pc(c)}%;top:-3px;bottom:-3px;width:2px;background:var(--crit)"></div>`;
-  if(cur!=null)b+=`<div style="position:absolute;left:calc(${pc(cur)}% - 6px);top:-3px;width:12px;height:12px;border-radius:50%;background:${sev(cur,w,c,low)};border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.25);box-sizing:border-box"></div>`;
+  if(cur!=null)b+=`<div style="position:absolute;left:calc(${pc(cur)}% - 6px);top:-3px;width:12px;height:12px;border-radius:50%;background:${sev(cur,w,c,low)};border:2px solid var(--card);box-shadow:0 0 0 1px var(--chart-axis);box-sizing:border-box"></div>`;
   return b+'</div>'}
 function resTile(label,val,col,bar,lines){
   return `<div class="m" style="padding:12px 14px"><div class="m-l">${label}</div><div class="m-v" style="color:${col}">${val??'N/A'}</div>${bar}`+
@@ -2322,9 +2344,9 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
       const markdown=buildForumMarkdown(assembleForumData(results));
       btnForum.disabled=false;btnForum.textContent='Copy for Forum';
       const overlay=document.createElement('div');overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:flex;align-items:center;justify-content:center';
-      const box=document.createElement('div');box.style.cssText='background:#fff;border-radius:8px;padding:16px;width:90%;max-width:700px;max-height:80vh;display:flex;flex-direction:column';
+      const box=document.createElement('div');box.style.cssText='background:var(--card);color:var(--text);border-radius:8px;padding:16px;width:90%;max-width:700px;max-height:80vh;display:flex;flex-direction:column';
       box.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><b>Forum Export</b><span>Select All + Copy, then close</span></div>';
-      const ta=document.createElement('textarea');ta.value=markdown;ta.readOnly=true;ta.style.cssText='width:100%;flex:1;min-height:300px;font-family:monospace;font-size:12px;padding:8px;border:1px solid #ddd;border-radius:4px;resize:vertical';
+      const ta=document.createElement('textarea');ta.value=markdown;ta.readOnly=true;ta.style.cssText='width:100%;flex:1;min-height:300px;font-family:monospace;font-size:12px;padding:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:4px;resize:vertical';
       const closeBtn=document.createElement('button');closeBtn.textContent='Close';closeBtn.className='btn btn-p';closeBtn.style.marginTop='10px';closeBtn.style.alignSelf='flex-end';
       closeBtn.onclick=()=>document.body.removeChild(overlay);
       overlay.onclick=e=>{if(e.target===overlay)document.body.removeChild(overlay)};
@@ -2849,7 +2871,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
     // consequence + fix). When off there's nothing to report; the endpoint table stands alone.
     // Plain divs, NOT the .alert class (display:flex would column-split the text).
     if(d.network&&d.network.restartBonjourOnSchedule){
-      o+='<div style="margin-bottom:10px;padding:8px 12px;border-radius:6px;background:#fff3e0;border-left:4px solid var(--warn);color:#e65100;font-size:12px;line-height:1.5">'
+      o+='<div style="margin-bottom:10px;padding:8px 12px;border-radius:6px;background:var(--warn-bg);border-left:4px solid var(--warn);color:var(--warn-text);font-size:12px;line-height:1.5">'
         +'<div style="font-weight:600;margin-bottom:5px">⚠ Periodic Bonjour restart is ON</div>'
         +'<div style="margin-bottom:5px">Reboots the mDNS responder on a schedule — a known cause of LAN multicast traffic spikes.</div>'
         +'<div>Turn off in the hub\'s '+(HUB_ORIGIN?'<a href="'+HUB_ORIGIN+'/hub/edit" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;font-weight:600">Network Setup</a>':'<b>Network Setup</b>')+' (Bonjour options), unless you need it to recover HomeKit or Hub Mesh connectivity.</div>'
@@ -2977,7 +2999,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
       {l:'PER %',f:'per',t:'n',r:r=>'<span style="color:'+(r.per>1?'var(--crit)':r.per>0?'var(--warn)':'var(--ok)')+'">'+r.per+'%</span>'},
       {l:'Neighbors',f:'neighbors',t:'n'},{l:'Route',f:'route'},{l:'Route Changes',f:'routeChanges',t:'n',r:routeChangesCell},
       {l:'Msgs',f:'msgCount',t:'n'},{l:'Msgs/Min',f:'msgPerMin',t:'n',r:rateCell},
-      {l:'Driver',f:'driverType',r:r=>r.driverType==='usr'?'<span style="color:var(--primary)">User</span>':r.driverType==='sys'?'Built-in':'\u2014'},
+      {l:'Driver',f:'driverType',r:r=>r.driverType==='usr'?'<span style="color:var(--link)">User</span>':r.driverType==='sys'?'Built-in':'\u2014'},
       {l:'State',f:'state',r:r=>'<span style="color:'+(r.state==='OK'?'var(--ok)':'var(--crit)')+'">'+h(r.state)+'</span>'}
     ],d.zwave.mesh.nodes,{sc:0,sd:'asc',collapse:1,collapseLabel:'Z-Wave Mesh Nodes'});
   // Zigbee neighbor detail table
@@ -3619,7 +3641,7 @@ function renderDiff(d,elId){
   let o='<h3>Config Snapshot Comparison</h3>';
   o+='<div style="margin:6px 0"><b>Older:</b> '+h(d.older.timestamp)+' &rarr; <b>Newer:</b> '+h(d.newer.timestamp)+'</div>';
   // Firmware
-  if(d.older.firmware!==d.newer.firmware)o+='<div style="color:var(--primary);margin:4px 0"><b>Firmware:</b> '+h(d.older.firmware)+' &rarr; '+h(d.newer.firmware)+'</div>';
+  if(d.older.firmware!==d.newer.firmware)o+='<div style="color:var(--link);margin:4px 0"><b>Firmware:</b> '+h(d.older.firmware)+' &rarr; '+h(d.newer.firmware)+'</div>';
   // Device changes
   const dc=d.deviceChanges;const dd=dc.newerTotal-dc.olderTotal;
   o+='<div style="margin:8px 0"><b>Devices:</b> '+dc.olderTotal+' &rarr; '+dc.newerTotal+(dd!==0?' <span style="color:'+(dd>0?'var(--ok)':'var(--crit)')+'">('+( dd>0?'+':'')+dd+')</span>':'')+'</div>';
@@ -3834,7 +3856,7 @@ async function rConfig(){const P='p-config';loading(P);try{
   o+=`<label>Temperature critical: <input type="number" id="cfg_critTempC" value="${Math.round(c2u(s.critTempC))}" min="${tScale()==='F'?68:20}" max="${tScale()==='F'?212:100}" class="cfg-n"> ${tSym()}</label>`;
   o+=`</div>`;
   o+=`<div class="cfg-row"><button class="btn btn-p btn-s" id="cfg_saveThresholds">Save</button><span id="cfg_threshStatus" style="font-size:12px;color:var(--ok)"></span>`;
-  o+=`<button class="btn btn-s" id="cfg_showRanges" style="background:var(--hover);color:var(--primary)">Show observed ranges</button></div><div id="cfg_ranges"></div>`;
+  o+=`<button class="btn btn-s" id="cfg_showRanges" style="background:var(--hover);color:var(--link)">Show observed ranges</button></div><div id="cfg_ranges"></div>`;
   o+='</div></div>';
 
   // Maintenance

@@ -84,7 +84,7 @@ Map mainPage() {
         section("Dashboard") {
             if (state.accessToken) {
                 String dashboardUrl = "${getFullLocalApiServerUrl()}/dashboard?access_token=${state.accessToken}"
-                paragraph "<a href='${dashboardUrl}' target='_blank' rel='noopener' style='font-size:1.1em;font-weight:500'>Open Dashboard &#8599;</a><br><small style='color:#888'>Charts, statistics, and full history</small>"
+                paragraph "<a href='${dashboardUrl}' target='_blank' rel='noopener' style='font-size:1.1em;font-weight:500'>Open Dashboard &#8599;</a><br><small style='color:var(--text-color-secondary)'>Charts, statistics, and full history</small>"
             } else {
                 paragraph "<i>Dashboard not available. Enable OAuth in the app code editor and click Done to reinitialize.</i>"
             }
@@ -136,7 +136,7 @@ Map mainPage() {
                 defaultValue: 10, required: true
             if (powerOffThreshold != null && powerOnThreshold != null &&
                     (powerOffThreshold as int) >= (powerOnThreshold as int)) {
-                paragraph "<span style='color:red'>Warning: OFF threshold must be less than ON threshold for reliable detection.</span>"
+                paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f)'>Warning: OFF threshold must be less than ON threshold for reliable detection.</span>"
             }
         }
 
@@ -188,10 +188,10 @@ Map mainPage() {
         section("Pump Cycle History", hideable: true, hidden: false) {
             List<Map> cycleHistory = state.cycleHistory
             if (cycleHistory) {
-                String td = "style='border:1px solid #999;padding:4px 8px'"
-                String tdR = "style='border:1px solid #999;padding:4px 8px;text-align:right'"
+                String td = "style='border:1px solid var(--surface-border);padding:4px 8px'"
+                String tdR = "style='border:1px solid var(--surface-border);padding:4px 8px;text-align:right'"
                 String table = "<table style='border-collapse:collapse;width:100%'>" +
-                    "<thead><tr style='background:#ddd'>" +
+                    "<thead><tr style='background:var(--surface-200)'>" +
                     "<th ${td}>Date/Time</th><th ${tdR}>Duration</th>" +
                     "<th ${tdR}>Coincident Flow</th><th ${tdR}>Coincident Rate</th><th ${tdR}>Tank Usage</th>" +
                     "</tr></thead><tbody>"
@@ -218,10 +218,10 @@ Map mainPage() {
         section("Water Flow History", hideable: true, hidden: false) {
             List<Map> flowHistory = state.flowHistory
             if (flowHistory) {
-                String td = "style='border:1px solid #999;padding:4px 8px'"
-                String tdR = "style='border:1px solid #999;padding:4px 8px;text-align:right'"
+                String td = "style='border:1px solid var(--surface-border);padding:4px 8px'"
+                String tdR = "style='border:1px solid var(--surface-border);padding:4px 8px;text-align:right'"
                 String table = "<table style='border-collapse:collapse;width:100%'>" +
-                    "<thead><tr style='background:#ddd'>" +
+                    "<thead><tr style='background:var(--surface-200)'>" +
                     "<th ${td}>Date/Time</th><th ${tdR}>Duration</th>" +
                     "<th ${tdR}>Volume</th>" +
                     "</tr></thead><tbody>"
@@ -1581,22 +1581,22 @@ private String getStatusText() {
 
     // Pump state
     if (state.pumpRunning) {
-        status.append("<b style='color:red'>PUMP RUNNING</b>")
+        status.append("<b style='color:var(--hubitat-validation-color, #d32f2f)'>PUMP RUNNING</b>")
         if (state.pumpBegin) {
             BigDecimal elapsed = (now() - (state.pumpBegin as long)) / 1000.0
             status.append(" (${fmtDec(elapsed)}s)")
         }
         status.append("<br/>")
     } else {
-        status.append("<b style='color:green'>PUMP IDLE</b><br/>")
+        status.append("<b style='color:var(--hubitat-success-color, #356700)'>PUMP IDLE</b><br/>")
     }
 
     // Flow state
     if (enableFlowTracking != false) {
         if (state.flowActive) {
-            status.append("<b style='color:blue'>WATER FLOWING</b><br/>")
+            status.append("<b style='color:var(--hubitat-link-color, #1a77c9)'>WATER FLOWING</b><br/>")
         } else {
-            status.append("<b style='color:gray'>NO FLOW</b><br/>")
+            status.append("<b style='color:var(--text-color-secondary)'>NO FLOW</b><br/>")
         }
     }
 

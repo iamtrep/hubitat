@@ -166,7 +166,7 @@ private String modalLauncherHtml(String pickerUrl) {
                  "background:rgba(38,50,56,.55);display:flex;align-items:center;justify-content:center;padding:24px';" +
                "var f=document.createElement('iframe');f.src=U;f.title='Tool access';" +
                "f.style.cssText='width:100%;max-width:1100px;height:100%;max-height:780px;border:0;" +
-                 "border-radius:4px;background:#fff;box-shadow:0 18px 48px rgba(0,0,0,.35)';" +
+                 "border-radius:4px;background:var(--surface-card);box-shadow:0 18px 48px rgba(0,0,0,.35)';" +
                "o.appendChild(f);" +
                "o.addEventListener('click',function(e){if(e.target===o)close();});" +
                "document.body.appendChild(o);f.focus();" +
@@ -185,16 +185,16 @@ private String modalLauncherHtml(String pickerUrl) {
 
 private String shuttleHtml(List<String> onList, List<String> offList) {
     return "<div style='display:flex;gap:14px;align-items:stretch;flex-wrap:wrap'>" +
-             boxHtml("On", onList, "#e8f5e9", "#2e7d32", "#37474f", "nothing switched on") +
-             boxHtml("Off", offList, "#eceff1", "#546e7a", "#78909c", "nothing switched off") +
+             boxHtml("On", onList, "color-mix(in srgb, var(--hubitat-success-color, #356700) 12%, transparent)", "var(--hubitat-success-color, #356700)", "var(--text-color)", "nothing switched on") +
+             boxHtml("Off", offList, "var(--surface-100)", "var(--text-color-secondary)", "var(--text-color-secondary)", "nothing switched off") +
            "</div>"
 }
 
 private String boxHtml(String heading, List<String> names, String headBg, String headFg,
                        String rowFg, String emptyText) {
-    return "<div style='flex:1 1 300px;min-width:0;border:1px solid #cfd8dc;border-radius:3px;overflow:hidden'>" +
+    return "<div style='flex:1 1 300px;min-width:0;border:1px solid var(--surface-border);border-radius:3px;overflow:hidden'>" +
              "<div style='display:flex;justify-content:space-between;padding:7px 10px;" +
-                         "background:${headBg};color:${headFg};border-bottom:1px solid #cfd8dc;" +
+                         "background:${headBg};color:${headFg};border-bottom:1px solid var(--surface-border);" +
                          "font-size:12.5px;font-weight:500'>" +
                "<span>${heading}</span><span>${names.size()}</span>" +
              "</div>" +
@@ -206,7 +206,7 @@ private String boxHtml(String heading, List<String> names, String headBg, String
 
 private String itemRows(List<String> names, String rowFg, String emptyText) {
     if (!names) {
-        return "<div style='padding:10px;font-size:12.5px;color:#90a4ae;font-style:italic'>${emptyText}</div>"
+        return "<div style='padding:10px;font-size:12.5px;color:var(--text-color-secondary);font-style:italic'>${emptyText}</div>"
     }
     return names.collect { String name ->
         "<div style='padding:3px 10px;font-family:monospace;font-size:12px;color:${rowFg}'>${name}</div>"

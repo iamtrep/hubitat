@@ -78,7 +78,7 @@ Map mainPage() {
 
             List<Map> orphans = state.orphanedDevices ?: []
             if (orphans.size() > 0) {
-                paragraph "<span style='color:orange'><b>Orphaned devices (${orphans.size()}):</b></span>"
+                paragraph "<span style='color:var(--hubitat-warning-color, #8a5a00)'><b>Orphaned devices (${orphans.size()}):</b></span>"
                 orphans.each { Map orphan ->
                     paragraph "<a href='/device/edit/${orphan.id}' target='_blank'>${orphan.label}</a> (${orphan.dni})"
                 }

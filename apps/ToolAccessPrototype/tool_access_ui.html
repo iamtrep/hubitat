@@ -4,6 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Tool access</title>
+<script>
+// Follow the hub UI theme, which the hub keeps in this origin's localStorage (absent on firmware without dark mode).
+(function(){
+  const apply=v=>{document.documentElement.dataset.hubitatTheme=v==='dark'?'dark':'light'};
+  try{apply(localStorage.getItem('hubitat-ui-theme'))}catch(e){apply(null)}
+  addEventListener('storage',e=>{if(e.key==='hubitat-ui-theme')apply(e.newValue)});
+})();
+</script>
 <style>
   :root {
     --bg: #ffffff;
@@ -17,6 +25,33 @@
     --off-ink: #546e7a;
     --sel: #cfe8d0;
     --link: #1565c0;
+    --control: #fff;
+    --hover: #f5f7f8;
+    --on-line: #a5d6a7;
+    --on-primary: #fff;
+    --dirty: #e65100;
+    --error: #c62828;
+  }
+  /* Dark palette follows the hub's dark theme; the script above sets data-hubitat-theme. */
+  :root[data-hubitat-theme="dark"] {
+    color-scheme: dark;
+    --bg: #1e1e1e;
+    --ink: rgba(255,255,255,.87);
+    --muted: rgba(255,255,255,.6);
+    --line: rgba(255,255,255,.12);
+    --hair: rgba(255,255,255,.06);
+    --on-bg: rgba(187,220,148,.14);
+    --on-ink: #bbdc94;
+    --off-bg: rgba(255,255,255,.06);
+    --off-ink: rgba(255,255,255,.6);
+    --sel: rgba(187,220,148,.24);
+    --link: #75baf5;
+    --control: #262626;
+    --hover: rgba(255,255,255,.06);
+    --on-line: rgba(187,220,148,.4);
+    --on-primary: #121212;
+    --dirty: #ffd773;
+    --error: #ffb4ab;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
@@ -42,15 +77,15 @@
   .tab {
     padding: 6px 14px; min-height: 34px;
     border: 1px solid var(--line); border-radius: 3px;
-    background: #fff; color: var(--off-ink);
+    background: var(--control); color: var(--off-ink);
     font: inherit; font-size: 13px; cursor: pointer;
   }
-  .tab[aria-selected="true"] { background: var(--on-bg); color: var(--on-ink); border-color: #a5d6a7; font-weight: 500; }
+  .tab[aria-selected="true"] { background: var(--on-bg); color: var(--on-ink); border-color: var(--on-line); font-weight: 500; }
   .spacer { flex: 1 1 auto; }
   .icon-btn {
     width: 34px; height: 34px; line-height: 1;
     border: 1px solid var(--line); border-radius: 3px;
-    background: #fff; color: var(--off-ink); font-size: 18px; cursor: pointer;
+    background: var(--control); color: var(--off-ink); font-size: 18px; cursor: pointer;
   }
 
   main { flex: 1 1 auto; min-height: 0; padding: 14px 16px; }
@@ -73,16 +108,16 @@
   .filter {
     flex: 1 1 auto; min-width: 0;
     padding: 7px 9px; font: inherit; font-size: 13px;
-    border: 1px solid var(--line); border-radius: 3px; background: #fff; color: var(--ink);
+    border: 1px solid var(--line); border-radius: 3px; background: var(--control); color: var(--ink);
   }
   .filter:focus { outline: 2px solid var(--link); outline-offset: -1px; }
   .mini {
     padding: 0 9px; min-height: 34px;
     border: 1px solid var(--line); border-radius: 3px;
-    background: #fff; color: var(--off-ink); font: inherit; font-size: 12px; cursor: pointer;
+    background: var(--control); color: var(--off-ink); font: inherit; font-size: 12px; cursor: pointer;
     white-space: nowrap;
   }
-  .mini:hover, .icon-btn:hover, .tab:hover { background: #f5f7f8; }
+  .mini:hover, .icon-btn:hover, .tab:hover { background: var(--hover); }
 
   .list { flex: 1 1 auto; overflow-y: auto; padding: 3px 0; margin: 0; list-style: none; }
   .row {
@@ -91,7 +126,7 @@
     font-family: ui-monospace, "Roboto Mono", Menlo, monospace; font-size: 12px;
     color: var(--ink); cursor: pointer;
   }
-  .row:hover { background: #f5f7f8; }
+  .row:hover { background: var(--hover); }
   .row[aria-pressed="true"] { background: var(--sel); }
   .row:focus-visible { outline: 2px solid var(--link); outline-offset: -2px; }
   .empty { padding: 12px 10px; font-size: 12.5px; color: var(--muted); font-style: italic; }
@@ -103,9 +138,9 @@
   .arrow {
     width: 44px; height: 44px;
     border: 1px solid var(--line); border-radius: 3px;
-    background: #fff; color: var(--off-ink); font-size: 16px; cursor: pointer;
+    background: var(--control); color: var(--off-ink); font-size: 16px; cursor: pointer;
   }
-  .arrow:hover:not(:disabled) { background: #f5f7f8; }
+  .arrow:hover:not(:disabled) { background: var(--hover); }
   .arrow:disabled { opacity: .4; cursor: default; }
 
   footer {
@@ -114,14 +149,14 @@
     padding: 12px 16px; border-top: 1px solid var(--line);
   }
   .status { font-size: 13px; color: var(--muted); }
-  .status.dirty { color: #e65100; }
-  .status.error { color: #c62828; }
+  .status.dirty { color: var(--dirty); }
+  .status.error { color: var(--error); }
   .btn {
     padding: 10px 20px; min-height: 44px;
     border: 1px solid var(--line); border-radius: 3px;
-    background: #fff; color: var(--ink); font: inherit; font-size: 13px; cursor: pointer;
+    background: var(--control); color: var(--ink); font: inherit; font-size: 13px; cursor: pointer;
   }
-  .btn.primary { background: var(--on-ink); border-color: var(--on-ink); color: #fff; }
+  .btn.primary { background: var(--on-ink); border-color: var(--on-ink); color: var(--on-primary); }
   .btn:disabled { opacity: .5; cursor: default; }
 
   @media (max-width: 720px) {

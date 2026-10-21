@@ -231,7 +231,7 @@ private void cachePut(String key, Object data) {
 // span tags are optional and the match repeats so it also clears remnants when the "Assign a name"
 // input on Done saves the label with its HTML stripped to bare "update available" text — otherwise
 // each refresh would stack a fresh badge on the plain remnant ("... update available update available").
-@Field static final String UPDATE_AVAILABLE_BADGE = ' <span style="color:green; font-weight:bold;">update available</span>'
+@Field static final String UPDATE_AVAILABLE_BADGE = ' <span style="color:var(--hubitat-success-color, #356700); font-weight:bold;">update available</span>'
 @Field static final java.util.regex.Pattern UPDATE_BADGE_RE = ~/(?i)(?:\s*(?:<span\b[^>]*>)?\s*update available\s*(?:<\/span>)?)+\s*$/
 
 // Built-in integration overrides: lowercase keyword → [conn, name]. These are Hubitat-native
@@ -447,7 +447,7 @@ Map dashboardPage() {
                 paragraph "<b>Once you click Done, re-open Hub Inspector from your Apps list to access the full dashboard.</b>"
             }
             section("Initial Check") {
-                paragraph "<b>OAuth Status:</b> <span style='color:green; font-weight:bold;'>Enabled (OK)</span>"
+                paragraph "<b>OAuth Status:</b> <span style='color:var(--hubitat-success-color, #356700); font-weight:bold;'>Enabled (OK)</span>"
                 paragraph "<b>UI Component:</b> ${getUIVersion() == "Unknown" ? "Pending download..." : "Ready"}"
             }
         }
@@ -464,21 +464,21 @@ Map dashboardPage() {
 
         section("Versions") {
             if (firmwareUnsupported) {
-                paragraph "<span style='color:red; font-weight:bold;'>\u26A0 Unsupported hub firmware:</span> Hub Inspector is developed and tested against platform ${MIN_FW_SUPPORTED} and later \u2014 your hub runs ${hubFw}. Some features may be unavailable or behave unexpectedly. Updating the hub firmware is recommended."
+                paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f); font-weight:bold;'>\u26A0 Unsupported hub firmware:</span> Hub Inspector is developed and tested against platform ${MIN_FW_SUPPORTED} and later \u2014 your hub runs ${hubFw}. Some features may be unavailable or behave unexpectedly. Updating the hub firmware is recommended."
             }
             if (state.selfUpdateError) {
-                paragraph "<span style='color:red; font-weight:bold;'>\u26A0 Update failed:</span> ${state.selfUpdateError}"
+                paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f); font-weight:bold;'>\u26A0 Update failed:</span> ${state.selfUpdateError}"
                 state.remove('selfUpdateError')
             }
             if (githubUpdateAvailable) {
                 String editorPath = getAppEditorPath()
                 String codeLink = editorPath ? "<a href='${editorPath}' target='_blank'>Apps Code</a>" : "Apps Code"
                 String importLink = selfUpdateSupported() ? "Click <b>Update now</b> below, or use Import in ${codeLink}." : "Use Import in ${codeLink} to update."
-                paragraph "<span style='color:orange; font-weight:bold;'>\u26A0 New version available:</span> v${remoteVersion} (you have v${CODE_VERSION}). ${importLink}"
+                paragraph "<span style='color:var(--hubitat-warning-color, #8a5a00); font-weight:bold;'>\u26A0 New version available:</span> v${remoteVersion} (you have v${CODE_VERSION}). ${importLink}"
                 if (selfUpdateSupported()) input "btnSelfUpdate", "button", title: "Update now"
             }
             if (appUpdateNeeded) {
-                paragraph "<span style='color:red; font-weight:bold;'>\u26A0 Update Recommended:</span> A newer UI version (${uiVer}) is active than this App code (${CODE_VERSION}). Please update the Groovy App Code in Hubitat."
+                paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f); font-weight:bold;'>\u26A0 Update Recommended:</span> A newer UI version (${uiVer}) is active than this App code (${CODE_VERSION}). Please update the Groovy App Code in Hubitat."
             }
             paragraph "<b>App Version:</b> ${CODE_VERSION}\n<b>UI Version:</b> ${uiVer}\n<b>Hub Firmware:</b> ${hubFw ?: 'Unknown'}"
             if (!githubUpdateAvailable) {

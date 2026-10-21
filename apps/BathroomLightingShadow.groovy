@@ -501,16 +501,16 @@ private String buildScoreTable() {
 
     sb << "<p><b>userForgotOff:</b> count=${count}, avgLapseMin=${avgLapse}</p>"
     sb << "<table border='1' cellpadding='4' style='border-collapse:collapse;'>"
-    sb << "<tr><th>policy</th><th>correctOn</th><th style='background:#fdd'>missedOn</th><th>falseOn</th>"
-    sb << "<th style='background:#fdd'>prematureOff</th><th>correctOff_qC</th><th style='background:#dfd'>correctOff_aU</th>"
+    sb << "<tr><th>policy</th><th>correctOn</th><th style='background:color-mix(in srgb, var(--hubitat-validation-color, #d32f2f) 15%, transparent)'>missedOn</th><th>falseOn</th>"
+    sb << "<th style='background:color-mix(in srgb, var(--hubitat-validation-color, #d32f2f) 15%, transparent)'>prematureOff</th><th>correctOff_qC</th><th style='background:color-mix(in srgb, var(--hubitat-success-color, #356700) 15%, transparent)'>correctOff_aU</th>"
     sb << "<th>overHold</th><th>avgLatencyMs</th></tr>"
     POLICIES.each { Map p ->
         if (state.scores == null) return
         Map s = state.scores[p.key]
         if (s == null) return
         Long avgLat = s.latencySamples > 0 ? Math.round(s.latencyMsSum / s.latencySamples) : 0L
-        sb << "<tr><td>${p.label}</td><td>${s.correctOn}</td><td style='background:#fdd'>${s.missedOn}</td><td>${s.falseOn}</td>"
-        sb << "<td style='background:#fdd'>${s.prematureOff}</td><td>${s.correctOff_quietConfirmed}</td><td style='background:#dfd'>${s.correctOff_anticipatedUser}</td>"
+        sb << "<tr><td>${p.label}</td><td>${s.correctOn}</td><td style='background:color-mix(in srgb, var(--hubitat-validation-color, #d32f2f) 15%, transparent)'>${s.missedOn}</td><td>${s.falseOn}</td>"
+        sb << "<td style='background:color-mix(in srgb, var(--hubitat-validation-color, #d32f2f) 15%, transparent)'>${s.prematureOff}</td><td>${s.correctOff_quietConfirmed}</td><td style='background:color-mix(in srgb, var(--hubitat-success-color, #356700) 15%, transparent)'>${s.correctOff_anticipatedUser}</td>"
         sb << "<td>${s.overHold}</td><td>${avgLat}</td></tr>"
     }
     sb << "</table>"

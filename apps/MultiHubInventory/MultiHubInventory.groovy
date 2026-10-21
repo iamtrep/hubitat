@@ -24,7 +24,7 @@ import java.nio.file.NoSuchFileException
 // Green badge appended to the app label (visible in the Apps list) when a newer release is
 // published on GitHub. UPDATE_BADGE_RE strips any prior badge so re-applying is idempotent and
 // survives the label being saved verbatim through the "Assign a name" input on Done.
-@Field static final String UPDATE_AVAILABLE_BADGE = ' <span style="color:green; font-weight:bold;">update available</span>'
+@Field static final String UPDATE_AVAILABLE_BADGE = ' <span style="color:var(--hubitat-success-color, #356700); font-weight:bold;">update available</span>'
 @Field static final java.util.regex.Pattern UPDATE_BADGE_RE = ~/(?i)\s*<span\b[^>]*>\s*update available\s*<\/span>\s*$/
 
 definition(

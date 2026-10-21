@@ -53,9 +53,9 @@ preferences {
 .tsp-t.tsp-dg th,.tsp-t.tsp-dg td{text-align:center}
 .tsp-t .tsp-l{text-align:left!important;font-weight:500}
 .tsp-tw{overflow-x:auto}
-.tsp-heat{color:#b3261e;font-weight:500}.tsp-cool{color:#1a5fa3;font-weight:500}.tsp-dim{opacity:.65}
+.tsp-heat{color:var(--hubitat-validation-color, #d32f2f);font-weight:500}.tsp-cool{color:var(--hubitat-link-color, #1a77c9);font-weight:500}.tsp-dim{opacity:.65}
 .tsp-sel{background:rgba(61,127,31,.1)}
-.tsp-now{font-size:12px;font-weight:700;color:#2c5d16;margin-left:6px}
+.tsp-now{font-size:12px;font-weight:700;color:var(--hubitat-success-color, #356700);margin-left:6px}
 .tsp-note{font-size:14px;opacity:.75;margin:4px 0}
 .tsp-big{font-size:24px;font-weight:500}
 .tsp-h{font-size:16px;font-weight:700;margin:12px 0 6px;padding-bottom:6px;border-bottom:1px solid rgba(128,128,128,.3)}
@@ -70,7 +70,7 @@ String esc(Object s) { s == null ? '' : s.toString().replace('&', '&amp;').repla
 String cellButton(String name, String label, boolean raw = false, String style = '') {
     return "<div class='form-group'><input type='hidden' name='${name}.type' value='button'></div>" +
            "<div><div class='app-button-link' onclick='buttonClick(this); return false;' " +
-           "style='cursor:pointer;color:#1a5fa3;min-height:44px;display:flex;align-items:center;${style}'>${raw ? label : esc(label)}</div></div>" +
+           "style='cursor:pointer;color:var(--hubitat-link-color, #1a77c9);min-height:44px;display:flex;align-items:center;${style}'>${raw ? label : esc(label)}</div></div>" +
            "<input type='hidden' name='settings[${name}]' value=''>"
 }
 

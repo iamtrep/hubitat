@@ -8,6 +8,14 @@ SPDX-License-Identifier: MIT
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Well Monitor</title>
+    <script>
+    // Follow the hub UI theme, which the hub keeps in this origin's localStorage (absent on firmware without dark mode).
+    (function(){
+        const apply=v=>{document.documentElement.dataset.hubitatTheme=v==='dark'?'dark':'light'};
+        try{apply(localStorage.getItem('hubitat-ui-theme'))}catch(e){apply(null)}
+        addEventListener('storage',e=>{if(e.key==='hubitat-ui-theme')apply(e.newValue)});
+    })();
+    </script>
     <style>
         :root {
             --bg: #f4f6f9;
@@ -24,6 +32,36 @@ SPDX-License-Identifier: MIT
             --info: #0891b2;
             --info-light: #cffafe;
             --warn: #d97706;
+            --warn-light: #fef3c7;
+            --on-primary: #fff;
+            --banner-text: #92400e;
+            --banner-border: #fbbf24;
+            --shadow: rgba(0,0,0,0.08);
+            --chart-grid: rgba(0,0,0,0.1);
+        }
+        /* Dark palette follows the hub's dark theme; the script above sets data-hubitat-theme. */
+        :root[data-hubitat-theme="dark"] {
+            color-scheme: dark;
+            --bg: #121212;
+            --card-bg: #1e1e1e;
+            --border: rgba(255,255,255,0.12);
+            --text: rgba(255,255,255,0.87);
+            --text-muted: rgba(255,255,255,0.6);
+            --primary: #60a5fa;
+            --primary-light: rgba(96,165,250,0.16);
+            --success: #4ade80;
+            --success-light: rgba(74,222,128,0.14);
+            --danger: #f87171;
+            --danger-light: rgba(248,113,113,0.14);
+            --info: #22d3ee;
+            --info-light: rgba(34,211,238,0.14);
+            --warn: #fbbf24;
+            --warn-light: rgba(251,191,36,0.14);
+            --on-primary: #0b1220;
+            --banner-text: #fbbf24;
+            --banner-border: rgba(251,191,36,0.4);
+            --shadow: rgba(0,0,0,0.5);
+            --chart-grid: rgba(255,255,255,0.1);
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
@@ -41,7 +79,7 @@ SPDX-License-Identifier: MIT
         .badge-flowing { background: var(--info-light); color: var(--info); }
         .badge-off { background: var(--bg); color: var(--text-muted); }
         .badge-sync-ok { background: var(--success-light); color: var(--success); cursor: pointer; }
-        .badge-sync-warn { background: #fef3c7; color: var(--warn); cursor: pointer; }
+        .badge-sync-warn { background: var(--warn-light); color: var(--warn); cursor: pointer; }
         .badge-sync-err { background: var(--danger-light); color: var(--danger); cursor: pointer; }
         .ws-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
         .ws-dot.ws-on { background: var(--success); }
@@ -70,7 +108,7 @@ SPDX-License-Identifier: MIT
         .chart-header h3 { margin: 0; }
         .chart-toggle { display: inline-flex; background: var(--bg); border-radius: 6px; padding: 2px; gap: 0; }
         .chart-toggle button { background: transparent; border: none; padding: 4px 10px; font-size: 0.75rem; cursor: pointer; color: var(--text-muted); border-radius: 4px; font-weight: 500; }
-        .chart-toggle button.active { background: var(--card-bg); color: var(--primary); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+        .chart-toggle button.active { background: var(--card-bg); color: var(--primary); box-shadow: 0 1px 3px var(--shadow); }
         .chart-toggle button:hover:not(.active) { color: var(--text); }
         .chart-wrap { position: relative; height: 220px; }
         .chart-wrap.tall { height: 250px; }
@@ -95,7 +133,7 @@ SPDX-License-Identifier: MIT
         .stat-value { font-weight: 600; }
         .stat-n { font-weight: 400; font-size: 0.75rem; color: var(--text-muted); margin-left: 4px; }
 
-        .btn { background: var(--primary); color: #fff; border: none; padding: 8px 16px; border-radius: 6px; font-size: 0.85rem; cursor: pointer; transition: opacity 0.15s; }
+        .btn { background: var(--primary); color: var(--on-primary); border: none; padding: 8px 16px; border-radius: 6px; font-size: 0.85rem; cursor: pointer; transition: opacity 0.15s; }
         .btn:hover { opacity: 0.85; }
         .btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .btn-sm { padding: 4px 12px; font-size: 0.8rem; }
@@ -103,7 +141,7 @@ SPDX-License-Identifier: MIT
 
         .loading { text-align: center; padding: 40px; color: var(--text-muted); }
         .error { background: var(--danger-light); color: var(--danger); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; }
-        .info-banner { background: #fef3c7; color: #92400e; border: 1px solid #fbbf24; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 0.9rem; }
+        .info-banner { background: var(--warn-light); color: var(--banner-text); border: 1px solid var(--banner-border); padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 0.9rem; }
         .info-banner strong { margin-right: 6px; }
 
         @media (max-width: 768px) {
@@ -424,6 +462,31 @@ SPDX-License-Identifier: MIT
         orange: 'rgba(217, 119, 6, 0.7)',
     };
 
+    // Chart.js draws axis text and grid lines on canvas, so they take the theme from the CSS tokens.
+    function applyChartTheme() {
+        if (!window.Chart) return;
+        const cs = getComputedStyle(document.documentElement);
+        Chart.defaults.color = cs.getPropertyValue('--text-muted').trim();
+        Chart.defaults.borderColor = cs.getPropertyValue('--chart-grid').trim();
+    }
+
+    // A chart keeps the colors it resolved at creation, so a theme switch sets them on each chart.
+    new MutationObserver(function() {
+        applyChartTheme();
+        if (!window.Chart) return;
+        const color = Chart.defaults.color, grid = Chart.defaults.borderColor;
+        Object.values(Chart.instances).forEach(function(c) {
+            Object.values(c.options.scales || {}).forEach(function(s) {
+                s.ticks.color = color;
+                s.grid.color = grid;
+                if (s.border) s.border.color = grid;
+                if (s.title) s.title.color = color;
+            });
+            if (c.options.plugins && c.options.plugins.legend) c.options.plugins.legend.labels.color = color;
+            c.update('none');
+        });
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-hubitat-theme'] });
+
     let dailyChartInstance = null;
     let hourlyChartInstance = null;
     let trendChartInstance = null;
@@ -440,6 +503,7 @@ SPDX-License-Identifier: MIT
 
     function renderDailyChart(dailySummaries) {
         const ctx = document.getElementById('dailyChart').getContext('2d');
+        applyChartTheme();
         const data = dailySummaries.slice(0, 14).reverse();
         if (dailyChartInstance) dailyChartInstance.destroy();
         dailyChartInstance = new Chart(ctx, {
@@ -473,6 +537,7 @@ SPDX-License-Identifier: MIT
 
     function renderHourlyChart(hourlyDist) {
         const ctx = document.getElementById('hourlyChart').getContext('2d');
+        applyChartTheme();
         const labels = [];
         const values = [];
         for (let h = 0; h < 24; h++) {
@@ -505,6 +570,7 @@ SPDX-License-Identifier: MIT
 
     function renderHourly24Chart(buckets, windowKey) {
         const ctx = document.getElementById('hourly24Chart').getContext('2d');
+        applyChartTheme();
         if (hourly24ChartInstance) hourly24ChartInstance.destroy();
         if (!buckets || !buckets.length) return;
         const is7d = windowKey === '7d';
@@ -549,6 +615,7 @@ SPDX-License-Identifier: MIT
 
     function renderFlowEvents24Chart(events, windowKey) {
         const ctx = document.getElementById('flowEvents24Chart').getContext('2d');
+        applyChartTheme();
         if (flowEvents24ChartInstance) flowEvents24ChartInstance.destroy();
         const now = Date.now();
         const hours = windowKey === '7d' ? 168 : 24;
@@ -617,6 +684,7 @@ SPDX-License-Identifier: MIT
 
     function renderCycleEventsChart(events, windowKey) {
         const ctx = document.getElementById('cycleEventsChart').getContext('2d');
+        applyChartTheme();
         if (cycleEventsChartInstance) cycleEventsChartInstance.destroy();
         const now = Date.now();
         const hours = windowKey === '7d' ? 168 : 24;
@@ -692,6 +760,7 @@ SPDX-License-Identifier: MIT
 
     function renderTrendChart(cycles) {
         const ctx = document.getElementById('trendChart').getContext('2d');
+        applyChartTheme();
         const data = cycles.slice().reverse();
         if (trendChartInstance) trendChartInstance.destroy();
         trendChartInstance = new Chart(ctx, {

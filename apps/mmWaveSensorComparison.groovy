@@ -454,9 +454,9 @@ private String renderSummaryTable() {
     int total = (state.totalWaves ?: 0) as int
     if (stats.isEmpty()) return "No sensors selected."
 
-    String td = "style='border:1px solid #999;padding:4px 8px'"
-    String tc = "style='border:1px solid #999;padding:4px 8px;text-align:center'"
-    String h = "<table style='border-collapse:collapse;width:100%'><thead><tr style='background:#ddd'>" +
+    String td = "style='border:1px solid var(--surface-border);padding:4px 8px'"
+    String tc = "style='border:1px solid var(--surface-border);padding:4px 8px;text-align:center'"
+    String h = "<table style='border-collapse:collapse;width:100%'><thead><tr style='background:var(--surface-200)'>" +
         "<th ${td}>Sensor</th><th ${tc}>Motion</th><th ${tc}>Acts</th><th ${tc}>Deacts</th>" +
         "<th ${tc}>Total active</th><th ${tc}>Longest hold</th>" +
         "<th ${tc}>Caught</th><th ${tc}>First×</th><th ${tc}>Avg lag</th><th ${td}>Latest extras</th></tr></thead><tbody>"
@@ -465,7 +465,7 @@ private String renderSummaryTable() {
         Map s = v as Map
         String id = k as String
         boolean act = s.curActive as boolean
-        String motion = act ? "<span style='color:#c00'><b>active</b></span>" : "<span style='color:#080'>inactive</span>"
+        String motion = act ? "<span style='color:var(--hubitat-validation-color, #d32f2f)'><b>active</b></span>" : "<span style='color:var(--hubitat-success-color, #356700)'>inactive</span>"
         int oc = (s.offsetCount ?: 0) as int
         String avgLag = oc > 0 ? formatMs(((s.offsetSum ?: 0L) as long).intdiv(oc)) : "—"
         String caught = total > 0 ? "${s.wavesJoined ?: 0}/${total}" : "—"
@@ -489,7 +489,7 @@ private String renderSummaryTable() {
             "<td ${tc}>${caught}</td><td ${tc}>${s.leadCount ?: 0}</td><td ${tc}>${avgLag}</td><td ${td}>${exStr}</td></tr>"
     }
     h += "</tbody></table>" +
-        "<div style='font-size:0.85em;color:#666;margin-top:4px'>" +
+        "<div style='font-size:0.85em;color:var(--text-color-secondary);margin-top:4px'>" +
         "<b>Caught</b> = activation waves this sensor detected. <b>First×</b> = times it fired first. " +
         "<b>Avg lag</b> = mean delay behind the wave's first detection (lower = faster). " +
         "Deactivation timing reflects each sensor's configured hold/fade timeout, not raw speed.</div>"
@@ -504,9 +504,9 @@ private String renderWaves() {
     Map labels = labelMap()
     List<String> ids = (labels.keySet() as List).sort { labels[it] }
 
-    String td = "style='border:1px solid #999;padding:4px 8px'"
-    String tc = "style='border:1px solid #999;padding:4px 8px;text-align:center'"
-    String h = "<table style='border-collapse:collapse;width:100%'><thead><tr style='background:#ddd'>" +
+    String td = "style='border:1px solid var(--surface-border);padding:4px 8px'"
+    String tc = "style='border:1px solid var(--surface-border);padding:4px 8px;text-align:center'"
+    String h = "<table style='border-collapse:collapse;width:100%'><thead><tr style='background:var(--surface-200)'>" +
         "<th ${tc}>#</th><th ${td}>Started</th>"
     ids.each { String id -> h += "<th ${tc}>${labels[id]}</th>" }
     h += "</tr></thead><tbody>"
@@ -520,7 +520,7 @@ private String renderWaves() {
         ids.each { String id ->
             Map d = dev[id] as Map
             if (d == null) {
-                h += "<td ${tc} title='did not detect'><span style='color:#999'>—</span></td>"
+                h += "<td ${tc} title='did not detect'><span style='color:var(--text-color-secondary)'>—</span></td>"
             } else {
                 boolean leader = (w.leaderId == id)
                 String lag = leader ? "🥇 1st" : "+${formatMs((d.off ?: 0L) as long)}"
@@ -529,15 +529,15 @@ private String renderWaves() {
                 if (d.dMin != null) {
                     String range = (d.dMin == d.dMax) ? "${d.dMin}m"
                         : "${d.dMin}–${d.dMax}m"
-                    dist = "<br><span style='font-size:0.85em;color:#06c'>↔ ${range} (${d.dN ?: 0})</span>"
+                    dist = "<br><span style='font-size:0.85em;color:var(--hubitat-link-color, #1a77c9)'>↔ ${range} (${d.dN ?: 0})</span>"
                 }
-                h += "<td ${tc}><b>${lag}</b><br><span style='font-size:0.85em;color:#555'>${hold}</span>${dist}</td>"
+                h += "<td ${tc}><b>${lag}</b><br><span style='font-size:0.85em;color:var(--text-color-secondary)'>${hold}</span>${dist}</td>"
             }
         }
         h += "</tr>"
     }
     h += "</tbody></table>" +
-        "<div style='font-size:0.85em;color:#666;margin-top:4px'>" +
+        "<div style='font-size:0.85em;color:var(--text-color-secondary);margin-top:4px'>" +
         "Each row is one correlated activation (sensors firing within ${(settings.corrWindowMs ?: 5000)} ms). " +
         "Top of cell = order/lag behind the first sensor; then how long it stayed active; " +
         "<b>↔</b> = radar distance spread (min–max, sample count) — a tight range suggests a fixed noise source, a wide range a moving target. " +
@@ -554,8 +554,8 @@ private String renderAgreement() {
     if (tot <= 0) return "No observed time yet."
 
     Map labels = labelMap()
-    String td = "style='border:1px solid #999;padding:4px 8px'"
-    String tc = "style='border:1px solid #999;padding:4px 8px;text-align:center'"
+    String td = "style='border:1px solid var(--surface-border);padding:4px 8px'"
+    String tc = "style='border:1px solid var(--surface-border);padding:4px 8px;text-align:center'"
 
     String s = "All agree — occupied: <b>${pct(aa, tot)}</b> &nbsp; | &nbsp; " +
         "All agree — clear: <b>${pct(ac, tot)}</b> &nbsp; | &nbsp; " +
@@ -563,7 +563,7 @@ private String renderAgreement() {
 
     Map pa = (state.pairAgg as Map) ?: [:]
     if (!pa.isEmpty()) {
-        s += "<table style='border-collapse:collapse'><thead><tr style='background:#ddd'>" +
+        s += "<table style='border-collapse:collapse'><thead><tr style='background:var(--surface-200)'>" +
             "<th ${td}>Pair</th><th ${tc}>Agree</th><th ${tc}>Disagree</th></tr></thead><tbody>"
         pa.each { k, v ->
             Map p = v as Map
@@ -583,8 +583,8 @@ private String renderAgreement() {
 private String renderRecent() {
     List r = (state.recent as List) ?: []
     if (r.isEmpty()) return "No events captured yet."
-    String td = "style='border:1px solid #999;padding:2px 6px'"
-    String h = "<table style='border-collapse:collapse'><thead><tr style='background:#ddd'>" +
+    String td = "style='border:1px solid var(--surface-border);padding:2px 6px'"
+    String h = "<table style='border-collapse:collapse'><thead><tr style='background:var(--surface-200)'>" +
         "<th ${td}>Time</th><th ${td}>Sensor</th><th ${td}>Attribute</th><th ${td}>Value</th></tr></thead><tbody>"
     r.reverse().take(25).each { e ->
         Map m = e as Map

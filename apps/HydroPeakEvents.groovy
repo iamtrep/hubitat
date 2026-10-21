@@ -727,18 +727,18 @@ private String getStatusText() {
 
     switch (currentState) {
         case STATE_EVENT_ACTIVE:
-            status.append("<b style='color:red'>⚡ PEAK EVENT IN PROGRESS</b><br/>")
+            status.append("<b style='color:var(--hubitat-validation-color, #d32f2f)'>⚡ PEAK EVENT IN PROGRESS</b><br/>")
             status.append("Peak event ends at: ${new Date(state.eventEnd as Long).format(DATE_FORMAT_DISPLAY)}<br/>")
             break
 
         case STATE_PRE_EVENT:
-            status.append("<b style='color:orange'>⏰ Pre-Event Warning Active</b><br/>")
+            status.append("<b style='color:var(--hubitat-warning-color, #8a5a00)'>⏰ Pre-Event Warning Active</b><br/>")
             status.append("Peak event starts at: ${new Date(state.eventStart as Long).format(DATE_FORMAT_DISPLAY)}<br/>")
             status.append("Peak event ends at: ${new Date(state.eventEnd as Long).format(DATE_FORMAT_DISPLAY)}<br/>")
             break
 
         case STATE_EVENT_SCHEDULED:
-            status.append("<b style='color:blue'>📅 Event Scheduled</b><br/>")
+            status.append("<b style='color:var(--hubitat-link-color, #1a77c9)'>📅 Event Scheduled</b><br/>")
             if (state.preEventStart) {
                 status.append("Pre-event warning at: ${new Date(state.preEventStart as Long).format(DATE_FORMAT_DISPLAY)}<br/>")
             }
@@ -748,7 +748,7 @@ private String getStatusText() {
 
         case STATE_NO_EVENTS:
         default:
-            status.append("<b style='color:green'>✓ No Events Scheduled</b><br/>")
+            status.append("<b style='color:var(--hubitat-success-color, #356700)'>✓ No Events Scheduled</b><br/>")
             break
     }
 
@@ -769,17 +769,17 @@ private String getAppLabelFromState(String currentState) {
 
     switch (currentState) {
         case STATE_EVENT_ACTIVE:
-            label = "${label} <span style='color:red'>⚡ PEAK EVENT IN PROGRESS</span>"
+            label = "${label} <span style='color:var(--hubitat-validation-color, #d32f2f)'>⚡ PEAK EVENT IN PROGRESS</span>"
             break
         case STATE_PRE_EVENT:
-            label = "${label} <span style='color:orange'>⏰ Pre-Event Warning</span>"
+            label = "${label} <span style='color:var(--hubitat-warning-color, #8a5a00)'>⏰ Pre-Event Warning</span>"
             break
         case STATE_EVENT_SCHEDULED:
-            label = "${label} <span style='color:blue'>📅 Event Scheduled</span>"
+            label = "${label} <span style='color:var(--hubitat-link-color, #1a77c9)'>📅 Event Scheduled</span>"
             break
         case STATE_NO_EVENTS:
         default:
-            label = "${label} <span style='color:green'>✓ No Events</span>"
+            label = "${label} <span style='color:var(--hubitat-success-color, #356700)'>✓ No Events</span>"
             break
     }
 

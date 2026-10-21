@@ -80,7 +80,7 @@ Map mainPage() {
                     List<String> excludedLinks = inputSensors.findAll { it.id.toString() in state.excludedSensors }.collect {
                         "<a href='/device/edit/${it.id}' target='_blank'>${it.getLabel()}</a>"
                     }
-                    paragraph "<span style='color:orange'><b>Excluded sensors:</b> ${excludedLinks.join(', ')}</span>"
+                    paragraph "<span style='color:var(--hubitat-warning-color, #8a5a00)'><b>Excluded sensors:</b> ${excludedLinks.join(', ')}</span>"
                 }
             }
             input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true

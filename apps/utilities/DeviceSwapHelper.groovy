@@ -89,13 +89,13 @@ Map mainPage(Map params = null) {
                     List<String> missing = (srcCaps - tgtCaps).sort()
                     List<String> extra = (tgtCaps - srcCaps).sort()
                     if (missing) {
-                        paragraph "<span class='text-orange-700'>Target is missing: ${missing.join(', ')}</span>"
+                        paragraph "<span style='color:var(--hubitat-warning-color, #8a5a00)'>Target is missing: ${missing.join(', ')}</span>"
                     }
                     if (extra) {
                         paragraph "<span class='text-color-secondary'>Target has extra: ${extra.join(', ')}</span>"
                     }
                     if (!missing && !extra) {
-                        paragraph "<span class='text-green-700'>Capabilities match</span>"
+                        paragraph "<span style='color:var(--hubitat-success-color, #356700)'>Capabilities match</span>"
                     }
                 }
             }
@@ -105,7 +105,7 @@ Map mainPage(Map params = null) {
         if (sourceDevice && targetDevice) {
             if (sourceDevice.id == targetDevice.id) {
                 section {
-                    paragraph "<span class='text-red-700'>Source and target are the same device. Please select different devices.</span>"
+                    paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f)'>Source and target are the same device. Please select different devices.</span>"
                 }
             } else {
                 section {
@@ -140,7 +140,7 @@ Map mainPage(Map params = null) {
         if (lastUndo) {
             section("Last Undo") {
                 lastUndo.each { Map r ->
-                    String icon = (r.success as boolean) ? "<span class='text-green-700'>&#10003;</span>" : "<span class='text-red-700'>&#10007;</span>"
+                    String icon = (r.success as boolean) ? "<span style='color:var(--hubitat-success-color, #356700)'>&#10003;</span>" : "<span style='color:var(--hubitat-validation-color, #d32f2f)'>&#10007;</span>"
                     paragraph "${icon} ${r.appLabel}: ${r.inputName}: ${r.message}"
                 }
             }
@@ -184,7 +184,7 @@ Map previewPage(Map params = null) {
             return
         }
         if (sourceDevice.id == targetDevice.id) {
-            section { paragraph "<span class='text-red-700'>Source and target are the same device. Please go back and select different devices.</span>" }
+            section { paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f)'>Source and target are the same device. Please go back and select different devices.</span>" }
             return
         }
 
@@ -195,7 +195,7 @@ Map previewPage(Map params = null) {
             paragraph deviceSummary("Source", sourceDevice)
             paragraph deviceSummary("Target", targetDevice)
             List<String> missingCaps = (capabilityNames(sourceDevice) - capabilityNames(targetDevice)).sort()
-            if (missingCaps) paragraph "<span class='text-orange-700'>${targetDevice.displayName} lacks ${missingCaps.join(', ')}</span>"
+            if (missingCaps) paragraph "<span style='color:var(--hubitat-warning-color, #8a5a00)'>${targetDevice.displayName} lacks ${missingCaps.join(', ')}</span>"
         }
 
         if (scanning) {
@@ -204,11 +204,11 @@ Map previewPage(Map params = null) {
         }
         Map scan = ((state.scanCache as Map)?.result ?: [:]) as Map
         if (scan.error) {
-            section { paragraph "<span class='text-red-700'>${scan.error}</span>" }
+            section { paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f)'>${scan.error}</span>" }
             return
         }
         if (scan.loopbackReason) {
-            section { paragraph "<span class='text-orange-700'>Using the slower loopback method (${scan.loopbackReason}). Mobile dashboards are not shown.</span>" }
+            section { paragraph "<span style='color:var(--hubitat-warning-color, #8a5a00)'>Using the slower loopback method (${scan.loopbackReason}). Mobile dashboards are not shown.</span>" }
         }
         List<Map> swappable = (scan.swappable ?: []) as List<Map>
         List<Map> manual = (scan.manual ?: []) as List<Map>
@@ -241,8 +241,8 @@ Map previewPage(Map params = null) {
         }
 
         // Display results
-        String td = "style='border:1px solid #999;padding:4px 8px'"
-        String tdC = "style='border:1px solid #999;padding:4px 8px;text-align:center'"
+        String td = "style='border:1px solid var(--surface-border);padding:4px 8px'"
+        String tdC = "style='border:1px solid var(--surface-border);padding:4px 8px;text-align:center'"
 
         if (swappable) {
             // Initialize selection state for new scans
@@ -273,17 +273,17 @@ Map previewPage(Map params = null) {
                     "</tr></thead><tbody>"
                 swappable.eachWithIndex { Map entry, int idx ->
                     List<String> entryWarnings = []
-                    if (entry.capBlock) entryWarnings << "<span class='text-red-700'>Can't swap: ${entry.capBlock}</span>".toString()
+                    if (entry.capBlock) entryWarnings << "<span style='color:var(--hubitat-validation-color, #d32f2f)'>Can't swap: ${entry.capBlock}</span>".toString()
                     if (entry.capWarning) entryWarnings << (entry.capWarning as String)
                     if (entry.targetWarning) entryWarnings << (entry.targetWarning as String)
                     if (entry.singleSelectWarning) entryWarnings << (entry.singleSelectWarning as String)
                     if (entry.stateWarning) entryWarnings << (entry.stateWarning as String)
                     if (entry.tileWarning) entryWarnings << (entry.tileWarning as String)
-                    String warningCell = entryWarnings ? "<span class='text-orange-700'>${entryWarnings.join('<br>')}</span>" : "<span class='text-green-700'>&#10003;</span>"
+                    String warningCell = entryWarnings ? "<span style='color:var(--hubitat-warning-color, #8a5a00)'>${entryWarnings.join('<br>')}</span>" : "<span style='color:var(--hubitat-success-color, #356700)'>&#10003;</span>"
                     List<String> attrs = (entry.subscribedAttrs ?: []) as List<String>
                     String subsCell = attrs ? attrs.join(", ") : "<span class='text-color-secondary'>-</span>"
                     boolean selected = state.swapSelections[selKey(entry)] != "off"
-                    String swapCell = entry.capBlock ? "<span class='text-color-secondary'>-</span>" : buttonLink("btnSwapSel:${selKey(entry)}", selected ? X : O, "#1A77C9")
+                    String swapCell = entry.capBlock ? "<span class='text-color-secondary'>-</span>" : buttonLink("btnSwapSel:${selKey(entry)}", selected ? X : O)
                     table += "<tr>" +
                         "<td style='text-align:center;border-right:2px solid black'>${swapCell}</td>" +
                         "<td><a href='/installedapp/configure/${entry.appId}' target='_blank'>${entry.appLabel}</a></td>" +
@@ -304,7 +304,7 @@ Map previewPage(Map params = null) {
             section("Manual Edit Required (${manual.size()})") {
                 paragraph "These inputs live on sub-pages or in app state that the auto-swap can't safely write to. Use the <b>Edit</b> deeplink to open the right page directly — set the input to <b>${targetDevice.displayName}</b> (ID ${targetId}) and remove <b>${sourceDevice.displayName}</b> (ID ${sourceId})."
                 String table = "<table style='border-collapse:collapse;width:100%'>" +
-                    "<thead><tr style='background:#ddd'>" +
+                    "<thead><tr style='background:var(--surface-200)'>" +
                     "<th ${td}>App</th><th ${td}>Type</th><th ${td}>Page</th><th ${td}>Input</th><th ${td}>Capability</th><th ${td}>Current Devices</th><th ${td}>Subscriptions</th><th ${td}>Reason</th><th ${tdC}>Edit</th>" +
                     "</tr></thead><tbody>"
                 manual.each { Map entry ->
@@ -313,7 +313,7 @@ Map previewPage(Map params = null) {
                     List currentIds = (entry.currentDeviceIds ?: []) as List
                     String currentCell = currentIds ? currentIds.collect { id ->
                         ((id as int) == sourceId)
-                            ? "<b class='text-red-700'>${id}</b>"
+                            ? "<b style='color:var(--hubitat-validation-color, #d32f2f)'>${id}</b>"
                             : id.toString()
                     }.join(", ") : "<span class='text-color-secondary'>-</span>"
                     String pageLabel = (entry.homePage ?: '(unknown)') as String
@@ -339,7 +339,7 @@ Map previewPage(Map params = null) {
             section("Other Apps Using the Source (${unmatched.size()})") {
                 paragraph "The hub lists these apps as using <b>${sourceDevice.displayName}</b>, but the scan can't read how they reference it, so it can't change it. Open each app and replace the device by hand, or use Swap Apps Device."
                 String table = "<table style='border-collapse:collapse;width:100%'>" +
-                    "<thead><tr style='background:#ddd'><th ${td}>App</th><th ${td}>Type</th><th ${td}>Why</th><th ${tdC}>Open</th></tr></thead><tbody>"
+                    "<thead><tr style='background:var(--surface-200)'><th ${td}>App</th><th ${td}>Type</th><th ${td}>Why</th><th ${tdC}>Open</th></tr></thead><tbody>"
                 unmatched.each { Map entry ->
                     table += "<tr><td ${td}>${entry.appLabel}</td><td ${td}>${entry.appType}</td><td ${td}>${entry.reason}</td>" +
                         "<td ${tdC}><a href='/installedapp/configure/${entry.appId}' target='_blank'>Open &rarr;</a></td></tr>"
@@ -446,7 +446,7 @@ private String deviceSummary(String role, DeviceWrapper device) {
 // Read-only list of every app using the source and where it holds it, shown when the per-input
 // swap is folded away: the usage information stays visible whichever swap the user picks.
 private void usageSection(List<Map> swappable, List<Map> manual, List<Map> unmatched, List<Map> dashboards) {
-    String td = "style='border:1px solid #999;padding:4px 8px'"
+    String td = "style='border:1px solid var(--surface-border);padding:4px 8px'"
     List<List<String>> rows = []
     swappable.each { Map e ->
         List<String> w = [e.capBlock ? "Can't swap: ${e.capBlock}" : null, e.capWarning, e.targetWarning, e.stateWarning, e.tileWarning].findAll { it } as List<String>
@@ -462,7 +462,7 @@ private void usageSection(List<Map> swappable, List<Map> manual, List<Map> unmat
         rows << ["<a href='/installedapp/configure/${d.id}' target='_blank'>${d.label}</a>", "Mobile dashboard", "lists devices by room", "", ""] as List<String>
     }
     section("Apps using ${sourceDevice.displayName} (${rows.size()})") {
-        String table = "<table style='border-collapse:collapse;width:100%'><thead><tr style='background:#ddd'>" +
+        String table = "<table style='border-collapse:collapse;width:100%'><thead><tr style='background:var(--surface-200)'>" +
             "<th ${td}>App</th><th ${td}>Type</th><th ${td}>Where</th><th ${td}>Subscribes to</th><th ${td}>Notes</th></tr></thead><tbody>" +
             rows.collect { List<String> r -> "<tr>" + r.collect { "<td ${td}>${it ?: ''}</td>" }.join("") + "</tr>" }.join("") +
             "</tbody></table>"
@@ -724,15 +724,15 @@ Map resultsPage(Map params) {
             section { paragraph result == "stale" ? "Nothing swapped: this link was already used." : "Nothing to swap." }
             return
         }
-        String td = "style='border:1px solid #999;padding:4px 8px'"
-        String tdC = "style='border:1px solid #999;padding:4px 8px;text-align:center'"
+        String td = "style='border:1px solid var(--surface-border);padding:4px 8px'"
+        String tdC = "style='border:1px solid var(--surface-border);padding:4px 8px;text-align:center'"
         section("Results") {
             String table = "<table style='border-collapse:collapse;width:100%'>" +
-                "<thead><tr style='background:#ddd'>" +
+                "<thead><tr style='background:var(--surface-200)'>" +
                 "<th ${td}>App</th><th ${td}>Input</th><th ${td}>Status</th><th ${td}>Details</th>" +
                 "</tr></thead><tbody>"
             results.each { Map r ->
-                String statusIcon = (r.success as boolean) ? "<span class='text-green-700'>&#10003;</span>" : "<span class='text-red-700'>&#10007;</span>"
+                String statusIcon = (r.success as boolean) ? "<span style='color:var(--hubitat-success-color, #356700)'>&#10003;</span>" : "<span style='color:var(--hubitat-validation-color, #d32f2f)'>&#10007;</span>"
                 table += "<tr>" +
                     "<td ${td}><a href='/installedapp/configure/${r.appId}' target='_blank'>${r.appLabel}</a></td>" +
                     "<td ${td}>${r.inputName}</td>" +
@@ -743,7 +743,7 @@ Map resultsPage(Map params) {
             table += "</tbody></table>"
             paragraph table
             paragraph state.auditError
-                ? "<span class='text-orange-700'>Not written to the <a href='/local/${AUDIT_FILE}' target='_blank'>audit log</a>: ${state.auditError}</span>"
+                ? "<span style='color:var(--hubitat-warning-color, #8a5a00)'>Not written to the <a href='/local/${AUDIT_FILE}' target='_blank'>audit log</a>: ${state.auditError}</span>"
                 : "Written to the <a href='/local/${AUDIT_FILE}' target='_blank'>audit log</a>."
         }
     }
@@ -1099,7 +1099,7 @@ private String selKey(Map entry) {
     return "${entry.appId}:${entry.inputName}"
 }
 
-private String buttonLink(String btnName, String linkText, String color = "#1A77C9", String font = "15px") {
+private String buttonLink(String btnName, String linkText, String color = "var(--hubitat-link-color, #1a77c9)", String font = "15px") {
     return "<div class='form-group'><input type='hidden' name='${btnName}.type' value='button'></div>" +
         "<div><div class='submitOnChange' onclick='buttonClick(this)' style='color:${color};cursor:pointer;font-size:${font}'>${linkText}</div></div>" +
         "<input type='hidden' name='settings[${btnName}]' value=''>"
@@ -1197,11 +1197,11 @@ private boolean nativeSwapSection(int sourceId, int targetId, Set<String> subscr
             "Event history stays with the device id."
         ]
         if (onTarget) {
-            notes << "<span class='text-orange-700'>Apps that use ${targetDevice.displayName} now will move to the old hardware: " +
+            notes << "<span style='color:var(--hubitat-warning-color, #8a5a00)'>Apps that use ${targetDevice.displayName} now will move to the old hardware: " +
                 onTarget.collect { Map a -> "<a href='/installedapp/configure/${a.id}' target='_blank'>${a.label}</a>" }.join(", ") + "</span>"
         }
         if (missing) {
-            notes << "<span class='text-orange-700'>Apps subscribe to ${missing.join(', ')}, which ${targetDevice.displayName} doesn't report.</span>"
+            notes << "<span style='color:var(--hubitat-warning-color, #8a5a00)'>Apps subscribe to ${missing.join(', ')}, which ${targetDevice.displayName} doesn't report.</span>"
         }
         paragraph "<ul>" + notes.collect { "<li>${it}</li>" }.join("") + "</ul>"
         // The preferred action: the hub's green, on the href button the hub renders for this page.
@@ -1413,7 +1413,7 @@ private Map nativeFramePage(String pageName) {
 private String nativeFrameHtml(int aid) {
     String checkUrl = "/installedapp/configure/${app.id}/nativeCheckPage"
     return """
-<iframe id="swapFrame" src="/installedapp/configure/${aid}/mainPage" style="width:100%;height:360px;border:1px solid #ccc"></iframe>
+<iframe id="swapFrame" src="/installedapp/configure/${aid}/mainPage" style="width:100%;height:360px;border:1px solid var(--surface-border)"></iframe>
 <script>
 (function () {
     let finished = false
@@ -1444,11 +1444,11 @@ Map nativeCheckPage(Map params = null) {
             return
         }
         section {
-            String cls = result.outcome == "swapped" ? "text-green-700" : (result.outcome == "unchanged" ? "text-color-secondary" : "text-red-700")
-            paragraph "<span class='${cls}'>${result.message}</span>"
+            String color = result.outcome == "swapped" ? "var(--hubitat-success-color, #356700)" : (result.outcome == "unchanged" ? "var(--text-color-secondary)" : "var(--hubitat-validation-color, #d32f2f)")
+            paragraph "<span style='color:${color}'>${result.message}</span>"
             ((result.cleanup ?: []) as List).each { String line -> paragraph line }
             paragraph state.auditError
-                ? "<span class='text-orange-700'>Not written to the <a href='/local/${AUDIT_FILE}' target='_blank'>audit log</a>: ${state.auditError}</span>"
+                ? "<span style='color:var(--hubitat-warning-color, #8a5a00)'>Not written to the <a href='/local/${AUDIT_FILE}' target='_blank'>audit log</a>: ${state.auditError}</span>"
                 : "Written to the <a href='/local/${AUDIT_FILE}' target='_blank'>audit log</a>."
         }
     }
@@ -1513,12 +1513,12 @@ private List<String> nativeCleanup(Map n, Map bOld, Map aOld, Map aNew) {
         "<a href='/device/edit/${n.newId}' target='_blank'>Open it</a> to remove it or reuse it."
     List onTarget = (n.onTarget ?: []) as List
     if (onTarget) {
-        lines << "<span class='text-orange-700'>These apps used the replacement before the swap and now use the old hardware: " +
+        lines << "<span style='color:var(--hubitat-warning-color, #8a5a00)'>These apps used the replacement before the swap and now use the old hardware: " +
             onTarget.collect { a -> "<a href='/installedapp/configure/${(a as Map).id}' target='_blank'>${(a as Map).label}</a>" }.join(", ") + "</span>"
     }
     List missing = (n.missingAttrs ?: []) as List
     if (missing) {
-        lines << "<span class='text-orange-700'>Apps subscribe to ${missing.join(', ')}, which the new hardware doesn't report.</span>"
+        lines << "<span style='color:var(--hubitat-warning-color, #8a5a00)'>Apps subscribe to ${missing.join(', ')}, which the new hardware doesn't report.</span>"
     }
     return lines
 }

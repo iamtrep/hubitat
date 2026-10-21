@@ -1269,10 +1269,10 @@ private String getStatusText() {
     String humidityState = state.humidityState ?: HUMIDITY_NORMAL
     switch (humidityState) {
         case HUMIDITY_NORMAL:
-            status.append("<b style='color:green'>Humidity: NORMAL</b><br/>")
+            status.append("<b style='color:var(--hubitat-success-color, #356700)'>Humidity: NORMAL</b><br/>")
             break
         case HUMIDITY_PENDING_HIGH:
-            status.append("<b style='color:orange'>Humidity: PENDING HIGH</b><br/>")
+            status.append("<b style='color:var(--hubitat-warning-color, #8a5a00)'>Humidity: PENDING HIGH</b><br/>")
             if (state.pendingStateSince) {
                 Long elapsed = (now() - (state.pendingStateSince as Long)).intdiv(1000L) as Long
                 Long remaining = (activationDelay as Integer) - elapsed
@@ -1282,10 +1282,10 @@ private String getStatusText() {
             }
             break
         case HUMIDITY_HIGH:
-            status.append("<b style='color:red'>Humidity: HIGH</b><br/>")
+            status.append("<b style='color:var(--hubitat-validation-color, #d32f2f)'>Humidity: HIGH</b><br/>")
             break
         case HUMIDITY_PENDING_NORMAL:
-            status.append("<b style='color:orange'>Humidity: PENDING NORMAL</b><br/>")
+            status.append("<b style='color:var(--hubitat-warning-color, #8a5a00)'>Humidity: PENDING NORMAL</b><br/>")
             if (state.pendingStateSince) {
                 Long elapsed = (now() - (state.pendingStateSince as Long)).intdiv(1000L) as Long
                 Long remaining = (deactivationDelay as Integer) - elapsed
@@ -1315,7 +1315,7 @@ private String getStatusText() {
         status.append("<br/>")
     }
     if (bathroomStatus.excluded.size() > 0) {
-        status.append("<span style='color:orange'><small>Inactive: ${bathroomStatus.excluded.join(', ')}</small></span><br/>")
+        status.append("<span style='color:var(--hubitat-warning-color, #8a5a00)'><small>Inactive: ${bathroomStatus.excluded.join(', ')}</small></span><br/>")
     }
 
     if (referenceMetric != null) {
@@ -1329,7 +1329,7 @@ private String getStatusText() {
         status.append("<br/>")
     }
     if (referenceStatus.excluded.size() > 0) {
-        status.append("<span style='color:orange'><small>Inactive: ${referenceStatus.excluded.join(', ')}</small></span><br/>")
+        status.append("<span style='color:var(--hubitat-warning-color, #8a5a00)'><small>Inactive: ${referenceStatus.excluded.join(', ')}</small></span><br/>")
     }
 
     if (state.referenceHumiditySnapshot != null) {
@@ -1355,15 +1355,15 @@ private String getStatusText() {
 
     // Restrictions
     if (isRestricted()) {
-        status.append("<span style='color:orange'>⚠ Restrictions active</span><br/>")
+        status.append("<span style='color:var(--hubitat-warning-color, #8a5a00)'>⚠ Restrictions active</span><br/>")
     }
 
     // Sensor warnings
     if (bathroomStatus.active == 0) {
-        status.append("<span style='color:red'>⚠ No active bathroom sensors!</span><br/>")
+        status.append("<span style='color:var(--hubitat-validation-color, #d32f2f)'>⚠ No active bathroom sensors!</span><br/>")
     }
     if (referenceStatus.active == 0) {
-        status.append("<span style='color:red'>⚠ No active reference sensors!</span><br/>")
+        status.append("<span style='color:var(--hubitat-validation-color, #d32f2f)'>⚠ No active reference sensors!</span><br/>")
     }
 
     return status.toString()

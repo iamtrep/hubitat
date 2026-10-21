@@ -134,11 +134,11 @@ Map mainPage() {
                 input "btnRefreshNow", "button", title: "Refresh now"
             }
             section("Devices") {
-                if (state.childError) paragraph "<span style='color:red;'><b>Error:</b> ${state.childError}</span>"
+                if (state.childError) paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f);'><b>Error:</b> ${state.childError}</span>"
                 renderChildList()
                 List<Map> orphans = (atomicState.orphanedDevices ?: []) as List<Map>
                 if (orphans.size() > 0) {
-                    paragraph "<span style='color:orange'><b>Orphaned devices (${orphans.size()}):</b></span>"
+                    paragraph "<span style='color:var(--hubitat-warning-color, #8a5a00)'><b>Orphaned devices (${orphans.size()}):</b></span>"
                     orphans.each { Map o ->
                         paragraph "<a href='/device/edit/${o.id}' target='_blank'>${o.label}</a> (${o.dni})"
                     }
@@ -159,7 +159,7 @@ Map mainPage() {
             }
         } else {
             section {
-                if (state.authError) paragraph "<span style='color:red;'><b>Error:</b> ${state.authError}</span>"
+                if (state.authError) paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f);'><b>Error:</b> ${state.authError}</span>"
                 paragraph "Connect your FGLair account to get started."
                 href "loginPage", title: "Login to FGLair", description: "Enter your FGLair credentials"
             }
@@ -179,7 +179,7 @@ Map mainPage() {
 Map loginPage() {
     dynamicPage(name: "loginPage", title: "FGLair Login", nextPage: "mainPage") {
         if (state.authError) {
-            section { paragraph "<span style='color:red;'><b>Error:</b> ${state.authError}</span>" }
+            section { paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f);'><b>Error:</b> ${state.authError}</span>" }
             state.remove("authError")
         }
         if (isAuthenticated()) {

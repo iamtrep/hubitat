@@ -207,7 +207,7 @@ String calibHtml(Map cfg, Map cal, List<String> calErrs) {
     StringBuilder h = new StringBuilder("<div class='border-1 surface-border border-round p-3'>")
     h << "<div class='font-semibold mb-2'>Dates from ${esc(cal.years)} climate at this location</div>"
     if (cal.error) return h.append("<div class='p-message p-message-error p-2 m-0 border-round'>${esc(cal.error)}</div></div>").toString()
-    String th = "class='text-color-secondary' style='text-align:left;font-weight:600;font-size:12px;text-transform:uppercase;padding:4px 8px;border-bottom:1px solid #dfe3e8'"
+    String th = "class='text-color-secondary' style='text-align:left;font-weight:600;font-size:12px;text-transform:uppercase;padding:4px 8px;border-bottom:1px solid var(--surface-border)'"
     h << "<table style='border-collapse:collapse;font-size:14px'><tr><th ${th}></th><th ${th}>Now</th><th ${th}>Computed</th></tr>"
     [['Winter → spring from', 'w2s', 'from'], ['Winter → spring by', 'w2s', 'until'], ['Fall → winter from', 'f2w', 'from'],
      ['Fall → winter by', 'f2w', 'until'], ['Summer from', 'summer', 'from'], ['Summer until', 'summer', 'until'],
@@ -243,14 +243,14 @@ String yearHtml(Map cfg) {
         [label: 'Summer possible', bars: [[s.from, s.until, '#c98a0b']], mark: [s.fallFrom, '#b4470a', "Fall from ${mdLabel(s.fallFrom as String)}"]],
         [label: 'Fall → winter', bars: [[f.from, f.until, '#2f6fb3']]]
     ]
-    String grid = starts.collect { "<div style='position:absolute;top:0;bottom:0;width:1px;background:#e1e5ea;left:${yearPct(doyOf(it))}%'></div>" }.join('')
+    String grid = starts.collect { "<div style='position:absolute;top:0;bottom:0;width:1px;background:var(--surface-border);left:${yearPct(doyOf(it))}%'></div>" }.join('')
     String todayLine = "<div style='position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--text-color,#212529);left:${yearPct(doyOf(today))}%'></div>"
     StringBuilder h = new StringBuilder("<div style='overflow-x:auto;overflow-y:hidden;padding-right:16px'><div style='min-width:560px;display:grid;grid-template-columns:130px minmax(0,1fr);row-gap:6px;align-items:center;font-size:13px'>")
     h << "<div></div><div style='position:relative;height:18px'>"
     months.eachWithIndex { String m, int i -> h << "<div class='text-color-secondary' style='position:absolute;top:0;font-size:12px;left:${yearPct(doyOf(starts[i]))}%'>${m}</div>" }
     h << "</div>"
     rows.each { Map r ->
-        h << "<div>${esc(r.label)}</div><div style='position:relative;height:22px;background:#f5f7f9;border-radius:3px'>${grid}"
+        h << "<div>${esc(r.label)}</div><div style='position:relative;height:22px;background:var(--surface-100);border-radius:3px'>${grid}"
         (r.bars as List<List>).each { List b ->
             String tip = "${mdLabel(b[0] as String)} – ${mdLabel(b[1] as String)}".toString()
             yearSpans(doyOf(b[0] as String), doyOf(b[1] as String)).each { List<Integer> sp ->
@@ -288,9 +288,9 @@ String statusHtml(Map cfg) {
     if (state.holdUntil) h << "<div class='p-message p-message-warn p-2 m-0 border-round'>Automatic changes suspended until ${esc(fmtTime(state.holdUntil as Long))}</div>"
     if (!validateCfg(cfg)) h << "<div><b>Next change:</b> ${esc(nextPossible(season, cfg, u))}</div>"
 
-    String td = "style='padding:6px 8px;border-bottom:1px solid #eef0f3'"
-    String tdn = "style='padding:6px 8px;border-bottom:1px solid #eef0f3;text-align:right'"
-    String th = "class='text-color-secondary' style='text-align:left;font-weight:600;font-size:12px;text-transform:uppercase;padding:6px 8px;border-bottom:1px solid #dfe3e8'"
+    String td = "style='padding:6px 8px;border-bottom:1px solid var(--surface-border)'"
+    String tdn = "style='padding:6px 8px;border-bottom:1px solid var(--surface-border);text-align:right'"
+    String th = "class='text-color-secondary' style='text-align:left;font-weight:600;font-size:12px;text-transform:uppercase;padding:6px 8px;border-bottom:1px solid var(--surface-border)'"
     String today = realToday()
     Map merged = mergeDays((state.samples ?: [:]) as Map, (state.om ?: [:]) as Map, today)
     h << "<div class='flex flex-wrap gap-4'><div style='flex:1 1 280px;min-width:0'><div class='font-semibold mb-1'>Last 3 days</div>"

@@ -1131,12 +1131,12 @@ private String getStatusText() {
             sb.append(" (min load: ${threshold}W)")
         }
         if (gs.recoveryActive) {
-            sb.append(" <span style=\"color:red\">(recovery in progress, attempt ${gs.retryCount})</span>")
+            sb.append(" <span style=\"color:var(--hubitat-validation-color, #d32f2f)\">(recovery in progress, attempt ${gs.retryCount})</span>")
         }
         sb.append("<br/>")
 
         sb.append('<table style="width:100%;border-collapse:collapse;font-size:14px">')
-        sb.append('<tr style="border-bottom:2px solid #ccc;text-align:left">')
+        sb.append('<tr style="border-bottom:2px solid var(--surface-border);text-align:left">')
         sb.append('<th style="padding:4px 8px">Device</th>')
         sb.append('<th style="padding:4px 8px">State</th>')
         if (loadMonitoring) {
@@ -1155,26 +1155,26 @@ private String getStatusText() {
             boolean isLowLoad = lowLoadDevices.containsKey(devId)
 
             String stateCell = isWrong ?
-                "<span style=\"color:red\"><b>${dev.currentSwitch.toUpperCase()}</b></span>" :
-                "<span style=\"color:green\">${dev.currentSwitch}</span>"
+                "<span style=\"color:var(--hubitat-validation-color, #d32f2f)\"><b>${dev.currentSwitch.toUpperCase()}</b></span>" :
+                "<span style=\"color:var(--hubitat-success-color, #356700)\">${dev.currentSwitch}</span>"
 
             String sinceCell = ""
             if (isWrong) {
                 Long sinceMs = dev.currentState("switch")?.date?.time
-                if (sinceMs) sinceCell = "<span style=\"color:red\">${formatDuration(nowMs - sinceMs)}</span>"
+                if (sinceMs) sinceCell = "<span style=\"color:var(--hubitat-validation-color, #d32f2f)\">${formatDuration(nowMs - sinceMs)}</span>"
             } else if (isLowLoad) {
                 Long sinceMs = lowLoadDevices[devId] as Long
-                if (sinceMs) sinceCell = "<span style=\"color:red\">${formatDuration(nowMs - sinceMs)}</span>"
+                if (sinceMs) sinceCell = "<span style=\"color:var(--hubitat-validation-color, #d32f2f)\">${formatDuration(nowMs - sinceMs)}</span>"
             }
 
-            String rowStyle = (isWrong || isLowLoad) ? ' style="background:#fff0f0"' : ''
+            String rowStyle = (isWrong || isLowLoad) ? ' style="background:color-mix(in srgb, var(--hubitat-validation-color, #d32f2f) 12%, transparent)"' : ''
             sb.append("<tr${rowStyle}>")
             sb.append("<td style=\"padding:4px 8px\"><a href=\"/device/edit/${dev.id}\" target=\"_blank\">${dev.displayName}</a></td>")
             sb.append("<td style=\"padding:4px 8px\">${stateCell}</td>")
             if (loadMonitoring) {
                 String loadCell = ""
                 if (hasPower && power != null) {
-                    loadCell = isLowLoad ? "<span style=\"color:red\"><b>${power}W</b></span>" : "${power}W"
+                    loadCell = isLowLoad ? "<span style=\"color:var(--hubitat-validation-color, #d32f2f)\"><b>${power}W</b></span>" : "${power}W"
                 } else if (hasPower) {
                     loadCell = "\u2014"
                 }

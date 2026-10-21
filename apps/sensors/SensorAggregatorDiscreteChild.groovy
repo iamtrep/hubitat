@@ -93,7 +93,7 @@ Map mainPage() {
                     List<String> excludedLinks = inputSensors.findAll { it.id.toString() in state.excludedSensors }.collect {
                         "<a href='/device/edit/${it.id}' target='_blank'>${it.getLabel()}</a>"
                     }
-                    paragraph "<span style='color:orange'><b>Excluded sensors:</b> ${excludedLinks.join(', ')}</span>"
+                    paragraph "<span style='color:var(--hubitat-warning-color, #8a5a00)'><b>Excluded sensors:</b> ${excludedLinks.join(', ')}</span>"
                 }
             }
             input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
@@ -119,10 +119,10 @@ Map mainPage() {
                 paragraph "<b>Last Test Run:</b> ${state.lastTestRun}"
                 paragraph "<b>Results:</b> ${state.testsPassed} / ${state.testsTotal} passed"
                 if (state.testsFailed > 0) {
-                    paragraph "<span style='color:red'><b>Failed:</b> ${state.testsFailed}</span>"
+                    paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f)'><b>Failed:</b> ${state.testsFailed}</span>"
                     paragraph "<b>Failed Tests:</b><br>${state.failedTests?.join('<br>')}"
                 } else if (state.testsTotal > 0) {
-                    paragraph "<span style='color:green'><b>All tests passed!</b></span>"
+                    paragraph "<span style='color:var(--hubitat-success-color, #356700)'><b>All tests passed!</b></span>"
                 }
             }
         }

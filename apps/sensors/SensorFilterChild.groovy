@@ -64,7 +64,7 @@ Map mainPage() {
             if (targetDevice && attributeToFilter) {
                 List<String> targetAttributes = getDeviceAttributes(targetDevice)
                 if (!targetAttributes.contains(attributeToFilter)) {
-                    paragraph "<span style='color:red'>Warning: Target device does not support the '${attributeToFilter}' attribute. " +
+                    paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f)'>Warning: Target device does not support the '${attributeToFilter}' attribute. " +
                              "You may need to modify your virtual device's driver to support this attribute.</span>"
                 }
             }

@@ -102,7 +102,7 @@ Map mainPage() {
                 renderChildDeviceList()
                 List<Map> orphans = (atomicState.orphanedDevices ?: []) as List<Map>
                 if (orphans.size() > 0) {
-                    paragraph "<span style='color:orange'><b>⚠️ Orphaned (${orphans.size()}):</b></span>"
+                    paragraph "<span style='color:var(--hubitat-warning-color, #8a5a00)'><b>⚠️ Orphaned (${orphans.size()}):</b></span>"
                     orphans.each { Map o ->
                         paragraph "<a href='/device/edit/${o.id}' target='_blank'>${o.label}</a> <small>(${o.dni})</small>"
                     }
@@ -168,7 +168,7 @@ Map diagnosticsPage() {
         }
         if (!state.accountId) {
             section("Recovery") {
-                paragraph "<span style='color:orange'><b>No account ID</b> — tier discovery failed.</span>"
+                paragraph "<span style='color:var(--hubitat-warning-color, #8a5a00)'><b>No account ID</b> — tier discovery failed.</span>"
                 input "btnFetchTier", "button", title: "Re-fetch tier info"
             }
         }
@@ -220,7 +220,7 @@ Map loginPage() {
     dynamicPage(name: "loginPage", title: "Blink Login", nextPage: "mainPage") {
         if (state.authError) {
             section {
-                paragraph "<span style='color:red;'><b>Error:</b> ${state.authError}</span>"
+                paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f);'><b>Error:</b> ${state.authError}</span>"
                 state.remove("authError")
             }
         }

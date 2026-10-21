@@ -103,7 +103,7 @@ Map importPage() {
             if (list != null && !list) paragraph "This hub has no Thermostat Scheduler."
             list?.each { Map b ->
                 String done = getChildApps().find { it.importedFrom() == b.id }?.label
-                paragraph "${b.name}${done ? " <span style='color:gray'>(imported as ${done})</span>" : ''}", width: 9
+                paragraph "${b.name}${done ? " <span style='color:var(--text-color-secondary)'>(imported as ${done})</span>" : ''}", width: 9
                 input "imp~${b.id}", "button", title: "Import", width: 3
             }
         }

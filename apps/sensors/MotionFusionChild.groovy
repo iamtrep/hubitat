@@ -59,7 +59,7 @@ Map mainPage() {
                     List<String> missing = []
                     if (!hasPir) missing << "pirDetection"
                     if (!hasMmwave) missing << "roomState"
-                    paragraph "<span style='color:orange'>Warning: selected device is missing attributes: ${missing.join(', ')}. Fusion modes requiring these inputs will not work correctly.</span>"
+                    paragraph "<span style='color:var(--hubitat-warning-color, #8a5a00)'>Warning: selected device is missing attributes: ${missing.join(', ')}. Fusion modes requiring these inputs will not work correctly.</span>"
                 }
             }
             input name: "outputDevice", type: "capability.motionSensor", title: "Output virtual motion sensor", required: true
@@ -501,7 +501,7 @@ private String getStatusText() {
     sb.append("Mode: ${FUSION_MODES[fusionMode] ?: fusionMode}<br/>")
 
     if (state.pendingInactive) {
-        sb.append("<span style='color:orange'>Timer pending...</span><br/>")
+        sb.append("<span style='color:var(--hubitat-warning-color, #8a5a00)'>Timer pending...</span><br/>")
     }
 
     return sb.toString()
