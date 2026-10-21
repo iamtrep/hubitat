@@ -18,5 +18,7 @@
   ],
   "errorCode": 7,
   "closeAfterErrorS": 45,
-  "playerModel": "EBOX TV"
+  "playerModel": "EBOX TV",
+  "searchApp": "com.google.android.katniss",
+  "textFieldCounter": 112
 }

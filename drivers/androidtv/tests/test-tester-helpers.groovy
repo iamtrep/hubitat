@@ -128,8 +128,8 @@ def ln = { String t, String m -> [ts: "2026-10-15 ${t}".toString(), level: 'trac
 println 'otherMessages'
 check 'handled types only: none', h.otherMessages([ln('11:00:00.000', 'rx 1:{1:639}'), ln('11:00:00.100', 'rx 2:{1:622}'),
     ln('11:00:00.200', 'rx 50:{6:15}'), ln('11:00:00.300', 'rx 40:{1:1}'), ln('11:00:00.400', 'rx 20:{1:{12:"x"}}'), ln('11:00:00.500', 'rx 3:{1:7}')]) == null
-check 'unhandled types listed once, in order', h.otherMessages([ln('11:00:00.000', 'rx 51:{1:1}'), ln('11:00:00.100', 'rx 22:{}'),
-    ln('11:00:00.200', 'rx 51:{1:2}')]) == '22,51'
+check 'unhandled types listed once, in order', h.otherMessages([ln('11:00:00.000', 'rx 51:{1:1}'), ln('11:00:00.100', 'rx 24:{}'),
+    ln('11:00:00.200', 'rx 51:{1:2}')]) == '24,51'
 check 'pairing and sent messages ignored', h.otherMessages([ln('11:00:00.000', 'pair rx 1:2 2:200 11:{}'), ln('11:00:00.100', 'tx 10:{1:3 2:3}')]) == null
 check 'none rule: absent passes', h.differences([:], [otherMessages: [none: true]]) == []
 check 'none rule: present differs', h.differences([otherMessages: '22'], [otherMessages: [none: true]]) == ['otherMessages']
@@ -211,14 +211,19 @@ Map t1 = h.evalText([ln('11:00:00.000', 'Key 3'), ln('11:00:00.400', 'rx 20:{1:{
                      ln('11:00:07.000', 'Text hubitat'), ln('11:00:07.010', 'tx 21:{1:0 2:0 3:{1:1 2:{1:6 2:6 3:"hubitat"}}}'),
                      ln('11:00:15.000', 'Key 4'), ln('11:00:15.200', 'rx 20:{1:{12:"com.google.android.tvlauncher"}}')])
 check 'search app, nothing reported', t1 == [searchApp: 'com.google.android.katniss', fieldReported: false, editReported: false,
-                                             editAfterText: false, textSent: true, accepted: true, errorCode: null]
+                                             editAfterText: false, textSent: true, accepted: true, textEchoed: false, errorCode: null]
 Map t2 = h.evalText([ln('11:00:03.000', 'Key 84'), ln('11:00:03.300', 'rx 20:{1:{12:"com.example.search"} 2:{1:2 2:"" 6:"Search"}}'),
                      ln('11:00:03.400', 'rx 21:{1:5 2:2}'), ln('11:00:07.000', 'Text hubitat'), ln('11:00:07.200', 'rx 21:{1:6 2:2}')])
 check 'field and edits reported', t2.fieldReported && t2.editReported && t2.editAfterText && t2.searchApp == 'com.example.search'
+// From the EBOX with its text field open: the box echoes the field after the text.
+Map t4 = h.evalText([ln('11:00:03.000', 'Key 84'), ln('11:00:05.000', 'rx 20:{1:{1:1 2:1 12:"com.google.android.katniss"} 2:{1:134 5:1}}'),
+                     ln('11:00:05.030', 'rx 21:{1:1 2:1}'), ln('11:00:07.000', 'Text hubitat'), ln('11:00:07.040', 'rx 22:{1:1 2:{1:137 2:"hubitat" 3:7 4:7 5:1}}')])
+check 'text echoed', t4.textEchoed && t4.fieldReported && !t4.editAfterText
 Map t3 = h.evalText([ln('11:00:07.000', 'Text hubitat'), ln('11:00:07.050', 'TV rejected 21:{1:0} (error 2); reconnecting')])
 check 'text refused', t3.accepted == false && t3.errorCode == '2' && t3.searchApp == null
 check 'driver without sendText', h.evalText([ln('11:00:03.000', 'Key 84')]).textSent == false
 check 'message 21 is handled, not other', h.otherMessages([ln('11:00:00.000', 'rx 21:{1:5 2:2}')]) == null
+check 'messages 22 and 23 are handled', h.otherMessages([ln('11:00:00.000', 'rx 22:{2:{1:5}}'), ln('11:00:01.000', 'rx 23:{2:4 3:4}')]) == null
 
 println 'evalStandby'
 Map s9 = h.evalStandby([ln('12:00:00.000', 'rx 40:{1:0}'), ln('12:30:00.000', 'rx 40:{1:1}')], [on: [ok: true, ms: 300L]])

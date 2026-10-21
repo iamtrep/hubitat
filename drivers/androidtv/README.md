@@ -131,18 +131,15 @@ in answer to a volume key; until it has seen one, it logs that it can't set the 
 ## Typing text (experimental)
 
 `sendText` sends text the way the phone remote app types it, so a dashboard text tile or a rule can fill
-a search box. Select the text field with the remote first, then close the on-screen keyboard (BACK):
-apps receive the text only while their keyboard is hidden. Some fields add the text to what they hold,
-others replace it.
+a search box. Select the text field with the remote first; the on-screen keyboard can stay up. The text
+goes in at the cursor, and some fields replace what they hold instead.
 
-In a rule or flow, send `sendKey BACK` and wait a moment before `sendText` (the shortest wait that works is not known yet). Do this only when the
-keyboard is sure to be up, such as right after opening the search box: with no keyboard showing, BACK
-leaves the screen and the text goes nowhere. No box seen reports whether its keyboard is up, so the driver
-leaves this to the caller.
-
-Confirmed on an NVIDIA SHIELD: text sent with the keyboard up didn't appear; after one BACK it did. The
-Android TV Remote Tester's test 14 tries it on the search screen and records what the box sends: post its
-report in the forum thread, with whether the text appeared.
+The driver sends the text with the counter the box last reported for the text field, which is what the
+box checks; a wrong counter is dropped without an error. Confirmed on the EBOX, keyboard up or down.
+Driver 0.3.2 and earlier sent the wrong counter, so text then showed only after BACK closed the keyboard.
+On some boxes SEARCH opens a voice prompt with no text field (the EBOX's has a keyboard icon that opens
+one). The Android TV Remote Tester's test 14 tries it on the search screen and records what the box
+sends: post its report in the forum thread, with whether the text appeared.
 
 ## Android TV Remote Tester (optional)
 

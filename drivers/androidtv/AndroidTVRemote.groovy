@@ -32,7 +32,7 @@ metadata {
         command "disconnect"
         command "sendKey", [[name: "key", type: "STRING", description: "Key name (HOME, BACK, DPAD_UP, MEDIA_PLAY_PAUSE...) or Android key code number"]]
         command "launchApp", [[name: "appLink", type: "STRING", description: "A link the app handles, such as https://www.youtube.com. Package names no longer launch apps on most TVs"]]
-        command "sendText", [[name: "text", type: "STRING", description: "Text for the text field that has focus on the TV, such as a search box. Close the on-screen keyboard first"]]
+        command "sendText", [[name: "text", type: "STRING", description: "Text for the text field that has focus on the TV, such as a search box"]]
 
         attribute "networkStatus", "enum", ["online", "offline"]
         attribute "pairing", "enum", ["unpaired", "pairing", "awaiting code", "paired"]
@@ -61,7 +61,7 @@ import java.security.Signature
 import java.security.cert.CertificateFactory
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.3.2"
+@Field static final String CODE_VERSION = "0.3.3"
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int PAIRING_PORT = 6467
 @Field static final String MDNS_SERVICE = "_androidtvremote2._tcp"
@@ -456,6 +456,7 @@ void connect() {
     r.fresh = false
     r.mode = "remote"
     r.ready = false
+    r.textField = null
     r.pending = []
     r.buf = ""
     r.closing = false
@@ -604,16 +605,20 @@ private void handleRemoteMessage(String hex) {
         closeSocketLater()
         r.mode = null
         runIn(1, "connect")
-    } else if (m.containsKey(20)) {                             // remote_ime_key_inject
+    } else if (m.containsKey(20)) {                             // remote_ime_key_inject: app, and the text field with focus
         Map<Integer, List> ime = pDecode(pFirst(m, 20) as String)
         if (ime.containsKey(1)) {
             String app = utf8(pFirst(pDecode(pFirst(ime, 1) as String), 12) as String)
             if (app) sendEvent(name: "currentApp", value: app)
         }
-    } else if (m.containsKey(21)) {                             // remote_ime_batch_edit: a text field has focus
+        noteTextField(r, ime.containsKey(2) ? pDecode(pFirst(ime, 2) as String) : null)
+    } else if (m.containsKey(21)) {                             // remote_ime_batch_edit: the keyboard opened (1) or closed (0)
         Map<Integer, List> edit = pDecode(pFirst(m, 21) as String)
         r.imeCounter = (pFirst(edit, 1) ?: 0L) as Long
-        r.imeField = (pFirst(edit, 2) ?: 0L) as Long
+    } else if (m.containsKey(22)) {                             // remote_ime_show_request: the text field after an edit
+        Map<Integer, List> show = pDecode(pFirst(m, 22) as String)
+        if (show.containsKey(2)) noteTextField(r, pDecode(pFirst(show, 2) as String))
+    } else if (m.containsKey(23)) {                             // cursor moved; carries no field counter
     } else if (m.containsKey(40)) {                             // remote_start
         boolean on = ((pFirst(pDecode(pFirst(m, 40) as String), 1) ?: 0L) as Long) != 0L
         sendEvent(name: "switch", value: on ? "on" : "off")
@@ -704,13 +709,30 @@ void launchApp(String appLink) {
 }
 
 // The edit carries the counters of the TV's last text-field message, or 0 before any, as androidtvremote2 does.
+// The box drops an edit whose field counter is ahead of its own or far behind it, without an error. It
+// takes the counter it last reported (a cursor move or two behind is fine), and it takes 0/0 at any time.
+// The counters in the box's message 21 (1/1 while the keyboard is up) are not the field's and get dropped.
 void sendText(String text) {
     if (!text) return
     Map r = rt()
     logCmd "Text ${text}"
     long end = text.length() - 1
     String field = pInt(1, end) + pInt(2, end) + pStr(3, text)
-    sendRemote(pMsg(21, pInt(1, (r.imeCounter ?: 0L) as long) + pInt(2, (r.imeField ?: 0L) as long) + pMsg(3, pInt(1, 1) + pMsg(2, field))))
+    Map tf = r.textField as Map
+    long ime = tf ? (r.imeCounter ?: 0L) as long : 0L
+    long counter = tf ? tf.counter as long : 0L
+    sendRemote(pMsg(21, pInt(1, ime) + pInt(2, counter) + pMsg(3, pInt(1, 1) + pMsg(2, field))))
+}
+
+// Field 2 of messages 20 and 22: counter, value, cursor start and end. Null when no text field has focus.
+private void noteTextField(Map r, Map<Integer, List> status) {
+    if (status == null) {
+        r.textField = null
+        return
+    }
+    String value = utf8(pFirst(status, 2) as String) ?: ""
+    r.textField = [counter: (pFirst(status, 1) ?: 0L) as Long, value: value]
+    logDebug "Text field: \"${value}\""
 }
 
 private void sendKeyCode(int code) {

@@ -125,7 +125,8 @@ def handle_remote(conn):
         log("remote: unpaired client, closing")
         return
     log("remote: TLS", conn.get_protocol_version_name(), "profile", P["vendor"], P["model"])
-    st = {"on": True, "level": P["volumeLevel"], "max": P["volumeRange"], "muted": False, "ping": 0, "pong": 0, "alive": True}
+    st = {"on": True, "level": P["volumeLevel"], "max": P["volumeRange"], "muted": False, "ping": 0, "pong": 0, "alive": True,
+          "app": None, "field": None}
 
     def power():
         m = RemoteMessage(); m.remote_start.started = st["on"]; send(conn, m)
@@ -137,7 +138,30 @@ def handle_remote(conn):
         send(conn, v)
 
     def app(package):
+        st["app"] = package; st["field"] = None
         a = RemoteMessage(); a.remote_ime_key_inject.app_info.app_package = package; send(conn, a)
+
+    def field_status(status):
+        f = st["field"]
+        status.counter_field = f["counter"]; status.value = f["value"]; status.start = status.end = len(f["value"])
+
+    def keyboard(up):
+        st["field"]["keyboard"] = up
+        b = RemoteMessage(); b.remote_ime_batch_edit.ime_counter = b.remote_ime_batch_edit.field_counter = int(up); send(conn, b)
+
+    # A text field on the search screen, as the EBOX has it: CENTER opens it with the keyboard up, BACK closes the
+    # keyboard. Edits apply with counters 0/0, or with a field counter at most 10 behind the box's; others are dropped.
+    def text_edit(edit):
+        f = st["field"]
+        if not f:
+            return
+        ime, counter = edit.ime_counter, edit.field_counter
+        if not ((ime, counter) == (0, 0) or f["counter"] - 10 <= counter <= f["counter"]):
+            log(f"remote: edit dropped, counters {ime}/{counter}, field at {f['counter']}")
+            return
+        f["value"] += edit.edit_info.text_field_status.value
+        f["counter"] += len(edit.edit_info.text_field_status.value)
+        m = RemoteMessage(); field_status(m.remote_ime_show_request.remote_text_field_status); send(conn, m)
 
     def pinger():
         while st["alive"]:
@@ -192,6 +216,15 @@ def handle_remote(conn):
                 app(P["homeApp"])
             elif k == 84:
                 app(P["searchApp"])
+            elif k == 23 and P.get("textFieldCounter") is not None and st["app"] == P["searchApp"] and not st["field"]:
+                st["field"] = {"counter": P["textFieldCounter"], "value": ""}
+                a = RemoteMessage(); a.remote_ime_key_inject.app_info.app_package = st["app"]
+                field_status(a.remote_ime_key_inject.text_field_status); send(conn, a)
+                keyboard(True)
+            elif k == 4 and st["field"] and st["field"].get("keyboard"):
+                keyboard(False)
+        elif msg.HasField("remote_ime_batch_edit"):
+            text_edit(msg.remote_ime_batch_edit)
         elif msg.HasField("remote_app_link_launch_request"):
             link = msg.remote_app_link_launch_request.app_link
             schemes = P["linkSchemes"]

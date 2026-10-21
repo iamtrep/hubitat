@@ -353,15 +353,23 @@ it pairs. Leading zero bytes of each number are dropped before hashing *(spec: [
   The same key and link held until the box's first `remote_start` (message 40), then sent, both worked *(probed 2.5.2.139, C-7, Android TV Remote driver 0.3.0 with held commands)*.
 - A second connection from the same client while a session was open got the box's `remote_configure`, and the
   client's answer failed with `send error: Connection or outbound has closed` *(probed 2.5.2.139, C-7, Android TV Remote driver 0.3.0)*.
-- Text is typed with `remote_ime_batch_edit` (message 21): the client echoes the IME and field counters of
-  the box's last message 21 and sends the text as an insert edit. Apps take it only while their on-screen
-  keyboard is hidden, and some fields add it to their text while others replace it *(community: [androidtvremote2 #25](https://github.com/tronikos/androidtvremote2/pull/25); community: [androidtvremote2 #32](https://github.com/tronikos/androidtvremote2/issues/32))*.
-- On the `uiw4020ebx` box (remote service `7.00.999235495`), neither the Assistant search screen
-  (`com.google.android.katniss`) nor YouTube's search page brought a message 21, and every
-  `remote_ime_key_inject` carried only the app (field 1), no text field status (field 2) *(absent: probed 2.5.2.139, C-7, Android TV Remote driver 0.2.0 with sendText)*.
-  A message 21 with both counters 0 sent to the search screen drew neither a reply nor `remote_error`; whether the text reached the screen was not seen *(probed 2.5.2.139, C-7, Android TV Remote driver 0.2.0 with sendText and Tester 0.5.0)*.
-  The search screen closed by itself 9–11 s after it opened, whether or not text was sent, and BACK on the
-  home screen after it closed once brought an empty message 24, a type the reference proto doesn't list *(probed 2.5.2.139, C-7, Android TV Remote Tester 0.5.0)*.
+- Text is typed with `remote_ime_batch_edit` (message 21) as an insert edit. androidtvremote2 echoes the
+  IME and field counters of the box's last message 21, and some fields add the text to theirs while others
+  replace it *(community: [androidtvremote2 #25](https://github.com/tronikos/androidtvremote2/pull/25); community: [androidtvremote2 #32](https://github.com/tronikos/androidtvremote2/issues/32))*.
+- On the `uiw4020ebx` box (remote service `7.00.999235495`), SEARCH opens the Assistant overlay
+  (`com.google.android.katniss`, "Ask me something" with suggestion pills). It listens for speech and closes
+  by itself 9–11 s after it opens, and it has no text field *(probed 2.5.2.139, C-7, Android TV Remote Tester 0.5.0 and driver 0.3.2)*.
+  BACK on the home screen after it closed once brought an empty message 24, a type the reference proto doesn't list *(probed 2.5.2.139, C-7, Android TV Remote Tester 0.5.0)*.
+  The overlay's keyboard icon, selected with the physical remote, opens a text field with the keyboard up *(probed 2.5.2.139, C-7, Android TV Remote driver 0.3.2 and 0.3.3)*.
+- On that box, a text field taking focus brings a message 20 with the text field status in field 2
+  (`counter_field`, value, cursor start and end, label), then a message 21 `{{1:1 2:1}}`. BACK closing the
+  keyboard brings a message 21 `{{1:0 2:0}}`; each cursor move brings a message 23 with the new cursor start and
+  end and no counter, and each applied edit brings a message 22 with the field status *(probed 2.5.2.139, C-7, Android TV Remote driver 0.3.2 and 0.3.3)*.
+- On that box, an edit applies with the keyboard up or down when its counters are 0/0, or when its field
+  counter is the box's last `counter_field` or a few steps behind it (2 cursor moves behind applied). The
+  counters 1/1 of the box's message 21, a field counter 75 behind, and one far ahead of the box's (999) were dropped
+  with no reply and no `remote_error`. With 0/0 the box types the text one character at a time (a message 22
+  per character); with its own counter it inserts the text at the cursor in one edit *(probed 2.5.2.139, C-7, Android TV Remote driver 0.3.2 and 0.3.3)*.
 - On an NVIDIA SHIELD (Android 11, remote service `7.00.999235495`), text sent while the search box's
   on-screen keyboard was up did not appear. After one BACK closed the keyboard and left the search box on
   screen, the text appeared in the box and the search could be run. The box sent no message 21, and the

@@ -27,7 +27,7 @@ import java.security.MessageDigest
 import java.security.cert.CertificateFactory
 import java.text.SimpleDateFormat
 
-@Field static final String CODE_VERSION = "0.5.1"
+@Field static final String CODE_VERSION = "0.5.2"
 
 @Field static final String BUSY = "a run is in progress"
 
@@ -601,7 +601,7 @@ Map evaluateTest(int test, List<Map> lines, Map steps, Map run, List<Map> events
             break
         case 14:
             f = evalText(lines)
-            r.note = "say in your post whether \"hubitat\" appeared in the search box, and whether BACK closed only the keyboard or the whole search screen"
+            r.note = "say in your post whether \"hubitat\" appeared in the search box"
             break
         default: f = [:]
     }
@@ -672,12 +672,10 @@ List<Map> stepsFor(int test, Map run) {
                          [name: "standby", sleep: 30],
                          [name: "findOff", cmd: "findTvs", wait: '^Found |^No Android TV', timeout: 20, after: 2],
                          [name: "on", cmd: "on", wait: '^rx 40:\\{1:1\\}', timeout: 20, after: 3]]
-        // Apps take text only while their on-screen keyboard is hidden, so one BACK closes it first. The text
-        // follows SEARCH by 3 s with no log read between: the search screen closes itself 9-11 s after it
-        // opens. The text stays on screen 6 s, for whoever watches the TV.
+        // The text follows SEARCH by 2 s with no log read between: the search screen closes itself 9-11 s
+        // after it opens. The text stays on screen 6 s, for whoever watches the TV.
         case 14: return [[name: "home", cmd: "sendKey", args: ["HOME"], after: 3],
                          [name: "search", cmd: "sendKey", args: ["SEARCH"], after: 2],
-                         [name: "hideKeyboard", cmd: "sendKey", args: ["BACK"], after: 1],
                          [name: "text", cmd: "sendText", args: ["hubitat"], after: 6],
                          [name: "back", cmd: "sendKey", args: ["BACK"], after: 2],
                          [name: "home2", cmd: "sendKey", args: ["HOME"], after: 2]]
@@ -792,7 +790,7 @@ String otherMessages(List<Map> lines) {
         def m = (l.msg as String) =~ /^rx (\d+):/
         if (!m.find()) continue
         Integer t = m.group(1) as Integer
-        if (!(t in [1, 2, 3, 20, 21, 40, 50])) seen << t
+        if (!(t in [1, 2, 3, 20, 21, 22, 23, 40, 50])) seen << t
     }
     return seen ? seen.join(",") : null
 }
@@ -955,7 +953,7 @@ Map evalLaunch(List<Map> lines, Map steps) {
 // field 2, or message 21), and whether it refused the text.
 Map evalText(List<Map> lines) {
     String searchApp = null, code = null
-    boolean searched = false, sent = false, rejected = false, field = false, edit = false, editAfterText = false
+    boolean searched = false, sent = false, rejected = false, field = false, edit = false, editAfterText = false, echoed = false
     for (Map l : lines) {
         String msg = l.msg as String
         if (msg == "Key 84") searched = true
@@ -966,13 +964,14 @@ Map evalText(List<Map> lines) {
         }
         if (msg =~ /^rx 20:.*\x7D 2:\x7B/) field = true
         if (msg.startsWith("rx 21:")) { edit = true; if (sent) editAfterText = true }
+        if (sent && msg.startsWith("rx 22:")) echoed = true
         if (sent && !rejected) {
             def m = msg =~ /^TV rejected .*\(error (\S+)\)/
             if (m.find()) { rejected = true; code = m.group(1) }
         }
     }
     return [searchApp: searchApp, fieldReported: field, editReported: edit, editAfterText: editAfterText,
-            textSent: sent, accepted: !rejected, errorCode: code]
+            textSent: sent, accepted: !rejected, textEchoed: echoed, errorCode: code]
 }
 
 Map evalRecovery(List<Map> lines, Map steps, TimeZone tz) {
