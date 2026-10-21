@@ -128,7 +128,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "0.8.9";
+const CODE_VERSION = "0.9.0";
 const APP_VERSION = '${app_version}';   // injected by serveUI; stays literal in workbench/dev
 
 // ===== Z-WAVE MANUFACTURER TABLE (decimal maker-id -> name, from zwave-js) =====
@@ -937,10 +937,30 @@ async function renderConfig(){
         const gh = document.getElementById('cfgGh');
         if(gh){
           if(v.updateAvailable)
-            gh.innerHTML = `⬆ <b>v${esc(v.latestVersion)}</b> available on GitHub.`;
+            gh.innerHTML = `⬆ <b>v${esc(v.latestVersion)}</b> available on GitHub.`
+              + (v.selfUpdate ? ' <button class="btn btn-p btn-s" id="btnSelfUpdate">Update now</button>' : '');
           else if(v.latestVersion)
             gh.textContent = 'Up to date.';
         }
+        const up = document.getElementById('btnSelfUpdate');
+        if(up) up.onclick = async () => {
+          const msg = document.getElementById('cfgMsg');
+          up.disabled = true; up.textContent = 'Updating…';
+          try {
+            const j = await (await fetch(`${B}/api/version/update`, { method: 'POST', headers: AUTH() })).json();
+            if(!j.success){ if(msg) msg.innerHTML = '<span class="warn">' + esc(j.error || 'Update failed.') + '</span>'; up.disabled = false; up.textContent = 'Update now'; return; }
+            // The new code starts once the update request returns: wait for it, then fetch its UI.
+            for(let i = 0; i < 15; i++){
+              await new Promise(res => setTimeout(res, 2000));
+              const c = await fetch(`${B}/api/version/check`, { headers: AUTH() }).then(x => x.json()).catch(() => null);
+              if(c && c.currentVersion === v.latestVersion){
+                await fetch(`${B}/api/ui/sync`, { method: 'POST', headers: AUTH() }).catch(() => {});
+                location.reload(); return;
+              }
+            }
+            if(msg) msg.innerHTML = '<span class="warn">The app code was updated but the new version has not started yet. Reload the page in a minute.</span>';
+          } catch(e){ if(msg) msg.innerHTML = '<span class="warn">Update failed: ' + esc(e.message || e) + '</span>'; up.disabled = false; up.textContent = 'Update now'; }
+        };
         const code = document.getElementById('cfgCode');
         if(code && v.editorPath){ code.href = v.editorPath; code.style.display = ''; }
       }

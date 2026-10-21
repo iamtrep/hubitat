@@ -152,7 +152,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "6.1.12";
+const CODE_VERSION = "6.1.13";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -2216,8 +2216,26 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
     const el=document.getElementById('updateBanner');
     if(!el||v.error)return;
     if(v.updateAvailable){
-      const link=v.editorPath?'<a href="'+v.editorPath+'" target="_blank" style="color:inherit;font-weight:bold">Open Apps Code</a>':'update via Apps Code';
-      el.innerHTML='<div class="alert a-warn" style="margin-bottom:12px">\u26A0 <b>New version available:</b> v'+h(v.latestVersion)+' (you have v'+h(v.currentVersion)+'). '+link+' and use Import to update.</div>';
+      const link=v.editorPath?'<a href="'+v.editorPath+'" target="_blank" style="color:inherit;font-weight:bold">Apps Code</a>':'Apps Code';
+      const how=v.selfUpdate?'<button class="btn btn-p" id="btnSelfUpdate" style="margin-left:6px">Update now</button> or use Import in '+link+'.':'Use Import in '+link+' to update.';
+      el.innerHTML='<div class="alert a-warn" style="margin-bottom:12px">\u26A0 <b>New version available:</b> v'+h(v.latestVersion)+' (you have v'+h(v.currentVersion)+'). '+how+'</div>';
+      const b=document.getElementById('btnSelfUpdate');
+      if(b)b.onclick=async()=>{
+        if(!confirm('Update Hub Inspector to v'+v.latestVersion+' from GitHub?'))return;
+        b.disabled=true;b.textContent='Updating...';
+        try{
+          const r=await post('version/update');
+          if(!r.success){alert(r.error||'Update failed.');b.disabled=false;b.textContent='Update now';return}
+          // The new code starts once the update request returns: wait for it (bypassing the
+          // api() cache), then fetch its matching UI and reload.
+          for(let i=0;i<15;i++){
+            await new Promise(res=>setTimeout(res,2000));
+            const c=await fetch(B+'/api/version/check',{headers:AUTH()}).then(x=>x.json()).catch(()=>null);
+            if(c&&c.currentVersion===v.latestVersion){await post('ui/sync').catch(()=>{});location.reload();return}
+          }
+          alert('The app code was updated but the new version has not started yet. Reload the page in a minute.');
+        }catch(e){alert('Update failed: '+e.message);b.disabled=false;b.textContent='Update now'}
+      };
     } else if(v.editorPath){
       el.innerHTML='<div style="margin-bottom:8px"><a href="'+v.editorPath+'" target="_blank" style="color:var(--link)">Open Apps Code</a></div>';
     }

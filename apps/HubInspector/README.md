@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
 <!-- AUTO:hubinspector-version -->
-**Current version:** 6.1.12
+**Current version:** 6.1.13
 <!-- /AUTO -->
 
 ---
@@ -82,7 +82,9 @@ The Dashboard tab shows the current App Version and UI Version, plus a banner wh
 When a newer release is published on GitHub, the app appends a green **update available** badge to its label on the Apps list, so you can spot an available update without opening the app. The badge is reconciled daily (and whenever the app re-initializes) and clears itself once the installed code catches up.
 
 ### Updating the Groovy app
-Use **Apps Code → Hub Inspector → Import** (same import URL as above). After saving, open the app and click **Done**, or open the dashboard.
+On hub firmware 2.5.3.103 or later, the update banner on the app page and on the dashboard has an **Update now** button. It replaces the app code with the GitHub release, re-initializes the app and installs the matching UI. If the hub refuses the update, the banner says so and the Import route below still works.
+
+Otherwise, use **Apps Code → Hub Inspector → Import** (same import URL as above). After saving, open the app and click **Done**, or open the dashboard.
 
 > **Upgrade floor:** v5.77.0 removed the one-shot storage migrations for pre-v5.33.0 storage
 > formats. Upgrading from a version older than 5.33.0? Install any 5.7x release ≤ 5.76.x first —

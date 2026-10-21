@@ -6,10 +6,12 @@ import groovy.transform.Field
 import java.util.concurrent.ConcurrentHashMap
 import java.nio.file.NoSuchFileException
 
-@Field static final String CODE_VERSION = "0.8.9"
+@Field static final String CODE_VERSION = "0.9.0"
 @Field static final String UI_FILE = "multi_hub_inventory_ui.html"
 @Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/MultiHubInventory.groovy"
 @Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/multi_hub_inventory_ui.html"
+// updateSelfFromUrl() first appears in this build; older hubs keep the Apps Code Import link.
+@Field static final String SELF_UPDATE_MIN_FW = "2.5.3.103"
 @Field static volatile String uiVersionCache = null
 @Field static volatile boolean githubVersionRefreshPending = false
 // Peer probe results, keyed "${app.id}:${pid}" -> [baseUrl, reachable]. Kept out of state.peerList so
@@ -47,6 +49,7 @@ mappings {
     path('/api/peer')  { action: [GET: 'apiPeer'] }
     path('/api/reinit') { action: [POST: 'apiReinit'] }
     path('/api/version/check') { action: [GET: 'apiVersionCheck'] }
+    path('/api/version/update') { action: [POST: 'apiSelfUpdate'] }
     path('/api/ui/sync')       { action: [POST: 'apiSyncUI'] }
 }
 
@@ -88,10 +91,16 @@ Map mainPage() {
             } else {
                 paragraph "<small>App v${CODE_VERSION} · Dashboard UI v${uiVer}</small>"
             }
+            if (state.selfUpdateError) {
+                paragraph "⚠️ <b>Update failed:</b> ${state.selfUpdateError}"
+                state.remove('selfUpdateError')
+            }
             if (isNewer(latest, CODE_VERSION)) {
                 String ep = getAppEditorPath()
-                String importLink = ep ? "<a href='${ep}' target='_blank'>Open App Code Editor</a> and use Import to update." : "Use <b>Import</b> on the Apps Code page to update."
+                String codeLink = ep ? "<a href='${ep}' target='_blank'>Apps Code</a>" : "Apps Code"
+                String importLink = selfUpdateSupported() ? "Click <b>Update now</b> below, or use Import in ${codeLink}." : "Use Import in ${codeLink} to update."
                 paragraph "🔄 <b>Update available:</b> v${latest} on GitHub (you have v${CODE_VERSION}). ${importLink}"
+                if (selfUpdateSupported()) input "btnSelfUpdate", "button", title: "Update now"
             }
         }
         section("Logging") {
@@ -138,6 +147,11 @@ private String peerToken(Map peer) {
 
 void appButtonHandler(String btn) {
     checkVersion()
+    if (btn == 'btnSelfUpdate') {
+        Map r = selfUpdate()
+        if (!r.success) state.selfUpdateError = r.error
+        return
+    }
     List ids = (state.peerIds ?: []) as List
     if (btn == 'btnAddHub') {
         Integer next = ids ? ((ids.max() as Integer) + 1) : 1
@@ -486,8 +500,42 @@ Map apiVersionCheck() {
         currentVersion: CODE_VERSION,
         latestVersion: latest,
         updateAvailable: isNewer(latest, CODE_VERSION),
-        editorPath: getAppEditorPath()
+        editorPath: getAppEditorPath(),
+        selfUpdate: selfUpdateSupported()
     ])
+}
+
+// POST /api/version/update — replace the app code with the GitHub copy.
+Map apiSelfUpdate() {
+    checkVersion()
+    if (!checkOAuth()) return render(status: 403, contentType: 'text/plain', data: 'OAuth not enabled')
+    return jsonResponse(selfUpdate())
+}
+
+private boolean selfUpdateSupported() {
+    String fw = location.hubs ? (location.hubs[0].firmwareVersionString ?: '') : ''
+    return fw && !isNewer(SELF_UPDATE_MIN_FW, fw)
+}
+
+// The hub refuses (returns false) a source that fails to compile or carries another definition
+// name or namespace. This invocation finishes on the old code and the platform runs neither
+// updated() nor installed(), so schedule updated(): it runs the new code and syncs the matching UI.
+private Map selfUpdate() {
+    if (!selfUpdateSupported()) return [success: false, error: "Updating from the app needs hub firmware ${SELF_UPDATE_MIN_FW} or later."]
+    boolean ok
+    try {
+        ok = updateSelfFromUrl(IMPORT_URL_APP) as boolean
+    } catch (Exception e) {
+        logError "Self-update from ${IMPORT_URL_APP} failed: ${e.message}"
+        return [success: false, error: "Update failed: ${e.message}. Use Import on the Apps Code page instead."]
+    }
+    if (!ok) {
+        logWarn "Hub refused the update from ${IMPORT_URL_APP}"
+        return [success: false, error: "The hub refused the update. Use Import on the Apps Code page instead."]
+    }
+    logInfo "App code replaced from GitHub (was v${CODE_VERSION}); re-initializing"
+    runIn(2, 'updated')
+    return [success: true, previousVersion: CODE_VERSION]
 }
 
 // POST /api/ui/sync — manual re-download of the UI HTML from GitHub, for the SPA's Check-for-updates button.

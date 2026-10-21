@@ -83,6 +83,11 @@ its label on the Apps list, so you can spot an available update without opening 
 is reconciled daily (and whenever the app re-initializes) and clears itself once the installed code
 catches up.
 
+On hub firmware 2.5.3.103 or later, the update notice on the settings page and the dashboard's
+About tab has an **Update now** button. It replaces the app code with the GitHub release,
+re-initializes the app and installs the matching dashboard HTML. On older firmware, or if the hub
+refuses the update, use Import on the Apps Code page.
+
 ## Adding a hub
 
 A hub can only be added once it has a configured Hub Inspector instance (see **Requirements**

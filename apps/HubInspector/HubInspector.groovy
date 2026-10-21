@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "6.1.12"
+@Field static final String CODE_VERSION = "6.1.13"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -78,6 +78,8 @@ import java.util.concurrent.atomic.AtomicInteger
 // Minimum platform firmware Hub Inspector is developed and tested against. Older builds may
 // lack endpoints/behaviours the app relies on; below this the Versions section shows a warning.
 @Field static final String MIN_FW_SUPPORTED = "2.5.0"
+// updateSelfFromUrl() first appears in this build; older hubs keep the Apps Code Import link.
+@Field static final String SELF_UPDATE_MIN_FW = "2.5.3.103"
 @Field static final long   FW_UPDATE_CACHE_TTL_MS = 3600_000L
 
 // ===== Device Usage Audit constants =====
@@ -389,6 +391,7 @@ mappings {
     path('/api/snapshot/view')    { action: [GET: 'apiSnapshotView'] }
     path('/api/stats')            { action: [GET: 'apiStats'] }
     path('/api/version/check')    { action: [GET: 'apiVersionCheck'] }
+    path('/api/version/update')   { action: [POST: 'apiSelfUpdate'] }
     path('/api/reports')          { action: [GET: 'apiReports'] }
 
     // ===== App-owned mutations =====
@@ -463,10 +466,16 @@ Map dashboardPage() {
             if (firmwareUnsupported) {
                 paragraph "<span style='color:red; font-weight:bold;'>\u26A0 Unsupported hub firmware:</span> Hub Inspector is developed and tested against platform ${MIN_FW_SUPPORTED} and later \u2014 your hub runs ${hubFw}. Some features may be unavailable or behave unexpectedly. Updating the hub firmware is recommended."
             }
+            if (state.selfUpdateError) {
+                paragraph "<span style='color:red; font-weight:bold;'>\u26A0 Update failed:</span> ${state.selfUpdateError}"
+                state.remove('selfUpdateError')
+            }
             if (githubUpdateAvailable) {
                 String editorPath = getAppEditorPath()
-                String importLink = editorPath ? "<a href='${editorPath}' target='_blank'>Open Apps Code</a> and use Import to update." : "Update via Apps Code using Import."
+                String codeLink = editorPath ? "<a href='${editorPath}' target='_blank'>Apps Code</a>" : "Apps Code"
+                String importLink = selfUpdateSupported() ? "Click <b>Update now</b> below, or use Import in ${codeLink}." : "Use Import in ${codeLink} to update."
                 paragraph "<span style='color:orange; font-weight:bold;'>\u26A0 New version available:</span> v${remoteVersion} (you have v${CODE_VERSION}). ${importLink}"
+                if (selfUpdateSupported()) input "btnSelfUpdate", "button", title: "Update now"
             }
             if (appUpdateNeeded) {
                 paragraph "<span style='color:red; font-weight:bold;'>\u26A0 Update Recommended:</span> A newer UI version (${uiVer}) is active than this App code (${CODE_VERSION}). Please update the Groovy App Code in Hubitat."
@@ -686,8 +695,46 @@ Map apiVersionCheck() {
         currentVersion: CODE_VERSION,
         latestVersion: latestVersion,
         updateAvailable: updateAvailable,
-        editorPath: getAppEditorPath()
+        editorPath: getAppEditorPath(),
+        selfUpdate: selfUpdateSupported()
     ])
+}
+
+Map apiSelfUpdate() {
+    return jsonResponse(selfUpdate())
+}
+
+void appButtonHandler(String btn) {
+    if (btn == 'btnSelfUpdate') {
+        Map r = selfUpdate()
+        if (!r.success) state.selfUpdateError = r.error
+    }
+}
+
+private boolean selfUpdateSupported() {
+    return isVersionAtLeast(getHubFirmwareVersion(), SELF_UPDATE_MIN_FW)
+}
+
+// Replace this app's code with the GitHub copy. The hub refuses (returns false) a source that
+// fails to compile or carries another definition name or namespace. This invocation finishes on
+// the old code and the platform runs neither updated() nor installed(), so schedule updated():
+// it runs the new code, re-arms schedules and syncs the matching UI.
+private Map selfUpdate() {
+    if (!selfUpdateSupported()) return [success: false, error: "Updating from the app needs hub firmware ${SELF_UPDATE_MIN_FW} or later."]
+    boolean ok
+    try {
+        ok = updateSelfFromUrl(IMPORT_URL_APP) as boolean
+    } catch (Exception e) {
+        logError "Self-update from ${IMPORT_URL_APP} failed: ${e.message}"
+        return [success: false, error: "Update failed: ${e.message}. Use Import on the Apps Code page instead."]
+    }
+    if (!ok) {
+        logWarn "Hub refused the update from ${IMPORT_URL_APP}"
+        return [success: false, error: "The hub refused the update. Use Import on the Apps Code page instead."]
+    }
+    logInfo "App code replaced from GitHub (was v${CODE_VERSION}); re-initializing"
+    runIn(2, 'updated')
+    return [success: true, previousVersion: CODE_VERSION]
 }
 
 // Reflect GitHub update status in the app label so the Apps list shows a green "update available"
