@@ -370,6 +370,12 @@ it pairs. Leading zero bytes of each number are dropped before hashing *(spec: [
   counters 1/1 of the box's message 21, a field counter 75 behind, and one far ahead of the box's (999) were dropped
   with no reply and no `remote_error`. With 0/0 the box types the text one character at a time (a message 22
   per character); with its own counter it inserts the text at the cursor in one edit *(probed 2.5.2.139, C-7, Android TV Remote driver 0.3.2 and 0.3.3)*.
+  Accented text (UTF-8) reached these fields intact, and the cursor in the echo counts characters, not bytes. The key DEL (code 67) deletes one character per press and brings a message 22 each time *(probed 2.5.2.139, C-7, Android TV Remote driver 0.3.3)*.
+- On that box, the EBOX app's own search field (`ca.ebox.tv.platform`) reported itself in message 20 field 2
+  with no message 21, and took text sent with its field counter, echoed one character at a time *(probed 2.5.2.139, C-7, Android TV Remote driver 0.3.3)*.
+- On that box, YouTube's search screen (`com.google.android.youtube.tv`) reported no text field. Text sent
+  with counters 0/0 brought no message 22 and no `remote_error`, yet its ASCII letters appeared in the search
+  box and its accented letters were dropped (`météo` showed as `mto`) *(probed 2.5.2.139, C-7, Android TV Remote driver 0.3.3)*.
 - On an NVIDIA SHIELD (Android 11, remote service `7.00.999235495`), text sent while the search box's
   on-screen keyboard was up did not appear. After one BACK closed the keyboard and left the search box on
   screen, the text appeared in the box and the search could be run. The box sent no message 21, and the

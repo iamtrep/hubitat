@@ -82,7 +82,7 @@ Test 14, Text input, presses SEARCH, sends `sendText "hubitat"` and leaves it on
 the app the search key opened, whether the box reported a focused text field (`fieldReported`: message
 20 with field 2; `editReported`: message 21), whether it echoed the text back (`textEchoed`: message 22)
 and whether it refused it, with its decoded lines in every run. Without an echo, whether the word showed
-on screen only the person watching can say. On a box whose search key opens a voice prompt (the EBOX)
+on screen only the person watching can say: YouTube's search on the EBOX shows the text without echoing it. On a box whose search key opens a voice prompt (the EBOX)
 there is no text field to type into. The mock has a text field only with `textFieldCounter` in its
 profile, opened with CENTER, which test 14 doesn't press.
 
