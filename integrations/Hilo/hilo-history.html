@@ -29,6 +29,7 @@ SPDX-License-Identifier: MIT
         --peak-text: #b45309;
         --sel: #d97706;
         --grid: rgba(0,0,0,0.08);
+        --temp: #dc2626;
     }
     /* Dark palette follows the hub's dark theme; the script above sets data-hubitat-theme. */
     :root[data-hubitat-theme="dark"] {
@@ -44,6 +45,7 @@ SPDX-License-Identifier: MIT
         --peak-text: #fbbf24;
         --sel: #fbbf24;
         --grid: rgba(255,255,255,0.08);
+        --temp: #f87171;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
@@ -67,6 +69,10 @@ SPDX-License-Identifier: MIT
     .peak { fill: var(--peak); }
     .line { fill: none; stroke: var(--primary); stroke-width: 2; }
     .dot { fill: var(--primary); }
+    .dot.sel { fill: var(--sel); }
+    .tline { fill: none; stroke: var(--temp); stroke-width: 1.5; stroke-linejoin: round; pointer-events: none; }
+    svg text.taxis { fill: var(--temp); }
+    .legend .t { color: var(--temp); font-weight: 500; }
     table { width: 100%; border-collapse: collapse; font-size: 0.88rem; font-variant-numeric: tabular-nums; }
     th, td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
     th:first-child, td:first-child { text-align: left; }
@@ -109,10 +115,15 @@ const monthName = m => `${MONTHS[+m.slice(5, 7) - 1]} ${m.slice(0, 4)}`;
 const dayName = d => new Date(d + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 const hourOf = start => +start.slice(11, 13);
 const inPeak = h => PEAKS.some(([a, b]) => h >= a && h < b);
+// Outdoor temperature comes from Open-Meteo's historical API at the hub's coordinates. Asked in UTC
+// epoch seconds: its local-time output has 24 hours on clock-change days.
+const TEMP_URL = 'https://archive-api.open-meteo.com/v1/archive';
 
 let files = {};   // location -> [{month, name}]
 let days = [];    // [{date, hours:[{h, kWh}], total, nulls, n}] for the chosen location, sorted
 let selDay = null;
+let temps = null; // {byHour: Map(epoch s -> degrees), unit, note}; null until loaded or when unavailable
+let tempNote = '';
 
 async function getJson(url) {
     const r = await fetch(url, { cache: 'no-store' });
@@ -148,7 +159,7 @@ async function loadLocation(loc) {
     const all = {};
     docs.forEach(d => Object.assign(all, (d && d.days) || {}));
     days = Object.keys(all).sort().map(date => {
-        const hours = (all[date] || []).map(x => ({ h: hourOf(x.start), kWh: x.kWh == null ? null : +x.kWh }));
+        const hours = (all[date] || []).map(x => ({ h: hourOf(x.start), at: Date.parse(x.start) / 1000, kWh: x.kWh == null ? null : +x.kWh }));
         const known = hours.filter(x => x.kWh != null);
         return { date, hours, n: hours.length, nulls: hours.length - known.length, total: known.reduce((s, x) => s + x.kWh, 0) };
     });
@@ -159,8 +170,37 @@ async function loadLocation(loc) {
         months.slice().reverse().map(m => `<option value="${m}">${monthName(m)}</option>`).join('');
     $('range').textContent = `${dayName(days[0].date)} to ${dayName(days[days.length - 1].date)} · ${days.length} days on file`;
     selDay = null;
+    temps = null;
+    tempNote = 'Loading outdoor temperature…';
     render();
+    loadTemps(days[0].date, days[days.length - 1].date).then(render, e => { tempNote = 'Outdoor temperature unavailable: ' + e.message; render(); });
 }
+
+async function loadTemps(from, to) {
+    const hub = await getJson('/hub/details/json');
+    if (hub.latitude == null || hub.longitude == null) throw new Error('the hub has no location set');
+    const unit = hub.tempScale === 'F' ? 'F' : 'C';
+    // Dates are UTC: a local evening falls on the next UTC day, so ask one day past the last.
+    const next = new Date(Date.parse(to + 'T00:00:00Z') + 86400000).toISOString().slice(0, 10);
+    const q = new URLSearchParams({ latitude: hub.latitude, longitude: hub.longitude, start_date: from, end_date: next,
+        hourly: 'temperature_2m', timezone: 'GMT', timeformat: 'unixtime', temperature_unit: unit === 'F' ? 'fahrenheit' : 'celsius' });
+    const r = await fetch(`${TEMP_URL}?${q}`);
+    if (!r.ok) throw new Error(`Open-Meteo HTTP ${r.status}`);
+    const h = (await r.json()).hourly || {};
+    const byHour = new Map();
+    (h.time || []).forEach((t, i) => { if (h.temperature_2m[i] != null) byHour.set(t, h.temperature_2m[i]); });
+    temps = { byHour, unit };
+    days.forEach(d => {
+        d.hours.forEach(x => x.t = byHour.has(x.at) ? byHour.get(x.at) : null);
+        const known = d.hours.filter(x => x.t != null).map(x => x.t);
+        d.tMean = known.length ? known.reduce((s, v) => s + v, 0) / known.length : null;
+        d.tMin = known.length ? Math.min(...known) : null;
+        d.tMax = known.length ? Math.max(...known) : null;
+    });
+    tempNote = `Outdoor temperature: Open-Meteo model data for the hub's location (${fmt(+hub.latitude, 2)}, ${fmt(+hub.longitude, 2)}), not a station reading.`;
+}
+
+const deg = (v, d = 1) => v == null ? '–' : fmt(v, d) + ' °' + temps.unit;
 
 function fail(msg) {
     $('main').innerHTML = `<div class="card msg muted">${esc(msg)}</div>`;
@@ -168,6 +208,7 @@ function fail(msg) {
 }
 
 const full = d => d.nulls === 0 && d.n > 0;
+const mean = a => a.length ? a.reduce((s, v) => s + v, 0) / a.length : null;
 
 function render() {
     const m = $('month').value;
@@ -187,21 +228,26 @@ function render() {
         ${tile(maxDay ? fmt(maxDay.total) + ' kWh' : '–', maxDay ? 'heaviest day, ' + dayName(maxDay.date) : 'heaviest day')}
         ${tile(maxHour ? fmt(maxHour.kWh, 2) + ' kWh' : '–', maxHour ? `heaviest hour, ${dayName(maxHour.date)} ${maxHour.h}:00` : 'heaviest hour')}
     </div>
-    <div class="card"><h2><span>Daily use (kWh)</span><span class="legend">Click a day for its hours. Pale bars: hours missing.</span></h2><div id="daily"></div></div>
+    <div class="card"><h2><span>Daily use (kWh)</span><span class="legend">Click a day for its hours. Pale bars: hours missing.${temps ? ' <span class="t">Line</span>: mean outdoor temperature.' : ''}</span></h2><div id="daily"></div>
+        <div class="legend" style="margin-top:6px">${esc(tempNote)}</div></div>
     <div class="card"><h2><span id="dayTitle"></span><span class="legend" id="dayNote"></span></h2><div id="hourly"></div></div>
+    ${temps ? `<div class="card"><h2><span>Daily use against mean outdoor temperature</span><span class="legend">Full days only. Click a point for its hours.</span></h2><div id="scatter"></div></div>` : ''}
     <div class="card"><h2><span>Average day by hour (kWh)${m ? ', ' + monthName(m) : ''}</span><span class="legend"><b>Shaded</b>: peak-event windows, 6–9 and 16–20</span></h2><div id="profile"></div><div class="legend" id="peakShare" style="margin-top:6px"></div></div>
     <div class="card"><h2><span>${m ? 'Days' : 'Months'}</span></h2><div class="scroll" id="table"></div></div>`;
     drawDaily(set);
     drawDay();
     drawProfile(fulls);
+    if (temps) drawScatter(set, fulls);
     drawTable(m, set);
 }
 
 const tile = (v, l) => `<div class="card tile"><div class="v">${v}</div><div class="l">${esc(l)}</div></div>`;
 
 // Bar chart helper: values [{label, value, cls, key}], returns SVG markup.
-function bars(vals, { height = 220, labelEvery = 1, peaks = false, fmtTip, unitDigits = 1 } = {}) {
-    const W = 1000, H = height, L = 44, R = 8, T = 10, B = 26;
+// line: optional values (same length, null for gaps) drawn on their own scale, labelled on the right.
+function bars(vals, { height = 220, labelEvery = 1, peaks = false, fmtTip, unitDigits = 1, line = null } = {}) {
+    if (line && !line.some(v => v != null)) line = null;
+    const W = 1000, H = height, L = 44, R = line ? 40 : 8, T = 10, B = 26;
     const max = Math.max(...vals.map(v => v.value || 0), 0.001);
     const step = niceStep(max);
     const top = Math.ceil(max / step) * step;
@@ -216,6 +262,15 @@ function bars(vals, { height = 220, labelEvery = 1, peaks = false, fmtTip, unitD
         s += `<rect class="hit" x="${x}" y="${T}" width="${bw}" height="${H - T - B}" data-k="${esc(v.key ?? '')}" data-tip="${esc(fmtTip ? fmtTip(v) : v.label + ': ' + fmt(v.value, unitDigits))}"/>`;
         if (i % labelEvery === 0) s += `<text x="${x + bw / 2}" y="${H - 8}" text-anchor="middle">${esc(v.label)}</text>`;
     });
+    if (line) {
+        const known = line.filter(v => v != null), ts = niceStep(Math.max(Math.max(...known) - Math.min(...known), 1));
+        const lo = Math.floor(Math.min(...known) / ts) * ts, hi = Math.max(Math.ceil(Math.max(...known) / ts) * ts, lo + ts);
+        const ly = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+        for (let g = lo; g <= hi + 1e-9; g += ts) s += `<text class="taxis" x="${W - R + 6}" y="${ly(g) + 4}">${fmt(g, Number.isInteger(ts) ? 0 : 1)}°</text>`;
+        let d = '';
+        line.forEach((v, i) => { if (v != null) d += `${i && line[i - 1] != null ? 'L' : 'M'}${L + (i + 0.5) * bw},${ly(v)}`; });
+        s += `<path class="tline" d="${d}"/>`;
+    }
     return s + '</svg>';
 }
 
@@ -237,11 +292,12 @@ function drawDaily(set) {
     const vals = set.map(d => ({ key: d.date, value: d.total, label: set.length > 40 ? d.date.slice(5) : String(+d.date.slice(8)),
         cls: d.date === selDay ? 'sel' : (full(d) ? '' : 'partial') }));
     const every = Math.max(1, Math.ceil(set.length / 16));
-    el.innerHTML = bars(vals, { labelEvery: every, fmtTip: v => {
+    el.innerHTML = bars(vals, { labelEvery: every, line: temps && set.map(d => d.tMean), fmtTip: v => {
         const d = set.find(x => x.date === v.key);
-        return `${dayName(v.key)}: ${fmt(v.value)} kWh` + (d.nulls ? ` (${d.nulls} of ${d.n} hours missing)` : '');
+        return `${dayName(v.key)}: ${fmt(v.value)} kWh` + (d.nulls ? ` (${d.nulls} of ${d.n} hours missing)` : '') +
+            (temps && d.tMean != null ? ` · ${deg(d.tMean)} mean, ${deg(d.tMin)} to ${deg(d.tMax)}` : '');
     } });
-    wire(el, k => { selDay = k; drawDaily(set); drawDay(); });
+    wire(el, k => { selDay = k; drawDaily(set); drawDay(); if (temps) drawScatter(set, set.filter(full)); });
 }
 
 function drawDay() {
@@ -250,10 +306,13 @@ function drawDay() {
     $('dayTitle').textContent = `${dayName(d.date)}: ${fmt(d.total)} kWh`;
     const peak = d.hours.filter(x => inPeak(x.h) && x.kWh != null).reduce((s, x) => s + x.kWh, 0);
     $('dayNote').textContent = (d.n !== 24 ? `${d.n}-hour day (clock change) · ` : '') + (d.nulls ? `${d.nulls} hours missing · ` : '') +
-        (d.total ? `${fmt(100 * peak / d.total, 0)} % in peak windows` : '');
+        (d.total ? `${fmt(100 * peak / d.total, 0)} % in peak windows` : '') +
+        (temps && d.tMean != null ? ` · outdoors ${deg(d.tMin)} to ${deg(d.tMax)} (red line)` : '');
     const el = $('hourly');
     el.innerHTML = bars(d.hours.map((x, i) => ({ key: i, value: x.kWh, label: String(x.h) })), { height: 180, peaks: d.n === 24, unitDigits: 2,
-        fmtTip: v => `${d.hours[v.key].h}:00 to ${d.hours[v.key].h + 1}:00: ${v.value == null ? 'no value' : fmt(v.value, 2) + ' kWh'}` });
+        line: temps && d.hours.map(x => x.t),
+        fmtTip: v => `${d.hours[v.key].h}:00 to ${d.hours[v.key].h + 1}:00: ${v.value == null ? 'no value' : fmt(v.value, 2) + ' kWh'}` +
+            (temps && d.hours[v.key].t != null ? ` · ${deg(d.hours[v.key].t)}` : '') });
     wire(el);
 }
 
@@ -270,27 +329,49 @@ function drawProfile(fulls) {
     $('peakShare').textContent = tot ? `Share of the day's energy: 6–9 ${fmt(share(PEAKS[0]), 0)} % (${fmt(300 / 24, 0)} % of the hours), 16–20 ${fmt(share(PEAKS[1]), 0)} % (${fmt(400 / 24, 0)} % of the hours).` : '';
 }
 
+// Each full day as a point: mean outdoor temperature across, kWh up.
+function drawScatter(set, fulls) {
+    const el = $('scatter');
+    const pts = fulls.filter(d => d.tMean != null);
+    if (!pts.length) { el.innerHTML = '<div class="legend">No full day has a temperature yet.</div>'; return; }
+    const W = 1000, H = 260, L = 44, R = 12, T = 10, B = 30;
+    const xs = pts.map(d => d.tMean), ymax = Math.max(...pts.map(d => d.total), 0.001);
+    const xstep = niceStep(Math.max(Math.max(...xs) - Math.min(...xs), 1)), ystep = niceStep(ymax);
+    const x0 = Math.floor(Math.min(...xs) / xstep) * xstep, x1 = Math.max(Math.ceil(Math.max(...xs) / xstep) * xstep, x0 + xstep);
+    const ytop = Math.ceil(ymax / ystep) * ystep;
+    const px = v => L + (W - L - R) * (v - x0) / (x1 - x0), py = v => T + (H - T - B) * (1 - v / ytop);
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img">`;
+    for (let g = 0; g <= ytop + 1e-9; g += ystep) s += `<line class="grid" x1="${L}" x2="${W - R}" y1="${py(g)}" y2="${py(g)}"/><text x="${L - 6}" y="${py(g) + 4}" text-anchor="end">${fmt(g, Number.isInteger(ystep) ? 0 : 1)}</text>`;
+    for (let g = x0; g <= x1 + 1e-9; g += xstep) s += `<line class="grid" x1="${px(g)}" x2="${px(g)}" y1="${T}" y2="${H - B}"/><text x="${px(g)}" y="${H - 12}" text-anchor="middle">${fmt(g, Number.isInteger(xstep) ? 0 : 1)}°</text>`;
+    pts.forEach(d => s += `<circle class="dot ${d.date === selDay ? 'sel' : ''}" cx="${px(d.tMean)}" cy="${py(d.total)}" r="${d.date === selDay ? 5 : 3.5}"/>`);
+    pts.forEach(d => s += `<circle class="hit" cx="${px(d.tMean)}" cy="${py(d.total)}" r="8" data-k="${d.date}" data-tip="${esc(`${dayName(d.date)}: ${fmt(d.total)} kWh at ${deg(d.tMean)} mean`)}"/>`);
+    el.innerHTML = s + `<text x="${W - R}" y="${H - 1}" text-anchor="end">mean outdoor °${temps.unit}</text></svg>`;
+    wire(el, k => { selDay = k; drawDaily(set); drawDay(); drawScatter(set, fulls); });
+}
+
 function drawTable(m, set) {
     const el = $('table');
     const peakOf = d => d.hours.filter(x => inPeak(x.h) && x.kWh != null).reduce((s, x) => s + x.kWh, 0);
     if (m) {
-        el.innerHTML = `<table><tr><th>Day</th><th>kWh</th><th>Peak windows</th><th>Lowest hour</th><th>Highest hour</th></tr>` +
+        el.innerHTML = `<table><tr><th>Day</th><th>kWh</th><th>Peak windows</th><th>Lowest hour</th><th>Highest hour</th>${temps ? '<th>Outdoors, mean</th><th>min to max</th>' : ''}</tr>` +
             set.slice().reverse().map(d => {
                 const known = d.hours.filter(x => x.kWh != null).map(x => x.kWh);
                 return `<tr class="click" data-d="${d.date}"><td>${dayName(d.date)}</td><td>${fmt(d.total)}${d.nulls ? ' *' : ''}</td>` +
-                    `<td>${d.total ? fmt(100 * peakOf(d) / d.total, 0) + ' %' : '–'}</td><td>${known.length ? fmt(Math.min(...known), 2) : '–'}</td><td>${known.length ? fmt(Math.max(...known), 2) : '–'}</td></tr>`;
+                    `<td>${d.total ? fmt(100 * peakOf(d) / d.total, 0) + ' %' : '–'}</td><td>${known.length ? fmt(Math.min(...known), 2) : '–'}</td><td>${known.length ? fmt(Math.max(...known), 2) : '–'}</td>` +
+                    (temps ? `<td>${deg(d.tMean)}</td><td>${deg(d.tMin, 0)} to ${deg(d.tMax, 0)}</td>` : '') + '</tr>';
             }).join('') + '</table>' + (set.some(d => d.nulls) ? '<div class="legend" style="margin-top:6px">* some hours missing</div>' : '');
-        el.querySelectorAll('tr.click').forEach(r => r.onclick = () => { selDay = r.dataset.d; drawDaily(set); drawDay(); $('dayTitle').scrollIntoView({ behavior: 'smooth', block: 'center' }); });
+        el.querySelectorAll('tr.click').forEach(r => r.onclick = () => { selDay = r.dataset.d; drawDaily(set); drawDay(); if (temps) drawScatter(set, set.filter(full)); $('dayTitle').scrollIntoView({ behavior: 'smooth', block: 'center' }); });
         return;
     }
     const by = {};
     days.forEach(d => (by[d.date.slice(0, 7)] = by[d.date.slice(0, 7)] || []).push(d));
-    el.innerHTML = `<table><tr><th>Month</th><th>Days</th><th>kWh</th><th>kWh a day</th><th>Heaviest day</th><th>Peak windows</th></tr>` +
+    el.innerHTML = `<table><tr><th>Month</th><th>Days</th><th>kWh</th><th>kWh a day</th><th>Heaviest day</th><th>Peak windows</th>${temps ? '<th>Outdoors, mean</th>' : ''}</tr>` +
         Object.keys(by).sort().reverse().map(k => {
             const ds = by[k], f = ds.filter(full), t = ds.reduce((s, d) => s + d.total, 0);
             const mx = f.reduce((a, d) => !a || d.total > a.total ? d : a, null), p = ds.reduce((s, d) => s + peakOf(d), 0);
             return `<tr class="click" data-m="${k}"><td>${monthName(k)}</td><td>${ds.length}</td><td>${fmt(t, 0)}</td><td>${f.length ? fmt(f.reduce((s, d) => s + d.total, 0) / f.length) : '–'}</td>` +
-                `<td>${mx ? fmt(mx.total) + ' (' + +mx.date.slice(8) + ')' : '–'}</td><td>${t ? fmt(100 * p / t, 0) + ' %' : '–'}</td></tr>`;
+                `<td>${mx ? fmt(mx.total) + ' (' + +mx.date.slice(8) + ')' : '–'}</td><td>${t ? fmt(100 * p / t, 0) + ' %' : '–'}</td>` +
+                (temps ? `<td>${deg(mean(ds.map(d => d.tMean).filter(v => v != null)))}</td>` : '') + '</tr>';
         }).join('') + '</table>';
     el.querySelectorAll('tr.click').forEach(r => r.onclick = () => { $('month').value = r.dataset.m; selDay = null; render(); scrollTo({ top: 0, behavior: 'smooth' }); });
 }
