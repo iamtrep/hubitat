@@ -54,6 +54,7 @@ definition(
 
 @Field static final String DNI_PREFIX = "hilo-"
 @Field static final String DRIVER_METER = "Hilo Energy Meter"
+@Field static final String VIEWER_FILE = "hilo-history.html"
 
 @Field static final long TOKEN_REFRESH_BUFFER_MS = 300_000L
 @Field static final int HTTP_TIMEOUT = 20
@@ -566,7 +567,7 @@ private boolean writeDay(String day, List<Map> hours) {
     Map doc = readHistoryFile(name)
     if (doc == null) return false
     Map days = (doc.days ?: [:]) as Map
-    days[day] = hours.collect { [start: it.start, kWh: it.kWh] }
+    days[day] = hours.collect { [start: it.start, kWh: it.kWh == null ? null : round3(it.kWh as BigDecimal)] }
     doc.days = days.sort { it.key }
     try {
         uploadHubFile(name, JsonOutput.toJson(doc).getBytes("UTF-8"))
@@ -604,8 +605,15 @@ private String historySummary() {
     if (!state.historyStart) return historyBusy() ? "History: looking for where it starts" : "History: not read yet"
     long left = localToday().minusDays(1).toEpochDay() - LocalDate.parse(state.lastCompleteDay as String).toEpochDay() - 1
     String files = "<a href='/hub/fileManager' target='_blank'>File Manager</a>, ${historyFile('YYYY-MM')}"
-    return left > 0 ? "History: from ${state.historyStart}, ${left} days still to read (${files})" :
-                      "History: complete from ${state.historyStart} (${files})"
+    String text = left > 0 ? "History: from ${state.historyStart}, ${left} days still to read (${files})" :
+                             "History: complete from ${state.historyStart} (${files})"
+    if (viewerInstalled()) text += "<br><a href='/local/${VIEWER_FILE}' target='_blank'>Browse the history</a>"
+    return text
+}
+
+// The viewer page is uploaded to File Manager by hand; see the README.
+private boolean viewerInstalled() {
+    try { return downloadHubFile(VIEWER_FILE) != null } catch (Exception e) { return false }
 }
 
 @CompileStatic

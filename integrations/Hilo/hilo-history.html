@@ -1,0 +1,301 @@
+<!--
+Copyright (c) 2026 PJ
+SPDX-License-Identifier: MIT
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hilo Energy History</title>
+<script>
+// Follow the hub UI theme, which the hub keeps in this origin's localStorage (absent on firmware without dark mode).
+(function(){
+    const apply=v=>{document.documentElement.dataset.hubitatTheme=v==='dark'?'dark':'light'};
+    try{apply(localStorage.getItem('hubitat-ui-theme'))}catch(e){apply(null)}
+    addEventListener('storage',e=>{if(e.key==='hubitat-ui-theme')apply(e.newValue)});
+})();
+</script>
+<style>
+    :root {
+        --bg: #f4f6f9;
+        --card-bg: #fff;
+        --border: #dde1e6;
+        --text: #1a1a2e;
+        --text-muted: #6b7280;
+        --primary: #2563eb;
+        --primary-soft: rgba(37,99,235,0.35);
+        --peak: rgba(217,119,6,0.12);
+        --peak-text: #b45309;
+        --sel: #d97706;
+        --grid: rgba(0,0,0,0.08);
+    }
+    /* Dark palette follows the hub's dark theme; the script above sets data-hubitat-theme. */
+    :root[data-hubitat-theme="dark"] {
+        color-scheme: dark;
+        --bg: #121212;
+        --card-bg: #1e1e1e;
+        --border: rgba(255,255,255,0.12);
+        --text: rgba(255,255,255,0.87);
+        --text-muted: rgba(255,255,255,0.6);
+        --primary: #60a5fa;
+        --primary-soft: rgba(96,165,250,0.35);
+        --peak: rgba(251,191,36,0.10);
+        --peak-text: #fbbf24;
+        --sel: #fbbf24;
+        --grid: rgba(255,255,255,0.08);
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+    header { background: var(--card-bg); border-bottom: 1px solid var(--border); padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+    header h1 { font-size: 1.2rem; font-weight: 600; }
+    .muted { color: var(--text-muted); font-size: 0.85rem; }
+    select { font: inherit; font-size: 0.9rem; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card-bg); color: var(--text); }
+    main { max-width: 1100px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; }
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+    .card h2 { font-size: 0.95rem; font-weight: 600; margin-bottom: 8px; display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+    .tile .v { font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .tile .l { font-size: 0.8rem; color: var(--text-muted); }
+    svg { display: block; width: 100%; height: auto; }
+    svg text { fill: var(--text-muted); font-size: 11px; font-family: inherit; }
+    .bar { fill: var(--primary); }
+    .bar.partial { fill: var(--primary-soft); }
+    .bar.sel { fill: var(--sel); }
+    .hit { fill: transparent; cursor: pointer; }
+    .grid { stroke: var(--grid); }
+    .peak { fill: var(--peak); }
+    .line { fill: none; stroke: var(--primary); stroke-width: 2; }
+    .dot { fill: var(--primary); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; font-variant-numeric: tabular-nums; }
+    th, td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+    th:first-child, td:first-child { text-align: left; }
+    th { color: var(--text-muted); font-weight: 500; }
+    tr.click { cursor: pointer; }
+    tr.click:hover td { background: var(--peak); }
+    .scroll { overflow-x: auto; }
+    .legend { font-size: 0.8rem; color: var(--text-muted); }
+    .legend b { color: var(--peak-text); font-weight: 500; }
+    #tip { position: fixed; pointer-events: none; background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 0.8rem; display: none; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+    .msg { padding: 24px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+    <div>
+        <h1>Hilo energy history</h1>
+        <div class="muted" id="range">Loading…</div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <select id="loc" aria-label="Location" hidden></select>
+        <select id="month" aria-label="Period"></select>
+    </div>
+</header>
+<main id="main">
+    <div class="card msg muted" id="status">Reading the history files from File Manager…</div>
+</main>
+<div id="tip"></div>
+<script>
+// Reads the Hilo Manager's month files (hilo-<location>-energy-YYYY-MM.json) from this hub's
+// File Manager. Hours are keyed by their local start time, so 23- and 25-hour days need no case.
+const FILE_RE = /^hilo-(.+)-energy-(\d{4}-\d{2})\.json$/;
+// Hydro-Québec's winter peak-event windows, local time.
+const PEAKS = [[6, 9], [16, 20]];
+const $ = id => document.getElementById(id);
+const fmt = (v, d = 1) => v == null ? '–' : v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const monthName = m => `${MONTHS[+m.slice(5, 7) - 1]} ${m.slice(0, 4)}`;
+const dayName = d => new Date(d + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+const hourOf = start => +start.slice(11, 13);
+const inPeak = h => PEAKS.some(([a, b]) => h >= a && h < b);
+
+let files = {};   // location -> [{month, name}]
+let days = [];    // [{date, hours:[{h, kWh}], total, nulls, n}] for the chosen location, sorted
+let selDay = null;
+
+async function getJson(url) {
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
+    return r.json();
+}
+
+async function init() {
+    let list;
+    try {
+        list = await getJson('/hub/fileManager/json');
+    } catch (e) {
+        return fail(`Could not list File Manager (${e.message}). Open this page from the hub's own address.`);
+    }
+    for (const f of list.files || []) {
+        const m = FILE_RE.exec(f.name);
+        if (m) (files[m[1]] = files[m[1]] || []).push({ month: m[2], name: f.name });
+    }
+    const locs = Object.keys(files).sort();
+    if (!locs.length) return fail('No Hilo history files yet. Hilo Manager writes them after its first hourly read.');
+    const loc = $('loc');
+    loc.innerHTML = locs.map(l => `<option value="${esc(l)}">Location ${esc(l)}</option>`).join('');
+    loc.hidden = locs.length < 2;
+    loc.onchange = () => loadLocation(loc.value);
+    $('month').onchange = () => { selDay = null; render(); };
+    await loadLocation(locs[0]);
+}
+
+async function loadLocation(loc) {
+    $('status') && ($('status').textContent = 'Reading the history files…');
+    const list = files[loc].sort((a, b) => a.month.localeCompare(b.month));
+    const docs = await Promise.all(list.map(f => getJson('/local/' + encodeURIComponent(f.name)).catch(() => null)));
+    const all = {};
+    docs.forEach(d => Object.assign(all, (d && d.days) || {}));
+    days = Object.keys(all).sort().map(date => {
+        const hours = (all[date] || []).map(x => ({ h: hourOf(x.start), kWh: x.kWh == null ? null : +x.kWh }));
+        const known = hours.filter(x => x.kWh != null);
+        return { date, hours, n: hours.length, nulls: hours.length - known.length, total: known.reduce((s, x) => s + x.kWh, 0) };
+    });
+    if (!days.length) return fail('The history files hold no days yet.');
+    const months = [...new Set(days.map(d => d.date.slice(0, 7)))];
+    const sel = $('month');
+    sel.innerHTML = `<option value="">All (${months.length} months)</option>` +
+        months.slice().reverse().map(m => `<option value="${m}">${monthName(m)}</option>`).join('');
+    $('range').textContent = `${dayName(days[0].date)} to ${dayName(days[days.length - 1].date)} · ${days.length} days on file`;
+    selDay = null;
+    render();
+}
+
+function fail(msg) {
+    $('main').innerHTML = `<div class="card msg muted">${esc(msg)}</div>`;
+    $('range').textContent = '';
+}
+
+const full = d => d.nulls === 0 && d.n > 0;
+
+function render() {
+    const m = $('month').value;
+    const set = m ? days.filter(d => d.date.startsWith(m)) : days;
+    const fulls = set.filter(full);
+    const total = set.reduce((s, d) => s + d.total, 0);
+    const maxDay = fulls.reduce((a, d) => !a || d.total > a.total ? d : a, null);
+    let maxHour = null;
+    set.forEach(d => d.hours.forEach(x => { if (x.kWh != null && (!maxHour || x.kWh > maxHour.kWh)) maxHour = { ...x, date: d.date }; }));
+    const avg = fulls.length ? fulls.reduce((s, d) => s + d.total, 0) / fulls.length : null;
+    if (!selDay || !set.some(d => d.date === selDay)) selDay = (maxDay || set[set.length - 1]).date;
+
+    $('main').innerHTML = `
+    <div class="tiles">
+        ${tile(fmt(total, 0) + ' kWh', m ? `used in ${monthName(m)}` : 'used, all days on file')}
+        ${tile(avg == null ? '–' : fmt(avg) + ' kWh', `a day on average (${fulls.length} full days)`)}
+        ${tile(maxDay ? fmt(maxDay.total) + ' kWh' : '–', maxDay ? 'heaviest day, ' + dayName(maxDay.date) : 'heaviest day')}
+        ${tile(maxHour ? fmt(maxHour.kWh, 2) + ' kWh' : '–', maxHour ? `heaviest hour, ${dayName(maxHour.date)} ${maxHour.h}:00` : 'heaviest hour')}
+    </div>
+    <div class="card"><h2><span>Daily use (kWh)</span><span class="legend">Click a day for its hours. Pale bars: hours missing.</span></h2><div id="daily"></div></div>
+    <div class="card"><h2><span id="dayTitle"></span><span class="legend" id="dayNote"></span></h2><div id="hourly"></div></div>
+    <div class="card"><h2><span>Average day by hour (kWh)${m ? ', ' + monthName(m) : ''}</span><span class="legend"><b>Shaded</b>: peak-event windows, 6–9 and 16–20</span></h2><div id="profile"></div><div class="legend" id="peakShare" style="margin-top:6px"></div></div>
+    <div class="card"><h2><span>${m ? 'Days' : 'Months'}</span></h2><div class="scroll" id="table"></div></div>`;
+    drawDaily(set);
+    drawDay();
+    drawProfile(fulls);
+    drawTable(m, set);
+}
+
+const tile = (v, l) => `<div class="card tile"><div class="v">${v}</div><div class="l">${esc(l)}</div></div>`;
+
+// Bar chart helper: values [{label, value, cls, key}], returns SVG markup.
+function bars(vals, { height = 220, labelEvery = 1, peaks = false, fmtTip, unitDigits = 1 } = {}) {
+    const W = 1000, H = height, L = 44, R = 8, T = 10, B = 26;
+    const max = Math.max(...vals.map(v => v.value || 0), 0.001);
+    const step = niceStep(max);
+    const top = Math.ceil(max / step) * step;
+    const bw = (W - L - R) / vals.length;
+    const y = v => T + (H - T - B) * (1 - v / top);
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img">`;
+    if (peaks) PEAKS.forEach(([a, b]) => s += `<rect class="peak" x="${L + a * bw}" y="${T}" width="${(b - a) * bw}" height="${H - T - B}"/>`);
+    for (let g = 0; g <= top + 1e-9; g += step) s += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(g)}" y2="${y(g)}"/><text x="${L - 6}" y="${y(g) + 4}" text-anchor="end">${fmt(g, Number.isInteger(step) ? 0 : 1)}</text>`;
+    vals.forEach((v, i) => {
+        const x = L + i * bw, h = v.value == null ? 0 : (H - T - B) * (v.value / top);
+        if (v.value != null) s += `<rect class="bar ${v.cls || ''}" x="${x + bw * 0.12}" y="${y(v.value)}" width="${Math.max(bw * 0.76, 1)}" height="${h}" rx="${Math.min(2, bw / 6)}"/>`;
+        s += `<rect class="hit" x="${x}" y="${T}" width="${bw}" height="${H - T - B}" data-k="${esc(v.key ?? '')}" data-tip="${esc(fmtTip ? fmtTip(v) : v.label + ': ' + fmt(v.value, unitDigits))}"/>`;
+        if (i % labelEvery === 0) s += `<text x="${x + bw / 2}" y="${H - 8}" text-anchor="middle">${esc(v.label)}</text>`;
+    });
+    return s + '</svg>';
+}
+
+function niceStep(max) {
+    const raw = max / 5, p = Math.pow(10, Math.floor(Math.log10(raw)));
+    return [1, 2, 2.5, 5, 10].map(k => k * p).find(k => k >= raw);
+}
+
+function wire(el, onClick) {
+    el.querySelectorAll('.hit').forEach(r => {
+        r.addEventListener('mousemove', e => { const t = $('tip'); t.textContent = r.dataset.tip; t.style.display = 'block'; t.style.left = Math.min(e.clientX + 12, innerWidth - t.offsetWidth - 8) + 'px'; t.style.top = (e.clientY - 34) + 'px'; });
+        r.addEventListener('mouseleave', () => $('tip').style.display = 'none');
+        if (onClick) r.addEventListener('click', () => onClick(r.dataset.k));
+    });
+}
+
+function drawDaily(set) {
+    const el = $('daily');
+    const vals = set.map(d => ({ key: d.date, value: d.total, label: set.length > 40 ? d.date.slice(5) : String(+d.date.slice(8)),
+        cls: d.date === selDay ? 'sel' : (full(d) ? '' : 'partial') }));
+    const every = Math.max(1, Math.ceil(set.length / 16));
+    el.innerHTML = bars(vals, { labelEvery: every, fmtTip: v => {
+        const d = set.find(x => x.date === v.key);
+        return `${dayName(v.key)}: ${fmt(v.value)} kWh` + (d.nulls ? ` (${d.nulls} of ${d.n} hours missing)` : '');
+    } });
+    wire(el, k => { selDay = k; drawDaily(set); drawDay(); });
+}
+
+function drawDay() {
+    const d = days.find(x => x.date === selDay);
+    if (!d) return;
+    $('dayTitle').textContent = `${dayName(d.date)}: ${fmt(d.total)} kWh`;
+    const peak = d.hours.filter(x => inPeak(x.h) && x.kWh != null).reduce((s, x) => s + x.kWh, 0);
+    $('dayNote').textContent = (d.n !== 24 ? `${d.n}-hour day (clock change) · ` : '') + (d.nulls ? `${d.nulls} hours missing · ` : '') +
+        (d.total ? `${fmt(100 * peak / d.total, 0)} % in peak windows` : '');
+    const el = $('hourly');
+    el.innerHTML = bars(d.hours.map((x, i) => ({ key: i, value: x.kWh, label: String(x.h) })), { height: 180, peaks: d.n === 24, unitDigits: 2,
+        fmtTip: v => `${d.hours[v.key].h}:00 to ${d.hours[v.key].h + 1}:00: ${v.value == null ? 'no value' : fmt(v.value, 2) + ' kWh'}` });
+    wire(el);
+}
+
+function drawProfile(fulls) {
+    const el = $('profile');
+    const sums = Array(24).fill(0), counts = Array(24).fill(0);
+    fulls.forEach(d => d.hours.forEach(x => { if (x.kWh != null) { sums[x.h] += x.kWh; counts[x.h]++; } }));
+    const avg = sums.map((s, h) => counts[h] ? s / counts[h] : null);
+    el.innerHTML = bars(avg.map((v, h) => ({ key: h, value: v, label: String(h) })), { height: 180, peaks: true, unitDigits: 2,
+        fmtTip: v => `${v.key}:00 to ${v.key + 1}:00: ${fmt(v.value, 2)} kWh on average` });
+    wire(el);
+    const tot = avg.reduce((s, v) => s + (v || 0), 0);
+    const share = ([a, b]) => tot ? avg.slice(a, b).reduce((s, v) => s + (v || 0), 0) / tot * 100 : 0;
+    $('peakShare').textContent = tot ? `Share of the day's energy: 6–9 ${fmt(share(PEAKS[0]), 0)} % (${fmt(300 / 24, 0)} % of the hours), 16–20 ${fmt(share(PEAKS[1]), 0)} % (${fmt(400 / 24, 0)} % of the hours).` : '';
+}
+
+function drawTable(m, set) {
+    const el = $('table');
+    const peakOf = d => d.hours.filter(x => inPeak(x.h) && x.kWh != null).reduce((s, x) => s + x.kWh, 0);
+    if (m) {
+        el.innerHTML = `<table><tr><th>Day</th><th>kWh</th><th>Peak windows</th><th>Lowest hour</th><th>Highest hour</th></tr>` +
+            set.slice().reverse().map(d => {
+                const known = d.hours.filter(x => x.kWh != null).map(x => x.kWh);
+                return `<tr class="click" data-d="${d.date}"><td>${dayName(d.date)}</td><td>${fmt(d.total)}${d.nulls ? ' *' : ''}</td>` +
+                    `<td>${d.total ? fmt(100 * peakOf(d) / d.total, 0) + ' %' : '–'}</td><td>${known.length ? fmt(Math.min(...known), 2) : '–'}</td><td>${known.length ? fmt(Math.max(...known), 2) : '–'}</td></tr>`;
+            }).join('') + '</table>' + (set.some(d => d.nulls) ? '<div class="legend" style="margin-top:6px">* some hours missing</div>' : '');
+        el.querySelectorAll('tr.click').forEach(r => r.onclick = () => { selDay = r.dataset.d; drawDaily(set); drawDay(); $('dayTitle').scrollIntoView({ behavior: 'smooth', block: 'center' }); });
+        return;
+    }
+    const by = {};
+    days.forEach(d => (by[d.date.slice(0, 7)] = by[d.date.slice(0, 7)] || []).push(d));
+    el.innerHTML = `<table><tr><th>Month</th><th>Days</th><th>kWh</th><th>kWh a day</th><th>Heaviest day</th><th>Peak windows</th></tr>` +
+        Object.keys(by).sort().reverse().map(k => {
+            const ds = by[k], f = ds.filter(full), t = ds.reduce((s, d) => s + d.total, 0);
+            const mx = f.reduce((a, d) => !a || d.total > a.total ? d : a, null), p = ds.reduce((s, d) => s + peakOf(d), 0);
+            return `<tr class="click" data-m="${k}"><td>${monthName(k)}</td><td>${ds.length}</td><td>${fmt(t, 0)}</td><td>${f.length ? fmt(f.reduce((s, d) => s + d.total, 0) / f.length) : '–'}</td>` +
+                `<td>${mx ? fmt(mx.total) + ' (' + +mx.date.slice(8) + ')' : '–'}</td><td>${t ? fmt(100 * p / t, 0) + ' %' : '–'}</td></tr>`;
+        }).join('') + '</table>';
+    el.querySelectorAll('tr.click').forEach(r => r.onclick = () => { $('month').value = r.dataset.m; selDay = null; render(); scrollTo({ top: 0, behavior: 'smooth' }); });
+}
+
+init().catch(e => fail('Could not read the history: ' + e.message));
+</script>
+</body>
+</html>
