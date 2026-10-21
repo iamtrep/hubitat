@@ -61,7 +61,7 @@ import java.security.Signature
 import java.security.cert.CertificateFactory
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.3.1"
+@Field static final String CODE_VERSION = "0.3.2"
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int PAIRING_PORT = 6467
 @Field static final String MDNS_SERVICE = "_androidtvremote2._tcp"
@@ -472,10 +472,12 @@ void connect() {
         logTrace "remote connect returned after ${now() - t0} ms"
     } catch (java.net.SocketException e) {
         logWarn "The TV refused the connection after ${now() - t0} ms (${e.message}); it may need pairing again"
+        r.mode = null   // else the retry sees a live session and gives up
         scheduleReconnect()
         return
     } catch (e) {
         logWarn "Connect failed after ${now() - t0} ms: ${e.class.simpleName}: ${e.message}"
+        r.mode = null
         scheduleReconnect()
         return
     }
