@@ -27,7 +27,7 @@ import java.security.MessageDigest
 import java.security.cert.CertificateFactory
 import java.text.SimpleDateFormat
 
-@Field static final String CODE_VERSION = "0.5.0"
+@Field static final String CODE_VERSION = "0.5.1"
 
 @Field static final String BUSY = "a run is in progress"
 
