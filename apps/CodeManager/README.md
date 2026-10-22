@@ -82,9 +82,22 @@ A page load reads only the hub's bulk lists (app, driver and library types, bund
 | One source read in flight, 2 s between reads | the fact reader, a drift check's fact phase and a remove check share one read slot |
 | No read while a code write is outstanding | a write and a large read compete for the same compile and memory |
 | After 2 failed reads, retry after 1 h, then every 24 h | an item whose read never answers costs two timeouts, not one per pass |
-| Sources above 512 KB are never read in the background | they are read only when a user asks (a single check or a remove check) |
+| Sources above 512 KB are not read again in the background | the hub's lists carry no size, so the first read of each item measures it; after that it is read only when a user asks (a single check or a remove check) |
 | A read within 2 s of the item's save is read once more | two saves in the same second leave `lastModified` unchanged |
 | Read results written to the registry every 10 reads | a restart loses at most 10 reads, which are read again |
+
+Measured with 0.2.0 on a C-8 Pro holding 211 user apps, drivers and libraries. "Handler time" is Code Manager's own time in the hub's app statistics, including time spent waiting on HTTP; "memory dip" is the largest fall in the hub's free OS memory while the operation ran, sampled every 5 s.
+
+| operation | wall time | handler time | memory dip |
+|---|---|---|---|
+| Page load (`/api/inventory`), bulk lists older than 30 s | 2–4 s | 1.7 s | under 1 MB |
+| Page load, bulk lists shared from another page | under 1 s | 0.5 s | under 1 MB |
+| **Refresh libraries** | 13 s | 10 s | 2 MB |
+| Drift check of everything (114 upstream URLs) | 17–22 s | 112 s, mostly waiting on upstream hosts | 8 MB |
+| Remove check of one driver (13 sources read) | 58 s | 28 s | 6 MB |
+| First full read of every item (211 sources, after install) | 12 min | 5.6 min | 76 MB |
+
+After the first full read, the reader reads only items saved since, so its cost follows how often code changes.
 
 ## Endpoints (OAuth)
 

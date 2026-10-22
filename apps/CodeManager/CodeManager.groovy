@@ -105,6 +105,7 @@ mappings {
     // ===== App-owned mutations (0.1: no hub-code writes) =====
     path('/api/libraries/refresh') { action: [POST: 'apiLibrariesRefresh'] }
     path('/api/test/simulateLibFail') { action: [POST: 'apiSimulateLibFail'] }   // answers 404 unless debug logging is on
+    path('/api/test/clearFacts') { action: [POST: 'apiClearFacts'] }             // answers 404 unless debug logging is on
     path('/api/drift/check')       { action: [POST: 'apiDriftCheck'] }
     path('/api/drift/start')       { action: [POST: 'apiDriftStart'] }
     path('/api/facts/status')      { action: [GET: 'apiFactsStatus'] }
@@ -547,6 +548,30 @@ Map apiSimulateLibFail() {
     if (settings.debugEnable != true) return render(status: 404, contentType: 'application/json', data: JsonOutput.toJson([error: "not found"]))
     simulateLibFail = (params.on == "1")
     return jsonResponse([simulateLibFail: simulateLibFail])
+}
+// Test hook: marks every item's facts unread, so the next inventory starts a full reader run (measures a first install).
+// Removes only the read stamps and the installed hash; manifest locations and versions and the adoption hash are kept.
+Map apiClearFacts() {
+    if (settings.debugEnable != true) return render(status: 404, contentType: 'application/json', data: JsonOutput.toJson([error: "not found"]))
+    for (Map.Entry e in JOBS.entrySet()) {
+        ConcurrentHashMap r = e.value as ConcurrentHashMap
+        if (r.kind in ['facts', 'drift', 'removecheck'] && r.status == 'running') return jsonResponse([error: "a ${r.kind} job is running" as String])
+    }
+    Semaphore gate = gateFor("reconcile")
+    if (!gate.tryAcquire(2000L, TimeUnit.MILLISECONDS)) return jsonResponse([error: "busy, try again"])
+    int cleared = 0
+    try {
+        flushFactsLocked()
+        Map pkgs = (state.pkgs ?: [:]) as Map
+        state.pkgs = pkgs.collectEntries { String key, Map p ->
+            [(key): p + [c: (p.c as List).collect { Map c ->
+                if (c.id == null || !(c.k in ['app', 'driver', 'library'])) return c
+                cleared++
+                return c.findAll { String k, v -> !(k in ['ih', 'flm', 'frd', 'ff', 'fnext', 'fe']) }
+            }]]
+        }
+    } finally { gate.release() }
+    return jsonResponse([cleared: cleared])
 }
 private void scheduleLibraryRefreshIfStale() {
     Map snap = LIB_SNAPSHOT
