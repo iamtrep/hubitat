@@ -33,6 +33,8 @@ definition(
     description: "Hilo (Hydro-Québec) home energy: hourly consumption and live power",
     menu: "Integrations",
     category: "Utility",
+    // Installed when first opened, so leaving the page before Done keeps the instance.
+    installOnOpen: true,
     // Token refresh, poll callbacks and child calls all read and rewrite the tokens.
     singleThreaded: true,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/integrations/Hilo/HiloManager.groovy",
@@ -59,6 +61,8 @@ definition(
 @Field static final long TOKEN_REFRESH_BUFFER_MS = 300_000L
 @Field static final int HTTP_TIMEOUT = 20
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
+// How long the app page redraws itself while waiting for the device it asked for.
+@Field static final long CHILD_WAIT_MS = 30_000L
 // Hourly polls: warn on each failure below this many in a row, then one error,
 // then a warn every OUTAGE_REMINDER_MS until they clear.
 @Field static final int FAILURE_ERROR_THRESHOLD = 3
@@ -91,14 +95,17 @@ Map mainPage() {
     }
     if (settings.locationId && settings.locationId != state.locationId) selectLocation(settings.locationId as String)
 
-    dynamicPage(name: "mainPage", title: "Hilo Manager", install: true, uninstall: true) {
+    // Redraw while the device from selectLocation() is on its way, so it shows without a reload.
+    boolean childPending = state.locationId && !state.childError && !meterChild() &&
+        now() - ((state.childRequestedAt ?: 0L) as long) < CHILD_WAIT_MS
+    dynamicPage(name: "mainPage", install: true, uninstall: true, refreshInterval: childPending ? 2 : 0) {
         if (state.loginError) {
             section { paragraph "<span style='color:red;'><b>Error:</b> ${state.loginError}</span>" }
         }
         if (!isLoggedIn()) {
             if (!state.codeVerifier) newPkce()
             section("Log in") {
-                paragraph "1. Log in to Hilo. After the login you land on a my.home-assistant.io page; it may say the link is not set up. That page is expected."
+                paragraph "1. Log in to Hilo. After the login you land on a my.home-assistant.io page. Don't click anything on it."
                 href url: authorizeUrl(), style: "external", title: "Log in to Hilo", description: "Opens Hilo's login page in a new tab"
                 input "pastedUrl", "text", title: "2. Copy the address of that page from the browser's address bar and paste it here",
                       submitOnChange: true, required: false
@@ -118,15 +125,18 @@ Map mainPage() {
                 if (state.childError) paragraph "<span style='color:red;'><b>Error:</b> ${state.childError}</span>"
                 ChildDeviceWrapper meter = meterChild()
                 if (meter) paragraph "Device: <a href='/device/edit/${meter.id}' target='_blank'>${meter.displayName}</a>"
-                else paragraph "The device is created when you press Done."
+                else if (childPending) paragraph "Creating the device…"
+                else if (!state.childError) paragraph "The device is created when you press Done."
                 if (state.lastPoll) paragraph "Last history read: ${formatClock(state.lastPoll as long)}"
                 paragraph historySummary()
                 if (state.pollStreak) paragraph "History reads failing since ${formatClock((state.pollStreak as Map).since as long)}"
-                input "btnRefreshNow", "button", title: "Read history now"
             }
             section("Account") {
                 input "btnLogout", "button", title: "Log out of Hilo"
             }
+        }
+        section("Name") {
+            label title: "Name of this instance", required: false
         }
         section("Logging") {
             input "txtEnable", "bool", title: "Enable info logging", defaultValue: true
@@ -177,7 +187,6 @@ void appButtonHandler(String btn) {
     logDebug "appButtonHandler(${btn})"
     checkVersion()
     switch (btn) {
-        case "btnRefreshNow": poll(); break
         case "btnLogout":     logout(); break
         default: logWarn "unhandled button: ${btn}"
     }
@@ -251,6 +260,9 @@ private void selectLocation(String id) {
     state.locationName = loc.name
     if (!app.label || app.label == "Hilo Manager") app.updateLabel("Hilo Manager - ${loc.name}")
     logCfg "location: ${loc.name}"
+    // Creates the device and starts polling without waiting for Done.
+    state.childRequestedAt = now()
+    runIn(1, "updated")
 }
 
 void logout() {
@@ -258,7 +270,7 @@ void logout() {
     unschedule()
     ACCESS.remove(app.id.toString())
     dropSecret("refreshTokenEnc")
-    ["refreshTokenEnc", "locations", "locationId", "locationHiloId", "locationName", "pollStreak", "childError",
+    ["refreshTokenEnc", "locations", "locationId", "locationHiloId", "locationName", "pollStreak", "childError", "childRequestedAt",
      "historyStart", "lastCompleteDay", "historyBusy", "backfilling", "finalDay", "lastHourMs"].each { state.remove(it) }
     app.removeSetting("locationId")
     meterChild()?.stopLiveStream()

@@ -17,18 +17,53 @@ Parent/child integration for [Hilo](https://www.hiloenergie.com/), Hydro-Québec
 
 ## Installation
 
-1. Add `HiloManager.groovy` as **Apps Code** and `HiloEnergyMeter.groovy` as **Drivers Code**.
-2. Add the **Hilo Manager** user app.
-3. Click **Log in to Hilo** and log in with your Hilo email and password. You land on a my.home-assistant.io page, which may say the link is not set up; that is expected.
-4. Copy that page's address from the browser's address bar, paste it into the app, and press Done. If the account has several locations, pick one.
+### 1. Add the code
 
-The app is renamed "Hilo Manager - <location>" and creates the Hilo Energy Meter device.
+In **Apps Code**, click **New App**, then **Import**, and paste:
+
+```
+https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/integrations/Hilo/HiloManager.groovy
+```
+
+Save. Do the same in **Drivers Code** (**New Driver** → **Import**) with:
+
+```
+https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/integrations/Hilo/HiloEnergyMeter.groovy
+```
+
+### 2. Add the app
+
+**Apps** → **Add User App** → **Hilo Manager**. The page has two steps:
+
+![Hilo Manager login page: step 1, the Log in to Hilo link; step 2, the field for the pasted address](images/hilo-login-1-app.png)
+
+### 3. Log in to Hilo
+
+Click **Log in to Hilo**. Hilo's sign-in page opens in a new tab, at `connexion.hiloenergie.com`. Sign in with your Hilo email and password.
+
+![Hilo's sign-in page, with connexion.hiloenergie.com in the address bar](images/hilo-login-2-hilo.png)
+
+### 4. Copy the address of the page you land on
+
+After the sign-in, the browser lands on a **my.home-assistant.io** page. It may offer to link the account to Home Assistant, or say the link is not set up. Ignore it and **don't click anything on it**: the login code is in the page's address, and that is all the app needs.
+
+Copy the whole address from the browser's address bar:
+
+![The my.home-assistant.io page: copy the whole address from the address bar; don't click Link account or Decline](images/hilo-login-3-copy-url.png)
+
+### 5. Paste it
+
+Back in the app, paste the address into step 2 and press Enter. The app logs in and reads the account's location; if the account has several, pick one. The app then creates the device and starts reading, without waiting for **Done**. Press **Done** to close the page.
+
+The address works once. If the app reports a login error, click **Log in to Hilo** again for a new one.
+
+The app is renamed "Hilo Manager - <location>"; change the name under **Name** on the app page. The device is named "Hilo <location>". It then reads the account's history into File Manager in the background (see [History files](#history-files)).
 
 One instance serves one Hilo location. For a second account or location, add another instance. A location already served by another instance is refused.
 
 ## Login
 
-Hilo has no login of its own for third-party apps, so the manager uses the public client of the Home Assistant integration. Its only registered return address is my.home-assistant.io, hence the paste step. No Home Assistant install or account is needed.
+Hilo has no login of its own for third-party apps, so the manager uses the public client of the Home Assistant integration. Its only registered return address is my.home-assistant.io, hence the paste step. No Home Assistant install or account is needed. my.home-assistant.io receives the login code in the page address, as it does for Home Assistant users, but the code is useless without the PKCE verifier that only the app holds.
 
 The refresh token is stored encrypted and renewed with each use. The access token lasts an hour and is kept in memory only, so a reboot or code update costs one refresh. If Hilo refuses the saved login (for example after a password change, or about 14 days without the hub reaching Hilo), the manager logs an error, stops polling, marks the device offline, and shows the login link again.
 
@@ -51,7 +86,7 @@ The **Live power from Hilo** preference (on by default) keeps a connection open 
 
 ## Polling
 
-Consumption is read once an hour, at a minute between :10 and :50 picked at random each time the app settings are saved, so hubs do not all call Hilo at once. **Read history now** on the app page reads it at once.
+Consumption is read once an hour, at a minute between :10 and :50 picked at random each time the app settings are saved, so hubs do not all call Hilo at once. The device's **Refresh** reads it at once.
 
 When Hilo can't be reached, each of the first two failed reads logs a warning. The third logs one error and marks the device offline, and a reminder follows every hour while the outage lasts. The first good read logs the recovery and marks the device online. When Hilo answers with `Retry-After`, polling pauses for that long, up to an hour.
 
