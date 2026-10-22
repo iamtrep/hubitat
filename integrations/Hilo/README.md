@@ -77,7 +77,7 @@ hilo-<location id>-energy-YYYY-MM.json
 
 A day is written once all its hours are in. An hour Hilo has no value for is `null`.
 
-On first setup the manager finds where the account's history starts, then reads it into the files 7 days per hourly poll, so a year takes about two days. The app page shows how many days are left.
+On first setup the manager finds where the account's history starts, then reads it into the files one day a minute, so a year takes about six hours. The app page shows how many days are left.
 
 ### Browsing the history
 

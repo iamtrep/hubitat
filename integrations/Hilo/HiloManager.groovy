@@ -66,10 +66,10 @@ definition(
 // Longest Retry-After honored, so a bad header can't stop polling for good.
 @Field static final long RETRY_AFTER_MAX_MS = 3_600_000L
 @Field static final int LOG_BODY_MAX = 200
-// History files: days read into File Manager per poll while catching up, the furthest
-// back the start of the data is looked for, and how long an unanswered history
-// request blocks the next one.
-@Field static final int BACKFILL_PER_POLL = 7
+// History files: seconds between days read into File Manager while catching up (one call
+// a minute, the Home Assistant integration's minimum poll), the furthest back the start of
+// the data is looked for, and how long an unanswered history request blocks the next one.
+@Field static final int BACKFILL_INTERVAL_SECS = 60
 @Field static final int HISTORY_MAX_WEEKS = 520
 @Field static final long HISTORY_STALE_MS = 600_000L
 
@@ -142,6 +142,8 @@ void updated() {
     logDebug "updated"
     unsubscribe()
     unschedule()
+    // unschedule() drops a pending backfill step; let the next poll resume it.
+    state.remove("historyBusy")
     initialize()
     if (settings.debugEnable || settings.traceEnable) runIn(DEBUG_LOG_TIMEOUT, "logsOff")
 }
@@ -469,7 +471,7 @@ private boolean historyBusy() {
 
 private void continueHistory() {
     if (historyBusy()) return
-    if (state.historyStart) { backfillNext(BACKFILL_PER_POLL); return }
+    if (state.historyStart) { backfillNext(); return }
     state.historyBusy = now()
     logInfo "looking for the start of the Hilo history"
     fetchWeek(localToday().minusDays(6).toString(), 0, null)
@@ -514,15 +516,15 @@ void weekCallback(resp, data) {
         state.historyStart = found
         state.lastCompleteDay = LocalDate.parse(found).minusDays(1).toString()
         long days = localToday().toEpochDay() - LocalDate.parse(found).toEpochDay()
-        logInfo "Hilo history starts on ${found}; reading ${days} days into File Manager, ${BACKFILL_PER_POLL} per hour"
+        logInfo "Hilo history starts on ${found}; reading ${days} days into File Manager, one a minute"
         state.remove("historyBusy")
-        backfillNext(BACKFILL_PER_POLL)
+        backfillNext()
         return
     }
     fetchWeek(LocalDate.parse(data.start as String).minusDays(7).toString(), weeks + 1, first)
 }
 
-private void backfillNext(int left) {
+private void backfillNext() {
     String next = LocalDate.parse(state.lastCompleteDay as String).plusDays(1).toString()
     // Yesterday and today belong to the poll.
     if (LocalDate.parse(next) >= localToday().minusDays(1)) {
@@ -537,8 +539,10 @@ private void backfillNext(int left) {
     logNet "Energy2 ${next} (history)"
     asynchttpGet("backfillCallback", [uri: "${API_URL}/Locations/${state.locationId}/History/Energy2",
                                       query: [date: next, timescale: "Day"], headers: apiHeaders(token),
-                                      contentType: "application/json", timeout: HTTP_TIMEOUT], [day: next, left: left])
+                                      contentType: "application/json", timeout: HTTP_TIMEOUT], [day: next])
 }
+
+void backfillTick() { backfillNext() }
 
 void backfillCallback(resp, data) {
     String day = data.day as String
@@ -556,9 +560,9 @@ void backfillCallback(resp, data) {
     }
     if (hours != null && !writeDay(day, hours)) { state.remove("historyBusy"); return }
     state.lastCompleteDay = day
-    int left = (data.left as int) - 1
-    if (left > 0) backfillNext(left)
-    else state.remove("historyBusy")
+    // historyBusy stays set between days, so the hourly poll doesn't start a second chain.
+    if (LocalDate.parse(day).plusDays(1) >= localToday().minusDays(1)) backfillNext()
+    else runIn(BACKFILL_INTERVAL_SECS, "backfillTick")
 }
 
 // Rewrites the day's month file with that day replaced. Returns false when the file can't be written.
