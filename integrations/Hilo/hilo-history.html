@@ -77,6 +77,10 @@ SPDX-License-Identifier: MIT
     .ovline { fill: none; stroke: var(--event-text); stroke-width: 2; stroke-linejoin: round; pointer-events: none; }
     .ovdot { fill: var(--event-text); pointer-events: none; }
     .legend .e { color: var(--event-text); font-weight: 500; }
+    #daily svg { touch-action: pan-y; cursor: crosshair; }
+    .brush { fill: var(--primary-soft); stroke: var(--primary); stroke-width: 1; pointer-events: none; }
+    button { font: inherit; font-size: 0.8rem; padding: 1px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--card-bg); color: var(--text); cursor: pointer; }
+    button:hover { border-color: var(--primary); }
     .line { fill: none; stroke: var(--primary); stroke-width: 2; }
     .dot { fill: var(--primary); }
     .dot.sel { fill: var(--sel); }
@@ -137,6 +141,8 @@ const TEMP_URL = 'https://archive-api.open-meteo.com/v1/archive';
 let files = {};   // location -> [{month, name}]
 let days = [];    // [{date, hours:[{h, kWh}], total, nulls, n}] for the chosen location, sorted
 let selDay = null;
+let view = null;       // {from, to} dates while zoomed into a range dragged on the daily chart, else null
+const zoomStack = [];  // earlier periods, for zoom out: {month, view}
 let temps = null; // {byHour: Map(epoch s -> degrees), unit, note}; null until loaded or when unavailable
 let tempNote = '';
 let events = null; // [{s, e, slot}] epoch seconds; null until loaded or when unavailable
@@ -165,7 +171,11 @@ async function init() {
     loc.innerHTML = locs.map(l => `<option value="${esc(l)}">Location ${esc(l)}</option>`).join('');
     loc.hidden = locs.length < 2;
     loc.onchange = () => loadLocation(loc.value);
-    $('month').onchange = () => { selDay = null; render(); };
+    $('month').onchange = () => {
+        if ($('month').value === 'range') return;
+        view = null; zoomStack.length = 0; syncRange(); selDay = null; render();
+    };
+    addEventListener('keydown', e => { if (e.key === 'Escape' && zoomStack.length) zoomOut(); });
     await loadLocation(locs[0]);
 }
 
@@ -187,6 +197,7 @@ async function loadLocation(loc) {
         months.slice().reverse().map(m => `<option value="${m}">${monthName(m)}</option>`).join('');
     $('range').textContent = `${dayName(days[0].date)} to ${dayName(days[days.length - 1].date)} · ${days.length} days on file`;
     selDay = null;
+    view = null; zoomStack.length = 0; syncRange();
     temps = null;
     tempNote = 'Loading outdoor temperature…';
     render();
@@ -265,9 +276,43 @@ function fail(msg) {
 const full = d => d.nulls === 0 && d.n > 0;
 const mean = a => a.length ? a.reduce((s, v) => s + v, 0) / a.length : null;
 
-function render() {
+// The period shown: a dragged range, else the month picked, else every day.
+function periodSet() {
+    if (view) return days.filter(d => d.date >= view.from && d.date <= view.to);
     const m = $('month').value;
-    const set = m ? days.filter(d => d.date.startsWith(m)) : days;
+    return m ? days.filter(d => d.date.startsWith(m)) : days;
+}
+const shortDay = d => new Date(d + 'T12:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+const rangeName = () => view ? `${shortDay(view.from)} to ${shortDay(view.to)}` : '';
+
+// While zoomed, the period list shows the range as its own entry.
+function syncRange() {
+    const sel = $('month');
+    let o = sel.querySelector('option[value="range"]');
+    if (view) {
+        if (!o) { o = document.createElement('option'); o.value = 'range'; sel.insertBefore(o, sel.firstChild); }
+        o.textContent = rangeName();
+        sel.value = 'range';
+    } else if (o) o.remove();
+}
+
+function pushPeriod() { zoomStack.push({ month: $('month').value, view }); }
+function zoomTo(from, to) { pushPeriod(); view = { from, to }; syncRange(); selDay = null; render(); }
+function goMonth(m) { pushPeriod(); view = null; syncRange(); $('month').value = m; selDay = null; render(); }
+function zoomOut() {
+    const prev = zoomStack.pop();
+    if (!prev) return;
+    view = prev.view;
+    syncRange();
+    if (!view) $('month').value = prev.month;
+    selDay = null;
+    render();
+}
+
+function render() {
+    const m = view ? '' : $('month').value;
+    const set = periodSet();
+    const label = view ? rangeName() : (m ? monthName(m) : '');
     const fulls = set.filter(full);
     const total = set.reduce((s, d) => s + d.total, 0);
     const maxDay = fulls.reduce((a, d) => !a || d.total > a.total ? d : a, null);
@@ -275,26 +320,28 @@ function render() {
     set.forEach(d => d.hours.forEach(x => { if (x.kWh != null && (!maxHour || x.kWh > maxHour.kWh)) maxHour = { ...x, date: d.date }; }));
     const avg = fulls.length ? fulls.reduce((s, d) => s + d.total, 0) / fulls.length : null;
     if (!selDay || !set.some(d => d.date === selDay)) selDay = (maxDay || set[set.length - 1]).date;
+    const dayRows = !!m || (view && set.length <= 62);
 
     $('main').innerHTML = `
     <div class="tiles">
-        ${tile(fmt(total, 0) + ' kWh', m ? `used in ${monthName(m)}` : 'used, all days on file')}
+        ${tile(fmt(total, 0) + ' kWh', view ? `used, ${label}` : m ? `used in ${label}` : 'used, all days on file')}
         ${tile(avg == null ? '–' : fmt(avg) + ' kWh', `a day on average (${fulls.length} full days)`)}
         ${tile(maxDay ? fmt(maxDay.total) + ' kWh' : '–', maxDay ? 'heaviest day, ' + dayName(maxDay.date) : 'heaviest day')}
         ${tile(maxHour ? fmt(maxHour.kWh, 2) + ' kWh' : '–', maxHour ? `heaviest hour, ${dayName(maxHour.date)} ${maxHour.h}:00` : 'heaviest hour')}
     </div>
-    <div class="card"><h2><span>Daily use (kWh)</span><span class="legend">Click a day for its hours. Pale bars: hours missing.${temps ? ' <span class="t">Line</span>: mean outdoor temperature.' : ''}${events ? ' <span class="e">Mark</span>: peak event.' : ''}</span></h2><div id="daily"></div>
+    <div class="card"><h2><span>Daily use (kWh)${label ? ', ' + esc(label) : ''} ${zoomStack.length ? '<button id="zoomOut" title="Back to the previous period (Esc)">Zoom out</button>' : ''}</span><span class="legend">Click a day for its hours; drag across days to zoom in. Pale bars: hours missing.${temps ? ' <span class="t">Line</span>: mean outdoor temperature.' : ''}${events ? ' <span class="e">Mark</span>: peak event.' : ''}</span></h2><div id="daily"></div>
         <div class="legend" style="margin-top:6px">${esc(tempNote)}</div><div class="legend">${esc(eventNote)}</div></div>
     <div class="card"><h2><span id="dayTitle"></span><span class="legend" id="dayNote"></span></h2><div id="hourly"></div>
         <div class="legend" style="margin-top:6px"><b>Shaded</b>: peak windows 6–9 and 16–20, December 1 to March 31${events ? ' · <span class="e">purple</span>: an actual peak event' : ''}</div></div>
     ${temps ? `<div class="card"><h2><span>Daily use against mean outdoor temperature</span><span class="legend">Full days only. Click a point for its hours.${events ? ' <span class="e">Coloured</span>: peak-event days.' : ''}</span></h2><div id="scatter"></div></div>` : ''}
-    <div class="card"><h2><span>Average day by hour (kWh)${m ? ', ' + monthName(m) : ''}</span><span class="legend"><b>Shaded</b>: peak-event windows, 6–9 and 16–20</span></h2><div id="profile"></div><div class="legend" id="profileNote" style="margin-top:6px"></div><div class="legend" id="peakShare"></div></div>
-    <div class="card"><h2><span>${m ? 'Days' : 'Months'}</span></h2><div class="scroll" id="table"></div></div>`;
+    <div class="card"><h2><span>Average day by hour (kWh)${label ? ', ' + esc(label) : ''}</span><span class="legend"><b>Shaded</b>: peak-event windows, 6–9 and 16–20</span></h2><div id="profile"></div><div class="legend" id="profileNote" style="margin-top:6px"></div><div class="legend" id="peakShare"></div></div>
+    <div class="card"><h2><span>${dayRows ? 'Days' : 'Months'}</span></h2><div class="scroll" id="table"></div></div>`;
+    if ($('zoomOut')) $('zoomOut').onclick = zoomOut;
     drawDaily(set);
     drawDay();
     drawProfile(fulls);
     if (temps) drawScatter(set, fulls);
-    drawTable(m, set);
+    drawTable(dayRows, set);
 }
 
 const tile = (v, l) => `<div class="card tile"><div class="v">${v}</div><div class="l">${esc(l)}</div></div>`;
@@ -354,7 +401,8 @@ function wire(el, onClick) {
 
 function drawDaily(set) {
     const el = $('daily');
-    const vals = set.map(d => ({ key: d.date, value: d.total, label: set.length > 40 ? d.date.slice(5) : String(+d.date.slice(8)),
+    const multiMonth = set.length && set[0].date.slice(0, 7) !== set[set.length - 1].date.slice(0, 7);
+    const vals = set.map(d => ({ key: d.date, value: d.total, label: multiMonth || set.length > 40 ? d.date.slice(5) : String(+d.date.slice(8)),
         cls: d.date === selDay ? 'sel' : (full(d) ? '' : 'partial'), mark: evDay(d) }));
     const every = Math.max(1, Math.ceil(set.length / 16));
     el.innerHTML = bars(vals, { labelEvery: every, line: temps && set.map(d => d.tMean), fmtTip: v => {
@@ -362,7 +410,48 @@ function drawDaily(set) {
         return `${dayName(v.key)}: ${fmt(v.value)} kWh` + (d.nulls ? ` (${d.nulls} of ${d.n} hours missing)` : '') + (evDay(d) ? ` · ${evLabel(d)}` : '') +
             (temps && d.tMean != null ? ` · ${deg(d.tMean)} mean, ${deg(d.tMin)} to ${deg(d.tMax)}` : '');
     } });
-    wire(el, k => { selDay = k; drawDaily(set); drawDay(); if (temps) drawScatter(set, set.filter(full)); });
+    wire(el);
+    brush(el, set);
+}
+
+function selectDay(k, set) { selDay = k; drawDaily(set); drawDay(); if (temps) drawScatter(set, set.filter(full)); }
+
+// Press and drag across the daily bars to zoom into those days; a press without a drag picks the day.
+function brush(el, set) {
+    const svg = el.querySelector('svg');
+    if (!svg) return;
+    const hits = [...svg.querySelectorAll('.hit')];
+    if (!hits.length) return;
+    let start = null, box = null;
+    const idxAt = x => { let k = 0; hits.forEach((h, i) => { if (x >= h.getBoundingClientRect().left) k = i; }); return k; };
+    const clear = () => { start = null; if (box) { box.remove(); box = null; } };
+    const draw = (a, b) => {
+        const i = Math.min(a, b), j = Math.max(a, b);
+        const x0 = +hits[i].getAttribute('x'), x1 = +hits[j].getAttribute('x') + +hits[j].getAttribute('width');
+        if (!box) {
+            box = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            box.setAttribute('class', 'brush');
+            box.setAttribute('y', hits[0].getAttribute('y'));
+            box.setAttribute('height', hits[0].getAttribute('height'));
+            svg.appendChild(box);
+        }
+        box.setAttribute('x', x0);
+        box.setAttribute('width', x1 - x0);
+    };
+    svg.addEventListener('pointerdown', e => { if (e.button) return; start = idxAt(e.clientX); svg.setPointerCapture(e.pointerId); });
+    svg.addEventListener('pointermove', e => {
+        if (start == null) return;
+        const k = idxAt(e.clientX);
+        if (k !== start) { $('tip').style.display = 'none'; draw(start, k); }
+    });
+    svg.addEventListener('pointerup', e => {
+        if (start == null) return;
+        const a = start, k = idxAt(e.clientX);
+        clear();
+        if (k === a) selectDay(hits[a].dataset.k, set);
+        else zoomTo(hits[Math.min(a, k)].dataset.k, hits[Math.max(a, k)].dataset.k);
+    });
+    svg.addEventListener('pointercancel', clear);
 }
 
 function drawDay() {
@@ -432,10 +521,10 @@ function drawScatter(set, fulls) {
     wire(el, k => { selDay = k; drawDaily(set); drawDay(); drawScatter(set, fulls); });
 }
 
-function drawTable(m, set) {
+function drawTable(dayRows, set) {
     const el = $('table');
     const peakOf = d => d.hours.filter(x => inPeak(x.h) && x.kWh != null).reduce((s, x) => s + x.kWh, 0);
-    if (m) {
+    if (dayRows) {
         el.innerHTML = `<table><tr><th>Day</th><th>kWh</th><th>Peak windows</th><th>Lowest hour</th><th>Highest hour</th>${temps ? '<th>Outdoors, mean</th><th>min to max</th>' : ''}${events ? '<th>Peak event</th>' : ''}</tr>` +
             set.slice().reverse().map(d => {
                 const known = d.hours.filter(x => x.kWh != null).map(x => x.kWh);
@@ -447,7 +536,7 @@ function drawTable(m, set) {
         return;
     }
     const by = {};
-    days.forEach(d => (by[d.date.slice(0, 7)] = by[d.date.slice(0, 7)] || []).push(d));
+    set.forEach(d => (by[d.date.slice(0, 7)] = by[d.date.slice(0, 7)] || []).push(d));
     el.innerHTML = `<table><tr><th>Month</th><th>Days</th><th>kWh</th><th>kWh a day</th><th>Heaviest day</th><th>Peak windows</th>${temps ? '<th>Outdoors, mean</th>' : ''}${events ? '<th>Event days</th>' : ''}</tr>` +
         Object.keys(by).sort().reverse().map(k => {
             const ds = by[k], f = ds.filter(full), t = ds.reduce((s, d) => s + d.total, 0);
@@ -456,7 +545,7 @@ function drawTable(m, set) {
                 `<td>${mx ? fmt(mx.total) + ' (' + +mx.date.slice(8) + ')' : '–'}</td><td>${t ? fmt(100 * p / t, 0) + ' %' : '–'}</td>` +
                 (temps ? `<td>${deg(mean(ds.map(d => d.tMean).filter(v => v != null)))}</td>` : '') + (events ? `<td>${ds.filter(evDay).length || ''}</td>` : '') + '</tr>';
         }).join('') + '</table>';
-    el.querySelectorAll('tr.click').forEach(r => r.onclick = () => { $('month').value = r.dataset.m; selDay = null; render(); scrollTo({ top: 0, behavior: 'smooth' }); });
+    el.querySelectorAll('tr.click').forEach(r => r.onclick = () => { goMonth(r.dataset.m); scrollTo({ top: 0, behavior: 'smooth' }); });
 }
 
 init().catch(e => fail('Could not read the history: ' + e.message));
