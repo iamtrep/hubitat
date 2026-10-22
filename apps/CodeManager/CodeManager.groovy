@@ -706,6 +706,13 @@ static Map docPruneDecision(Map<String, List> oldMembers, Set<String> newKeys, S
     return [prune: prune, hold: hold]
 }
 
+// The origin that decides where a component's location and version come from. A bundle member folded into an HPM package
+// is not a manifest item (no manifest id), so its manifest declares neither: they come from its source, as for a bundle.
+@CompileStatic
+static String factOrigin(Map p, Map c) {
+    return (p.o == 'hpm' && c.mid == null && c.bm != null) ? 'bundle' : p.o as String
+}
+
 // Whether a component's stored field may be shown (DESIGN.md 3.1). Fields read from an item's source (ih, and loc/iv/ivs for
 // non-HPM origins) need a usable basis; an HPM component's loc/iv/ivs come from the package manifest and are always shown.
 @CompileStatic
@@ -1086,9 +1093,10 @@ Map buildInventoryPayload(Map bulk) {
             }
             String status = componentStatus(p, basis ? c + [basis: basis] : c, s, pe)
             // origin-url app/driver components don't store loc — reconstruct it from the key (see reconcileRegistry)
-            String location = factVisible(p.o as String, basis, 'loc') ? (c.loc ?: (p.o == 'url' ? key.substring(4) : null)) : null
+            String fo = factOrigin(p, c)
+            String location = factVisible(fo, basis, 'loc') ? (c.loc ?: (p.o == 'url' ? key.substring(4) : null)) : null
             Map row = [key: key, kind: c.k, hubId: c.id, namespace: c.ns, name: c.nm, origin: p.o, location: location, managedBy: p.o == 'hpm' ? (state.hpm?.mode == 'manage' ? 'cm' : 'hpm') : 'cm',
-                       status: status, ihash: factVisible(p.o as String, basis, 'ih') ? c.ih : null, ahash: c.ah, iver: factVisible(p.o as String, basis, 'iv') ? c.iv : null, iverSrc: factVisible(p.o as String, basis, 'ivs') ? c.ivs : null, rhash: s.rhash, rver: s.rver, checkedAtMs: s.checkedAt, changedAtMs: s.changedAt,
+                       status: status, ihash: factVisible(fo, basis, 'ih') ? c.ih : null, ahash: c.ah, iver: factVisible(fo, basis, 'iv') ? c.iv : null, iverSrc: factVisible(fo, basis, 'ivs') ? c.ivs : null, rhash: s.rhash, rver: s.rver, checkedAtMs: s.checkedAt, changedAtMs: s.changedAt,
                        httpStatus: s.httpStatus, failCount: s.failCount ?: 0, error: s.lastError, failedAtMs: s.failedAt, lastModifiedMs: c.lm, usedByCount: c.u ?: 0, required: c.req != false,
                        usedBy: usedBy[ckey(c.k as String, c.id)] ?: [], bundleOf: c.bm, isPrivate: c.pv == true,
                        basis: basis, factsReadAtMs: c.frd, factError: c.fe, sizeBytes: c.sz, childOf: (c.id != null ? childOf[ckey(c.k as String, c.id)] : null) ?: [], asOf: invAsOf]
@@ -1139,9 +1147,10 @@ Map apiInventory() {
 // whose recorded size is above the background limit, kinds that have no source and components not bound to a hub id.
 @CompileStatic
 static List<String> factQueue(List<Map> comps, long now) {
+    long largeLimit = LARGE_SOURCE_BYTES    // the sandbox forbids a statically compiled closure from reading a @Field
     List<Map> picked = comps.findAll { Map c ->
         c.id != null && (c.k == 'app' || c.k == 'driver' || c.k == 'library') &&
-            ((c.sz ?: 0L) as long) <= LARGE_SOURCE_BYTES && ((c.fnext ?: 0L) as long) <= now &&
+            ((c.sz ?: 0L) as long) <= largeLimit &&((c.fnext ?: 0L) as long) <= now &&
             factBasis(c, (c.lm ?: 0L) as long) != 'valid'
     }
     picked.sort { Map a, Map b -> ((b.lm ?: 0L) as long) <=> ((a.lm ?: 0L) as long) }
@@ -1208,11 +1217,11 @@ private Map withPending(Map c) {
     return pend == null ? c : (pend + [lm: c.lm, u: c.u])
 }
 
-// Every bound app, driver and library in the registry, with its package origin (as `_o`) and any unflushed facts.
+// Every bound app, driver and library in the registry, with its fact origin (as `_o`, see factOrigin()) and any unflushed facts.
 private List<Map> itemComponents() {
     List<Map> out = []
     ((state.pkgs ?: [:]) as Map).each { String key, Map p ->
-        (p.c as List).each { Map c -> if (c.id != null && c.k in ['app', 'driver', 'library']) out << (withPending(c) + [_o: p.o]) }
+        (p.c as List).each { Map c -> if (c.id != null && c.k in ['app', 'driver', 'library']) out << (withPending(c) + [_o: factOrigin(p, c)]) }
     }
     return out
 }
@@ -1223,7 +1232,7 @@ private Map findItem(String ck) {
         Map p = e.value as Map
         for (Object o in (p.c as List)) {
             Map c = o as Map
-            if (c.id != null && c.k in ['app', 'driver', 'library'] && ckey(c.k as String, c.id) == ck) return withPending(c) + [_o: p.o]
+            if (c.id != null && c.k in ['app', 'driver', 'library'] && ckey(c.k as String, c.id) == ck) return withPending(c) + [_o: factOrigin(p, c)]
         }
     }
     return null
@@ -1660,7 +1669,7 @@ private List<Map> driftScopeItems(String scope, String pkgKey) {
     List<Map> out = []
     ((state.pkgs ?: [:]) as Map).each { String key, Map p ->
         if (scope == 'package' && key != pkgKey) return
-        (p.c as List).each { Map c -> if (c.id != null && c.k in ['app', 'driver', 'library']) out << (withPending(c) + [_o: p.o]) }
+        (p.c as List).each { Map c -> if (c.id != null && c.k in ['app', 'driver', 'library']) out << (withPending(c) + [_o: factOrigin(p, c)]) }
     }
     return out
 }

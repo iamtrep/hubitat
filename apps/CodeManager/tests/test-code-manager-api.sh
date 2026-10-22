@@ -128,6 +128,8 @@ except urllib.error.HTTPError as e: (ok if e.code in (401, 403, 500) else fail)(
 except Exception as e: warn(f"bad Bearer token check: {e}")
 # ── Task 2: shared bulk reads ─────────────────────────────────────────
 section("Bulk reads")
+# the counter lives until the code reloads, and this test's own facts/read adds one: compare against the start
+reads_base = api_get("stats").get("perItemReadsInRequest")
 import threading
 def bulk_fetches(): return (api_get("stats").get("bulkFetches") or {})
 b0 = bulk_fetches()
@@ -156,14 +158,14 @@ dbg_before = api_get("settings").get("debugEnable") is True
 def set_debug(on): api_post("settings", {"data": json.dumps({"debugEnable": on})})
 try:
     set_debug(True)
-    before = {c["id"] for c in api_get("inventory").get("components", []) if c.get("kind") == "library"}
+    before = {c.get("hubId") for c in api_get("inventory").get("components", []) if c.get("kind") == "library"}
     sim = api_post("test/simulateLibFail", {"on": "1"})
     (ok if sim.get("simulateLibFail") is True else fail)(f"test/simulateLibFail on ({sim})")
     r2 = api_post("libraries/refresh")
     j2 = poll_job(r2.get("jobId", ""), timeout_s=120)
     (ok if j2.get("status") == "done" and (j2.get("result") or {}).get("error") else fail)(f"failed refresh ends done with result.error ({j2.get('status')}, {(j2.get('result') or {}).get('error')})")
     inv3 = api_get("inventory?force=1", timeout=300)
-    after = {c["id"] for c in inv3.get("components", []) if c.get("kind") == "library"}
+    after = {c.get("hubId") for c in inv3.get("components", []) if c.get("kind") == "library"}
     (ok if before and before == after else fail)(f"inventory still lists every library after a failed read ({len(before)} -> {len(after)})")
     (ok if (inv3.get("libraries") or {}).get("asOf") == lib_asof1 else fail)("libraries.asOf unchanged by the failed read")
 finally:
@@ -173,7 +175,7 @@ off = api_post("test/simulateLibFail", {"on": "0"})
 (ok if off.get("_error") == 404 else fail)(f"test hook answers 404 with debug logging off ({off})")
 set_debug(dbg_before)
 st2 = api_get("stats")
-(ok if st2.get("perItemReadsInRequest") == 0 else fail)(f"perItemReadsInRequest is 0 ({st2.get('perItemReadsInRequest')})")
+(ok if st2.get("perItemReadsInRequest") == reads_base else fail)(f"perItemReadsInRequest unchanged ({reads_base} -> {st2.get('perItemReadsInRequest')})")
 (ok if set(st2.get("bulkFetches", {})) >= {"apps", "drivers", "libraries"} else fail)("stats.bulkFetches has the per-key counters")
 
 # ── Task 4: inventory ─────────────────────────────────────────────────
@@ -379,7 +381,8 @@ if lib:
 ex = api_post("export", timeout=120)
 for k in ("exportedAt", "registry", "documents", "drift", "hpm"):
     (ok if k in ex else fail)(f"export has {k}")
-(ok if all(d["doc"] is not None for d in ex.get("documents", [])) else fail)("every registered package has a readable document")
+# an unread package has no manifest until its facts are read, so it has no document yet
+(ok if all(d["doc"] is not None for d in ex.get("documents", []) if not d["key"].startswith("unread:")) else fail)("every registered package except unread ones has a readable document")
 files = [f["name"] for f in (fetch("/hub/fileManager/json") or {}).get("files", [])]
 (ok if "cm_registry_export.json" in files else fail)("cm_registry_export.json written")
 # ── Task 4: background fact reader ────────────────────────────────────
@@ -423,7 +426,7 @@ read_comps = [c for c in inv.get("components", []) if c.get("basis") in ("valid"
 unread_c = [c for c in inv.get("components", []) if c.get("basis") in ("unread", "stale")]
 (ok if all(c.get("origin") == "unread" or c.get("origin") in ("hpm", "bundle") for c in unread_c) else fail)("an unread or stale component is never classified url or local")
 ts = api_get("stats")
-(ok if ts.get("perItemReadsInRequest") == 0 else fail)(f"no per-item read happened inside an endpoint handler ({ts.get('perItemReadsInRequest')})")
+(ok if ts.get("perItemReadsInRequest") == reads_base else fail)(f"no per-item read happened inside an endpoint handler ({reads_base} -> {ts.get('perItemReadsInRequest')})")
 one = next((c for c in inv.get("components", []) if c.get("kind") == "app" and c.get("hubId") and not c.get("isPrivate")), None)
 if one:
     reads0 = ts.get("perItemReadsInRequest")

@@ -20,7 +20,7 @@ String constant = ['PROVISIONAL_MS', 'LARGE_SOURCE_BYTES', 'FACT_FAIL_LIMIT', 'F
     assert cm.find() : "${n} not found"
     cm.group(1)
 }.join('\n')
-String code = ['factBasis', 'factQueue', 'recordFailure', 'recordSuccess', 'factNextAction', 'factNeedsRetry', 'factJobStale', 'classifyOrigin', 'ckey', 'childOfIndex', 'walkAppTree', 'docPruneDecision', 'factVisible'].collect { extract(it) }.join('\n')
+String code = ['factBasis', 'factQueue', 'recordFailure', 'recordSuccess', 'factNextAction', 'factNeedsRetry', 'factJobStale', 'classifyOrigin', 'ckey', 'childOfIndex', 'walkAppTree', 'docPruneDecision', 'factVisible', 'factOrigin'].collect { extract(it) }.join('\n')
 def H = new GroovyShell().parse("import groovy.transform.CompileStatic\nclass H {\n${constant}\n${code}\n}\nreturn H").run()
 
 void t(String name, Closure c) { try { c(); pass++; println "  ok   ${name}" } catch (Throwable e) { fail++; println "  FAIL ${name}\n         ${e.message}" } }
@@ -77,6 +77,12 @@ t('item facts need a usable basis', { assert !H.factVisible('url', 'stale', 'loc
 t('hpm manifest metadata is shown whatever the basis', { assert H.factVisible('hpm', 'unread', 'loc') && H.factVisible('hpm', 'stale', 'iv') && H.factVisible('hpm', 'stale', 'ivs') })
 t('an hpm item hash still needs a usable basis', { assert !H.factVisible('hpm', 'unread', 'ih') })
 t('components without a basis (bundles, files) are always shown', { assert H.factVisible('bundle', null, 'loc') })
+
+// --- factOrigin ---
+t('an hpm manifest item keeps the hpm origin', { assert H.factOrigin([o: 'hpm'], [k: 'app', mid: 'x1']) == 'hpm' })
+t('a bundle member folded into an hpm package takes its facts as a bundle member', { assert H.factOrigin([o: 'hpm'], [k: 'app', bm: '2']) == 'bundle' })
+t('an hpm component that is neither is left hpm', { assert H.factOrigin([o: 'hpm'], [k: 'driver']) == 'hpm' })
+t('other origins pass through', { assert H.factOrigin([o: 'url'], [k: 'app', bm: '2']) == 'url' && H.factOrigin([o: 'bundle'], [k: 'app', bm: '2']) == 'bundle' })
 
 // --- factQueue ---
 long NOW = 1_000_000L
