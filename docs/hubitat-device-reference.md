@@ -269,6 +269,10 @@ ThirdReality Presence Sensor R3 / Multi-Function Night Light. Confirmed protocol
   (`0x0001`); CT (`0x0007`) reads back fine *(probed firmware not recorded, C-7, one 3RPL01084Z captures, July 2026)*. The device is also enhanced-hue capable (EnhancedCurrentHue `0x4000`) *(community: [zigbee-herdsman-converters `third_reality.ts`](https://github.com/Koenkk/zigbee-herdsman-converters/blob/master/src/devices/third_reality.ts))*, but legacy 8-bit hue is adequate for Hubitat's
   0–100 hue range *(inferred: Hubitat's 0–100 hue scale needs less than 8 bits)*.
 
+## ThirdReality 3RSP plugs
+
+Read Reporting Configuration of OnOff (0x0006:0x0000) returned a record of type 0x10 with minimum interval 0 s on both plugs. The maximum interval was 60 s on a 3RSP019BZ and 600 s on a 3RSP02064Z *(probed 2.5.2.139, C-7, one plug of each model)*.
+
 ## ThirdReality vibration sensor
 
 ThirdReality vibration sensors (mfr `1233`) emit a flood of `FFF1:0000/0001/0002/0003` Report

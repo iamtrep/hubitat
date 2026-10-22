@@ -42,6 +42,7 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 | [ThermostatSchedulerPlus/](./ThermostatSchedulerPlus/) | Thermostat schedules with profiles, holds and an API |
 | [utilities/](./utilities/) |  |
 | [WellMonitor/](./WellMonitor/) | Monitors well pump cycles, downstream consumption, tank usage, and emergency shutoff |
+| [ZigbeeWorkbench/](./ZigbeeWorkbench/) | Inspect and change any Zigbee device without changing its driver: ZDO tables and descriptors, attributes, reporting, commands, binding |
 <!-- /AUTO -->
 
 ## License
