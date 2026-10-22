@@ -301,7 +301,9 @@ it pairs. Leading zero bytes of each number are dropped before hashing *(spec: [
   `byteInterface: true`, got back ServerHello, Certificate, ServerKeyExchange, CertificateRequest
   and ServerHelloDone in the clear. The certificate parsed with `CertificateFactory`, and its
   modulus matched the one openssl saw. A driver can therefore read the TV's public key
-  without the user pasting a certificate *(probed 2.5.2.138, C-7, throwaway driver)*.
+  without the user pasting a certificate *(probed 2.5.2.138, C-7, throwaway driver)*. From 2.5.3.104 the driver can instead read it with
+  `rawSocket.getPeerCertificate()` on the TLS pairing socket, which gives it under TLS 1.3 too
+  *(probed 2.5.3.104, C-8 Pro, Android TV Remote driver against a mock TV, and a throwaway driver against a TLS 1.3 server)*.
 - Over TLS on 6467 with a client certificate the hub generated, `pairing_request`
   (`08 02 10 C8 01 52 ...`: protocol version 2, status 200, service `atvremote`) was answered with
   `08 02 10 C8 01 5A 00`, a `pairing_request_ack` with status 200 *(probed 2.5.2.138, C-7, throwaway driver)*.

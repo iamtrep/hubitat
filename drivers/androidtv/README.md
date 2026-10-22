@@ -41,7 +41,7 @@ The hub makes its own client certificate on the first pairing, which takes a few
 private key is stored encrypted with the hub's key. After a hub restore or migration the key can't
 be read back, and the driver asks you to pair again.
 
-Right after pairing, the log shows an error `java.lang.InterruptedException (method socketStatus)`. The hub
+On hub firmware before 2.5.3, right after pairing, the log shows an error `java.lang.InterruptedException (method socketStatus)`. The hub
 logs it when the pairing connection closes; it is harmless, and the remote session connects right after.
 
 ## Commands and attributes

@@ -61,7 +61,7 @@ import java.security.Signature
 import java.security.cert.CertificateFactory
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.3.4"
+@Field static final String CODE_VERSION = "0.3.5"
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int PAIRING_PORT = 6467
 @Field static final String MDNS_SERVICE = "_androidtvremote2._tcp"
@@ -98,6 +98,8 @@ import java.util.concurrent.ConcurrentHashMap
 // Per-device connection state. Kept out of `state`: parse() can run before a command's state
 // writes are committed, and the receive buffer changes on every chunk.
 @Field static final Map<Long, Map> RUNTIME = new ConcurrentHashMap<Long, Map>()
+// supported: false once rawSocket.getPeerCertificate() is found missing (firmware before 2.5.3).
+@Field static final Map<String, Boolean> PEER_CERT = new ConcurrentHashMap<String, Boolean>()
 
 Map rt() {
     Map r = RUNTIME.get(device.idAsLong)
@@ -309,10 +311,20 @@ void startPairing() {
     disconnect()
     if (!state.cert || !(state.keyEnc || state.key)) generateIdentity()
     sendEvent(name: "pairing", value: "pairing")
-    // The pairing hash needs the TV's public key. The TLS socket doesn't expose the server
-    // certificate, so read it from a TLS 1.2 handshake on a plain socket, where it is sent in the clear.
+    rt().fresh = false
+    rt().certRead = false
+    // The pairing hash needs the TV's public key: the pairing socket gives the TV's certificate on
+    // firmware with getPeerCertificate(), otherwise readTvCertificate() reads it first.
+    if (PEER_CERT.supported == false) readTvCertificate()
+    else openPairingSession()
+}
+
+void readTvCertificateNow() { readTvCertificate() }
+
+// Firmware without getPeerCertificate() (before 2.5.3): the certificate comes from a TLS 1.2 handshake
+// on a plain socket, where it is sent in the clear. A TV that only allows TLS 1.3 can't pair this way.
+private void readTvCertificate() {
     Map r = rt()
-    r.fresh = false
     r.mode = "hello"
     r.buf = ""
     r.closing = false
@@ -369,8 +381,35 @@ void openPairingSession() {
     Map opts = tlsOptions()
     if (opts == null) { endPairing(); return }
     if (!pairingConnect(opts)) return
+    if (!r.certRead) {
+        String cert = peerCertificate()
+        if (cert == null) {
+            closeSocketLater()
+            runInMillis(500, "readTvCertificateNow")
+            return
+        }
+        state.tvCert = cert
+        logNet "Got the TV certificate from the pairing socket"
+        logTrace "TV certificate: ${cert.replace('\n', '|')}"
+    }
+    r.certRead = false
     sendFrame(outer(pMsg(10, pStr(1, "atvremote") + pStr(2, "Hubitat"))))
     runIn(10, "pairingTimeout")
+}
+
+// The TV's certificate as PEM, or null when the firmware can't give it.
+private String peerCertificate() {
+    try {
+        String cert = interfaces.rawSocket.getPeerCertificate()
+        if (cert) return cert
+        logDebug "The pairing socket gave no TV certificate; reading it from a TLS 1.2 handshake"
+    } catch (MissingMethodException ignored) {
+        PEER_CERT.supported = false
+        logDebug "This firmware can't read the TV certificate from the pairing socket; reading it from a TLS 1.2 handshake"
+    } catch (e) {
+        logWarn "Reading the TV certificate from the pairing socket failed (${e.class.simpleName}: ${e.message}); reading it from a TLS 1.2 handshake"
+    }
+    return null
 }
 
 void submitPairingCode(String code) {
@@ -779,6 +818,7 @@ void parse(String hex) {
             state.tvCert = pem("CERTIFICATE", HexUtils.hexStringToByteArray(certHex))
             logNet "Got the TV certificate (${certHex.length() / 2 as int} bytes DER)"
             logTrace "TV certificate: ${state.tvCert.replace('\n', '|')}"
+            r.certRead = true
             closeSocketLater()
             runInMillis(500, "openPairingSession")
         }
@@ -843,7 +883,7 @@ private void sendFrame(String msgHex, boolean trace = true) {
 private Map tlsOptions() {
     String key = clientKey()
     if (key == null) return null
-    // caCertificate is required alongside certificate/privateKey; any certificate works with ignoreSSLIssues.
+    // Before 2.5.3, caCertificate is required alongside certificate/privateKey; any certificate works with ignoreSSLIssues.
     return [secureSocket: true, ignoreSSLIssues: true, byteInterface: true,
             certificate: state.cert, privateKey: key, caCertificate: state.cert]
 }
