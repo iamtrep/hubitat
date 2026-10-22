@@ -156,7 +156,7 @@ timestamp,bridge,type,level,"name","msg"
 ## File Structure
 
 ```
-apps/LogMonitor/
+LogMonitor/
   LogMonitor.groovy         # Parent app
   LogMonitorBridge.groovy   # Child bridge driver (WebSocket connection)
 ```

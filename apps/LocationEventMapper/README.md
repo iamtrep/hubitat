@@ -86,7 +86,7 @@ The defaults wire up a restart-state sensor: it opens when the hub is asked to s
 ## File Structure
 
 ```
-apps/LocationEventMapper/
+LocationEventMapper/
   LocationEventMapper.groovy        # Parent app (singleton)
   LocationEventMapperChild.groovy   # Child app (one per mapped sensor)
 ```

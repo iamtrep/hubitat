@@ -63,7 +63,7 @@ of its own peer entries pointing at its co-located Hub Inspector instance, so al
 ## Install / deploy
 
 1. **Import/push the Groovy app** to your primary hub (the hub that will serve the SPA):
-   `apps/MultiHubInventory/MultiHubInventory.groovy` (the Import URL is set, so Hubitat can pull
+   `MultiHubInventory.groovy` (the Import URL is set, so Hubitat can pull
    updates).
 
 2. **OAuth enables itself.** On first install the app auto-enables OAuth (via the hub's
@@ -95,7 +95,7 @@ above). In the app's settings page, click **"Add hub"**. Paste that hub's Hub In
 base URL with its access token**, for example:
 
 ```
-http://192.168.0.10/apps/api/247/api/?access_token=<token>
+http://192.168.0.10/apps/api/123/api/?access_token=<token>
 ```
 
 This is the `/api/` path, not the `ui.html` dashboard link. To build it, take the **Open
@@ -106,7 +106,7 @@ cannot make an HTTP call to its own LAN IP, so the app sends its own requests th
 loopback address either way; you can enter the LAN IP or the loopback address:
 
 ```
-http://127.0.0.1:8080/apps/api/247/api/?access_token=<token>
+http://127.0.0.1:8080/apps/api/123/api/?access_token=<token>
 ```
 
 Peer hubs use their normal LAN IP. Tokens are stored only in the app's settings; they never

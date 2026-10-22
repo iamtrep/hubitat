@@ -37,4 +37,4 @@ Virtual drivers, sandbox introspection tools, and companion test apps that exerc
 
 MIT — see individual source files for the full license text.
 
-See the parent [drivers/README.md](../README.md) for the full driver index.
+See the [full driver index](../README.md).

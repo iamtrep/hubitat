@@ -131,7 +131,3 @@ On hub start, on every Done and on the first event after a code update, the app 
 ## Not in this version
 
 Time-proportional control with an outdoor temperature, cooling, and per-heater power thresholds.
-
-## Tests
-
-`tests/test_core.groovy` (unit tests, run off the hub under Groovy 2.4.21), `tests/test-sht.sh` and `tests/test-sht-faults.sh` (behavior tests on a hub, generated from `tests/spec-switched-heater-thermostat.yaml` and `tests/spec-switched-heater-thermostat-faults.yaml`: `RUN_SLOW_TESTS=1 bash tests/test-sht.sh [@hub]`, then the same for `test-sht-faults.sh`) and `tests/TEST_PLAN.md` (coverage and known gaps).

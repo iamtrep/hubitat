@@ -17,4 +17,4 @@ Hubitat Elevation drivers for Aqara / Xiaomi (LUMI) Zigbee devices.
 
 Mixed. Each file's header is authoritative. `Aqara_WSDCGQ11LM.groovy` and `Aqara_MCCGQ11LM.groovy` derive from upstream community work (BirdsLikeWires) and remain under the **GPL-3.0**; `Aqara_WS_USC01.groovy` is released under the **MIT License**.
 
-See the parent [drivers/README.md](../README.md) for the full driver index.
+See the [full driver index](../README.md).

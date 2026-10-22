@@ -16,4 +16,4 @@ Diagnostic and test drivers for Zigbee mesh tooling — not device drivers for e
 
 MIT — see individual source files for the full license text.
 
-See the parent [drivers/README.md](../README.md) for the full driver index.
+See the [full driver index](../README.md).

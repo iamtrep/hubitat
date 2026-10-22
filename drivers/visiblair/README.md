@@ -17,4 +17,4 @@ Standalone single-device Hubitat driver for a [VisiblAir](https://visiblair.com/
 
 MIT — see the file header for the full license text.
 
-See the parent [drivers/README.md](../README.md) for the full driver index.
+See the [full driver index](../README.md).

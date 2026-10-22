@@ -25,4 +25,4 @@ Hubitat Elevation drivers for Sinopé Zigbee devices.
 
 Mixed. Each file's header is authoritative. `Sinope_TH112xZB.groovy`, `Sinope_TH13X0ZB.groovy` and `Sinope_VA422xZB.groovy` derive from upstream community work and remain under the **Apache License 2.0**; the rest are released under the **MIT License**.
 
-See the parent [drivers/README.md](../README.md) for the full driver index.
+See the [full driver index](../README.md).
