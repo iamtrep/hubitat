@@ -41,6 +41,7 @@ List<String> SIGNATURES = [
     'Map evalLaunch(List<Map> lines, Map steps) {',
     'Map evalRecovery(List<Map> lines, Map steps, TimeZone tz) {',
     'Map evalText(List<Map> lines) {',
+    'Map evalMedia(List<Map> lines) {',
     'Map evalHome(List<Map> lines, Map steps) {',
     'Map evalStandby(List<Map> lines, Map steps) {',
     'Map evalPowerCut(List<Map> lines, Map steps, Map attrs, TimeZone tz) {',
@@ -369,6 +370,24 @@ check 'fast hub, short wait: 1 s', h.pollGap(15, 400L) == 1
 check 'slow read sets the gap', h.pollGap(15, 3200L) == 4
 check 'long wait: at least 10 s', h.pollGap(600, 3200L) == 10
 check 'no read yet', h.pollGap(15, null) == 1
+
+println 'evalMedia'
+Map m1 = h.evalMedia([ln('11:00:00.000', 'rx 20:{1:{12:"com.google.android.tvlauncher"}}'),
+                      ln('11:00:01.000', 'tx 10:{1:126 2:3}'), ln('11:00:04.000', 'tx 10:{1:127 2:3}'),
+                      ln('11:00:07.000', 'tx 10:{1:86 2:3}'), ln('11:00:08.000', 'ping #9 val1=9 gap=7400 ms 8:{1:9 2:1}')])
+check 'keys sent in order', m1.keysSent == '126,127,86'
+check 'no reply, accepted, session kept', m1.replies == null && m1.accepted && m1.errorCode == null && m1.sessionKept
+check 'messages before the first key ignored, pings not replies', m1.replies == null
+Map m2 = h.evalMedia([ln('11:00:01.000', 'tx 10:{1:126 2:3}'), ln('11:00:01.300', 'rx 20:{1:{12:"com.spotify.tv.android"}}'),
+                      ln('11:00:04.000', 'tx 10:{1:127 2:3}'), ln('11:00:04.100', 'rx 51:{1:1}'), ln('11:00:04.200', 'rx 20:{1:{12:"x"}}')])
+check 'replies listed once, in order', m2.replies == '20,51'
+check 'missing key shows', m2.keysSent == '126,127'
+Map m3 = h.evalMedia([ln('11:00:01.000', 'tx 10:{1:86 2:3}'), ln('11:00:01.050', 'TV rejected 10:{1:86 2:3} (error 3); reconnecting'),
+                      ln('11:00:02.000', 'remote connect returned after 700 ms')])
+check 'refused key', m3.accepted == false && m3.errorCode == '3'
+check 'drop seen', m3.sessionKept == false
+check 'other keys not counted', h.evalMedia([ln('11:00:00.000', 'tx 10:{1:3 2:3}')]).keysSent == ''
+check 'expected run has no differences', h.differences(m1, [keysSent: [eq: '126,127,86'], accepted: [eq: true], sessionKept: [eq: true], replies: [none: true]]) == []
 
 println 'evalDiscovery'
 def dl = { String m -> [ts: '2026-10-17 10:00:00.000', level: 'info', msg: m] }

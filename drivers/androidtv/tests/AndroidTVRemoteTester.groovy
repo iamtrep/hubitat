@@ -27,7 +27,7 @@ import java.security.MessageDigest
 import java.security.cert.CertificateFactory
 import java.text.SimpleDateFormat
 
-@Field static final String CODE_VERSION = "0.5.2"
+@Field static final String CODE_VERSION = "0.6.0"
 
 @Field static final String BUSY = "a run is in progress"
 
@@ -36,7 +36,7 @@ import java.text.SimpleDateFormat
 @Field static final Map TEST_NAMES = [
     0: "Connection", 1: "Session start", 2: "Pings", 3: "Power off/on", 4: "Volume", 5: "Launch by URL",
     6: "Launch by package", 7: "Recovery after a box error", 8: "HOME", 9: "Long standby",
-    10: "Power cut", 11: "Wrong pairing code", 12: "Pairing", 13: "Discovery", 14: "Text input"
+    10: "Power cut", 11: "Wrong pairing code", 12: "Pairing", 13: "Discovery", 14: "Text input", 15: "Media keys"
 ]
 
 // The device's attributes the run watches, to check what the driver made of the box's messages.
@@ -67,7 +67,9 @@ import java.text.SimpleDateFormat
     // The driver finds the box by its mDNS announcement; a box that stops announcing while off delays the driver's IP repair until it wakes.
     13: [announced: [eq: true], deviceTvFound: [ne: false], announcedOff: [eq: true]],
     // The driver echoes the counters of the box's last message 21, so it assumes the box sends one for a focused field.
-    14: [textSent: [eq: true, driver: true], accepted: [eq: true], editReported: [eq: true]]
+    14: [textSent: [eq: true, driver: true], accepted: [eq: true], editReported: [eq: true]],
+    // The protocol has no playback-state message, so the driver expects nothing back from a media key.
+    15: [keysSent: [eq: "126,127,86", driver: true], accepted: [eq: true], sessionKept: [eq: true], replies: [none: true]]
 ]
 
 // Applies to every test: the box sent a message type the driver doesn't act on.
@@ -110,8 +112,9 @@ Map mainPage() {
             input "optWrongCode", "bool", title: "Wrong pairing code: shows a pairing dialog on the TV", defaultValue: false
         }
         section("Run") {
-            paragraph "Tests 3 to 10, 13 and 14 change what is on the TV. Tests 1 to 8, 13 and 14 take about 3 minutes; the power cut adds about 3, the wrong code about 1, and the standby its minutes. " +
-                      "Watch the TV during test 14: it opens the search screen and types \"hubitat\"."
+            paragraph "Tests 3 to 10 and 13 to 15 change what is on the TV. Tests 1 to 8 and 13 to 15 take about 3 minutes; the power cut adds about 3, the wrong code about 1, and the standby its minutes. " +
+                      "Watch the TV during test 14: it opens the search screen and types \"hubitat\". Test 15 sends play, pause and stop: " +
+                      "they act on whatever app plays media, which may resume the last thing played."
             if (tv && tv.currentValue("pairing") != "paired") {
                 paragraph "The device isn't paired, so Run only checks how far pairing gets: it opens a pairing dialog on the TV and answers it with a wrong code. Takes about 1 minute."
             }
@@ -266,7 +269,7 @@ String startRun(Map opts) {
     if (pairing == "awaiting code") return "the TV is waiting for a pairing code; enter it, or wait 5 minutes for it to time out"
     // An unpaired device can't run the session tests; the run then checks how far pairing gets.
     boolean pairingOnly = pairing != "paired"
-    List<Integer> tests = pairingOnly ? [12] : (opts.tests ? (opts.tests as List<Integer>) : [1, 2, 3, 4, 5, 6, 7, 8, 13, 14])
+    List<Integer> tests = pairingOnly ? [12] : (opts.tests ? (opts.tests as List<Integer>) : [1, 2, 3, 4, 5, 6, 7, 8, 13, 14, 15])
     if (!opts.tests && !pairingOnly) {
         if (opts.standby) tests << 9
         if (opts.powerCut) tests << 10
@@ -407,7 +410,8 @@ void runStep() {
             run.stepResults = [:]
             String skip = test == 10 && !plug ? "no plug selected" :
                           test == 13 && !tv.hasCommand("findTvs") ? "the driver has no Find TVs command; update it" :
-                          test == 14 && !tv.hasCommand("sendText") ? "the driver has no Send Text command; update it" : null
+                          test == 14 && !tv.hasCommand("sendText") ? "the driver has no Send Text command; update it" :
+                          test == 15 && !tv.hasCommand("pause") ? "the driver has no Pause command; update it" : null
             if (skip) {
                 (run.results as List) << [test: test, name: TEST_NAMES[test], skipped: skip]
                 run.idx = (run.idx as int) + 1
@@ -466,6 +470,9 @@ void sendStep(Map s, Map run) {
         case "sendKey": tv.sendKey(args[0] as String); break
         case "launchApp": tv.launchApp(args[0] as String); break
         case "sendText": tv.sendText(args[0] as String); break
+        case "play": tv.play(); break
+        case "pause": tv.pause(); break
+        case "stop": tv.stop(); break
         case "startPairing": tv.startPairing(); break
         case "connectIfIdle": tv.connect(); break
         case "wrongCode": tv.submitPairingCode(wrongCodeForTv()); break
@@ -603,6 +610,10 @@ Map evaluateTest(int test, List<Map> lines, Map steps, Map run, List<Map> events
             f = evalText(lines)
             r.note = "say in your post whether \"hubitat\" appeared in the search box"
             break
+        case 15:
+            f = evalMedia(lines)
+            r.note = "say in your post whether anything on the TV reacted to play, pause or stop"
+            break
         default: f = [:]
     }
     f.putAll(evalEvents(test, events, f))
@@ -615,9 +626,9 @@ Map evaluateTest(int test, List<Map> lines, Map steps, Map run, List<Map> events
     Map expect = (EXPECT[test] as Map) + EXPECT_ALL
     r.diffs = differences(f, expect)
     r.putAll(splitDiffs(r.diffs as List, expect))
-    // Session start always: its messages are what a mock of the box replays. Text input always: what the
-    // box sends around a text field is still being learned.
-    if (r.diffs || test in [1, 14]) r.trace = traceLines(lines)
+    // Session start always: its messages are what a mock of the box replays. Text input and media keys
+    // always: what the box sends around a text field or a media key is still being learned.
+    if (r.diffs || test in [1, 14, 15]) r.trace = traceLines(lines)
     return r
 }
 
@@ -679,6 +690,10 @@ List<Map> stepsFor(int test, Map run) {
                          [name: "text", cmd: "sendText", args: ["hubitat"], after: 6],
                          [name: "back", cmd: "sendKey", args: ["BACK"], after: 2],
                          [name: "home2", cmd: "sendKey", args: ["HOME"], after: 2]]
+        // Ends on stop, so nothing the play key resumed keeps playing.
+        case 15: return [[name: "play", cmd: "play", wait: '^tx 10:\\{1:126 ', timeout: 10, after: 3],
+                         [name: "pause", cmd: "pause", wait: '^tx 10:\\{1:127 ', timeout: 10, after: 3],
+                         [name: "stop", cmd: "stop", wait: '^tx 10:\\{1:86 ', timeout: 10, after: 3]]
         default:
             return []
     }
@@ -972,6 +987,25 @@ Map evalText(List<Map> lines) {
     }
     return [searchApp: searchApp, fieldReported: field, editReported: edit, editAfterText: editAfterText,
             textSent: sent, accepted: !rejected, textEchoed: echoed, errorCode: code]
+}
+
+// Test 15: the media keys the driver sent, and the message types the box sent after the first one.
+Map evalMedia(List<Map> lines) {
+    List<String> keys = []
+    Set<Integer> replies = new TreeSet<Integer>()
+    String code = null
+    for (Map l : lines) {
+        String msg = l.msg as String
+        def k = msg =~ /^tx 10:\x7B1:(126|127|86) /
+        if (k.find()) { keys << k.group(1); continue }
+        if (!keys) continue
+        def r = msg =~ /^rx (\d+):/
+        if (r.find()) replies << (r.group(1) as Integer)
+        def e = msg =~ /^TV rejected .*\(error (\S+)\)/
+        if (code == null && e.find()) code = e.group(1)
+    }
+    return [keysSent: keys.join(","), accepted: code == null, errorCode: code, replies: replies ? replies.join(",") : null,
+            sessionKept: !lines.any { (it.msg as String) =~ DROP_RE }]
 }
 
 Map evalRecovery(List<Map> lines, Map steps, TimeZone tz) {

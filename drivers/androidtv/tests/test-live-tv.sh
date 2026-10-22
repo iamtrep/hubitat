@@ -10,7 +10,7 @@
 #
 # Usage:
 #   bash drivers/androidtv/tests/test-live-tv.sh [@hub] [<instance-id>]            # test 1 only, about 15 s
-#   RUN_SLOW_TESTS=1 bash drivers/androidtv/tests/test-live-tv.sh [@hub]           # tests 1-8, 13 and 14, about 3 min
+#   RUN_SLOW_TESTS=1 bash drivers/androidtv/tests/test-live-tv.sh [@hub]           # tests 1-8 and 13-15, about 3 min
 #   RUN_SLOW_TESTS=1 ATV_OPTS="standby=5&cut=true&wrongcode=true" bash ...          # opt-in tests too
 #   ATV_TESTS=14 bash drivers/androidtv/tests/test-live-tv.sh [@hub]                # the listed tests only
 # Upper bound: 20 min plus the standby minutes (a full run with every option takes about 7 min plus the standby).
@@ -78,7 +78,7 @@ def api(path, timeout=30):
 
 tests = ["1"]
 if slow:
-    tests = ["1", "2", "3", "4", "5", "6", "7", "8", "13", "14"]
+    tests = ["1", "2", "3", "4", "5", "6", "7", "8", "13", "14", "15"]
     tests += [n for flag, n in (("standby=", "9"), ("cut=true", "10"), ("wrongcode=true", "11")) if flag in opts]
 if only:
     tests = [t.strip() for t in only.split(",") if t.strip()]

@@ -86,10 +86,16 @@ on screen only the person watching can say: YouTube's search on the EBOX shows t
 there is no text field to type into. The mock has a text field only with `textFieldCounter` in its
 profile, opened with CENTER, which test 14 doesn't press.
 
+Test 15, Media keys, sends `play`, `pause` and `stop` (keys 126, 127 and 86) and reports the keys the
+driver sent (`keysSent`), whether the box refused one, whether the session held, and the message types
+the box sent after the first key (`replies`). The protocol has no playback-state message, so the driver
+expects no reply; the mock sends none. Play may resume whatever app last played media; the test ends on
+stop.
+
 - `test-tester-helpers.groovy`: unit tests for its pure helpers, no hub needed
   (`groovy drivers/androidtv/tests/test-tester-helpers.groovy`).
 - `test-driver-helpers.groovy`: the same for the driver's TV-matching helpers.
 - `test-live-tv.sh [@hub]`: runs it through its endpoints (turn on Script access in the app first) and
   prints `[PASS]` per test, `[FAIL]` where the driver differs and `[WARN]` where only the box does;
-  `RUN_SLOW_TESTS=1` runs tests 1–8, 13 and 14, `ATV_OPTS="standby=5&cut=true&wrongcode=true"` adds the opt-in ones,
+  `RUN_SLOW_TESTS=1` runs tests 1–8 and 13–15, `ATV_OPTS="standby=5&cut=true&wrongcode=true"` adds the opt-in ones,
   and `ATV_TESTS=14` runs only the listed tests.

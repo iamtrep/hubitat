@@ -51,6 +51,8 @@ logs it when the pairing connection closes; it is harmless, and the remote sessi
 - `launchApp`: opens an app. See below.
 - `sendText`: types text into the text field that has focus on the TV. Experimental; see below.
 - `volumeUp`, `volumeDown`, `mute`, `unmute`, `setVolume`. See below.
+- `play`, `pause`, `stop`: the TV's `MEDIA_PLAY`, `MEDIA_PAUSE` and `MEDIA_STOP` keys. The TV doesn't
+  report whether something is playing, so `transportStatus` stays empty.
 - `connect`, `disconnect`, `forgetPairing`.
 - `findTvs`: searches the network for TVs. See Setup.
 - `currentApp`: the package name of the app in the foreground, updated on every change.
@@ -147,6 +149,6 @@ sends: post its report in the forum thread, with whether the text appeared.
 `tests/AndroidTVRemoteTester.groovy` is an app that runs this driver through a fixed set of tests
 against your TV and writes a report of where your TV differs from what the driver expects. Select
 the Android TV Remote device (and, for the power-cut test, the smart plug feeding the TV), press
-Run, and paste the report in the forum thread. Tests 1 to 8 take about 2 minutes and change what is
-on the screen. If the device isn't paired, Run instead checks how far pairing gets: it opens a pairing
+Run, and paste the report in the forum thread. The default tests (1 to 8 and 13 to 15) take about 3
+minutes and change what is on the screen. If the device isn't paired, Run instead checks how far pairing gets: it opens a pairing
 dialog on the TV and answers it with a wrong code.

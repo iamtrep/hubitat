@@ -22,6 +22,7 @@ metadata {
         capability "Actuator"
         capability "AudioVolume"
         capability "Initialize"
+        capability "MediaTransport"
         capability "Switch"
 
         command "startPairing"
@@ -61,7 +62,7 @@ import java.security.Signature
 import java.security.cert.CertificateFactory
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.3.5"
+@Field static final String CODE_VERSION = "0.4.0"
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int PAIRING_PORT = 6467
 @Field static final String MDNS_SERVICE = "_androidtvremote2._tcp"
@@ -715,6 +716,13 @@ void mute() {
 void unmute() {
     if (device.currentValue("mute") != "unmuted") sendKeyCode(KEYCODES.VOLUME_MUTE)
 }
+
+// The TV doesn't report playback state, so transportStatus is never set.
+void play() { sendKeyCode(KEYCODES.MEDIA_PLAY) }
+
+void pause() { sendKeyCode(KEYCODES.MEDIA_PAUSE) }
+
+void stop() { sendKeyCode(KEYCODES.MEDIA_STOP) }
 
 // The protocol has no absolute volume command: step with volume keys from the last reported level.
 void setVolume(volumelevel) {
