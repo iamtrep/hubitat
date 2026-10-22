@@ -64,7 +64,7 @@ The Groovy budget is a policy ceiling chosen to stay well under HubDiagnostics' 
 
 ## Platform verification (firmware 2.5.1.147)
 
-All endpoints below are the admin UI's own, reached from on-hub code via `http://127.0.0.1:8080` (loopback is not gated by hub security). None are officially supported; they are the same family this repository's tooling already depends on (`forks/iamtrep/docs/hubitat-internal-apis.md`).
+All endpoints below are the admin UI's own, reached from on-hub code via `http://127.0.0.1:8080` (loopback is not gated by hub security). None are officially supported; they are the same family this repository's tooling already depends on ([hubitat-internal-apis.md](../../../docs/hubitat-internal-apis.md)).
 
 **Enumerate all user code, including code the app did not install.** `GET /hub2/userAppTypes` → `[{id, name, namespace, oauth, lastModified, usedBy[{id,name}]}]`; `GET /hub2/userDeviceTypes` → `[{id, name, namespace, capabilities, lastModified, usedBy[{id,name}]}]`; `GET /hub2/userLibraries` → `[{id, version, name, namespace, author, category, description, updateTime, lastModified, private, usedByAppTypes, usedByDeviceTypes}]` (the last two are comma-separated type names); `GET /bundle/list/json` → `[{id, name, namespace, private, sourceUrl, appTypeIds[], deviceTypeIds[], libraryIds[], …}]`. Four bulk calls give identity, instance/device counts, library consumers, and bundle membership by id. `/hub2/userBundles` carries only a human-readable `content` string; `/bundle/list/json` is the one with ids and the source zip URL.
 
