@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
 <!-- AUTO:hubinspector-version -->
-**Current version:** 6.1.13
+**Current version:** 6.1.14
 <!-- /AUTO -->
 
 ---
@@ -354,17 +354,15 @@ Shows a warning if both Ethernet and WiFi are active simultaneously (known to ca
 
 **Neighbor Detail table** — Short ID, LQI (color-coded), age (stale badge at age 7), In Cost, Out Cost.
 
-**Zigbee–WiFi Spectrum Chart** — Visual overlay of Zigbee channels and 2.4 GHz WiFi channels, showing potential interference. Recommended Zigbee channels (15, 20, 25) avoid overlap with WiFi channels 1, 6, and 11. The chart fills the full container width and re-renders on browser resize.
+**Zigbee–WiFi Spectrum Chart**: the 2.4 GHz Zigbee and WiFi channels on one frequency axis. Green marks the recommended pairing: Zigbee 15, 20 or 25 with WiFi 1, 6 or 11, which do not overlap. WiFi channels that overlap the hub's Zigbee channel are hatched orange. The hub cannot see WiFi, so this is a guide for choosing the router's channel, not a measurement. The chart fills the full container width and re-renders on browser resize.
 
-**Live channel scan** (`/hub/zigbeeChannelScanJson`) — Click **Run channel scan** to perform a real Zigbee scan (~15–30 s, briefly impacts Zigbee join activity). The scan detects other Zigbee networks (PANs) operating in the surrounding RF environment and overlays them on the spectrum chart as colored bars at each channel position (red = strong, orange = medium, yellow = weak; bar height proportional to RSSI strength). Tooltip on hover shows PAN ID, RSSI, LQI. Scan results are cached in app state so subsequent page loads display the last-known scan without re-running it.
+**Live channel scan** (`/hub/zigbeeChannelScanJson`): click **Run channel scan** to perform a real Zigbee scan (~15–30 s, briefly impacts Zigbee join activity). The scan finds other Zigbee networks (PANs) nearby and draws each as a bar at its channel, with height proportional to RSSI. The hub's own network also answers the scan; it is matched by PAN ID and left out of the chart and the counts. Tooltip on hover shows PAN ID, RSSI, LQI. Scan results are cached in app state so subsequent page loads display the last-known scan without re-running it.
 
-Below the chart, scan results are summarized as text grouped by interference level:
-- **Strong on:** channels with detected PANs at RSSI > -50 dBm
-- **Medium on:** channels with PANs at RSSI -50 to -70
-- **Weak on:** channels with PANs at RSSI < -70
-- **No detections on Zigbee channels:** the quiet channels — best candidates if changing channel
-
-The user's own channel is annotated with "(your channel)" when it appears in the scan.
+Only networks on the hub's own channel share its airtime, so only those bars are colored by strength (red > -50 dBm, orange -50 to -70, yellow < -70); networks on other channels are drawn in slate. Below the chart:
+- the hub's channel, with a ✔ when it is one of the recommended channels
+- the WiFi channels that overlap it
+- other networks on the hub's channel, labelled Strong, Medium or Weak by the strongest RSSI, or ✔ when there are none
+- **Other channels in use:** each other channel with networks, their count and strongest RSSI
 
 ### Z-Wave
 

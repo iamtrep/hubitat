@@ -30,8 +30,9 @@ function extractFn(name) {
 const consts = (src.match(/const ZWAVE_PER_CRIT=[^;]+;/) || [])[0];
 assert(consts, 'threshold consts not found in HTML');
 const harness = consts + '\n' +
-  ['zwProblemNodes', 'zbWeakNeighbors', 'zbStaleNeighbors', 'lqiBandColor', 'zwMeshStats', 'zbMeshDetails'].map(extractFn).join('\n') +
-  '\nmodule.exports = { zwProblemNodes, zbWeakNeighbors, zbStaleNeighbors, lqiBandColor, zwMeshStats, zbMeshDetails };';
+  ['zwProblemNodes', 'zbWeakNeighbors', 'zbStaleNeighbors', 'lqiBandColor', 'zwMeshStats', 'zbMeshDetails',
+   'hexBytesReversed', 'isOwnPan', 'neighborPans', 'neighborPanCount', 'chRanges'].map(extractFn).join('\n') +
+  '\nmodule.exports = { zwProblemNodes, zbWeakNeighbors, zbStaleNeighbors, lqiBandColor, zwMeshStats, zbMeshDetails, isOwnPan, neighborPans, neighborPanCount, chRanges };';
 const tmp = path.join(os.tmpdir(), 'hd_net_' + process.pid + '.js');
 fs.writeFileSync(tmp, harness);
 const N = require(tmp);
@@ -138,6 +139,36 @@ t('zbMeshDetails: keeps LQI rollup an older payload already carries', () => {
   const zb = { mesh: { avgLqi: 1, minLqi: 1, maxLqi: 1, neighborList: neighbors.slice() } };
   N.zbMeshDetails(zb);
   assert.strictEqual(zb.mesh.avgLqi, 1);
+});
+
+// ---- channel scan: the hub's own network is not a neighbour ----
+// The scan reports extendedPanId byte-reversed relative to /hub/zigbeeDetails/json.
+const own = { channel: 15, panId: 'E1CF', extendedPanId: '0011223344556677' };
+const scan = { results: [
+  { channel: 15, panId: 'E1CF', extendedPanId: '7766554433221100', lastHopRssi: -45 },
+  { channel: 20, panId: '4EEE', extendedPanId: 'BE7C91408B7F972E', lastHopRssi: -70 },
+  { channel: 25, panId: null, extendedPanId: null, lastHopRssi: 0 }
+] };
+t('isOwnPan: matches the byte-reversed extendedPanId', () => {
+  assert.strictEqual(N.isOwnPan(scan.results[0], own), true);
+  assert.strictEqual(N.isOwnPan(scan.results[1], own), false);
+});
+t('isOwnPan: matches the same-order extendedPanId', () => {
+  assert.strictEqual(N.isOwnPan({ channel: 15, panId: 'E1CF', extendedPanId: '0011223344556677' }, own), true);
+});
+t('isOwnPan: falls back to panId + channel without an extendedPanId', () => {
+  assert.strictEqual(N.isOwnPan({ channel: 15, panId: 'e1cf' }, own), true);
+  assert.strictEqual(N.isOwnPan({ channel: 20, panId: 'E1CF' }, own), false);
+});
+t('neighborPans / neighborPanCount exclude the own network and empty rows', () => {
+  assert.deepStrictEqual(N.neighborPans(scan, own).map(r => r.panId), ['4EEE']);
+  assert.strictEqual(N.neighborPanCount(scan, own), '1 other Zigbee network detected');
+  assert.strictEqual(N.neighborPanCount({ results: [scan.results[0]] }, own), 'no other Zigbee networks detected');
+});
+t('chRanges: collapses consecutive channels', () => {
+  assert.strictEqual(N.chRanges([7, 8, 9, 10]), '7–10');
+  assert.strictEqual(N.chRanges([12, 13]), '12, 13');
+  assert.strictEqual(N.chRanges([1]), '1');
 });
 
 console.log(`\n${pass}/${pass + fail} passed${fail ? `, ${fail} failed` : ''}`);
