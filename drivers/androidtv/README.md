@@ -136,6 +136,9 @@ in answer to a volume key; until it has seen one, it logs that it can't set the 
 a search box. Select the text field with the remote first; the on-screen keyboard can stay up. The text
 goes in at the cursor, and some fields replace what they hold instead.
 
+The info log shows only the length of the text. Trace logging shows the text itself, so leave trace off when
+typing a password.
+
 The driver sends the text with the counter the box last reported for the text field, which is what the
 box checks; a wrong counter is dropped without an error. Confirmed on the EBOX, keyboard up or down.
 Driver 0.3.2 and earlier sent the wrong counter, so text then showed only after BACK closed the keyboard.
@@ -143,6 +146,10 @@ On some boxes SEARCH opens a voice prompt with no text field (the EBOX's has a k
 one). YouTube's search on the EBOX reports no text field: plain letters still arrive there, but accented
 letters are dropped (`météo` shows as `mto`). The Android TV Remote Tester's test 14 tries it on the search screen and records what the box
 sends: post its report in the forum thread, with whether the text appeared.
+
+Some TVs hide their on-screen keyboard while the driver is connected and show "use your mobile device's
+keyboard" instead. Turn off **Use the TV keyboard link** in Preferences: the on-screen keyboard comes back,
+but `currentApp` stops updating and `sendText` does nothing.
 
 ## Android TV Remote Tester (optional)
 

@@ -45,6 +45,8 @@ metadata {
         if ((state?.foundTvs as Map)?.size() > 1) {
             input name: "tvChoice", type: "enum", title: "TV", options: state.foundTvs
         }
+        input name: "imeEnable", type: "bool", title: "Use the TV keyboard link (current app and Send Text)",
+            description: "Turn off if the TV shows \"use your mobile device's keyboard\" instead of its on-screen keyboard", defaultValue: true
         input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
         input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false
         if (debugEnable) {
@@ -627,7 +629,8 @@ private void handleRemoteMessage(String hex) {
         if (vendor) device.updateDataValue("manufacturer", vendor)
         if (model) device.updateDataValue("model", model)
         device.updateDataValue("driverVersion", CODE_VERSION)
-        r.features = ACTIVE_FEATURES & supported
+        // Some TVs hide their on-screen keyboard while a remote with IME is connected
+        r.features = (imeEnable == false ? ACTIVE_FEATURES & ~FEATURE_IME : ACTIVE_FEATURES) & supported
         logCfg "TV ${vendor} ${model} supports features ${supported}; using ${r.features}"
         String devInfo = pInt(3, 1) + pStr(4, "1") + pStr(5, "atvremote") + pStr(6, "1.0.0")
         sendFrame(pMsg(1, pInt(1, r.features as long) + pMsg(2, devInfo)))
@@ -763,8 +766,9 @@ void launchApp(String appLink) {
 void sendText(textArg) {
     String text = textArg?.toString()
     if (!text) return
+    if (imeEnable == false) { logWarn "Send Text needs the TV keyboard link; turn it on in Preferences"; return }
     Map r = rt()
-    logCmd "Text ${text}"
+    logCmd "Text (${text.length()} characters)"     // the text may be a password: only trace shows it
     long end = text.length() - 1
     String field = pInt(1, end) + pInt(2, end) + pStr(3, text)
     Map tf = r.textField as Map

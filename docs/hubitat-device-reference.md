@@ -382,6 +382,11 @@ it pairs. Leading zero bytes of each number are dropped before hashing *(spec: [
 - On that box, YouTube's search screen (`com.google.android.youtube.tv`) reported no text field. Text sent
   with counters 0/0 brought no message 22 and no `remote_error`, yet its ASCII letters appeared in the search
   box and its accented letters were dropped (`météo` showed as `mto`) *(probed 2.5.2.139, C-7, Android TV Remote driver 0.3.3)*.
+- After a factory reset with no Google account signed in, the same EBOX hid its on-screen keyboard while a
+  remote session with the IME feature (4) was connected, showing "use your mobile device's keyboard" in its
+  place; with the session closed the keyboard came back. Before the reset, with an account signed in, the
+  keyboard showed with the session connected *(probed 2.5.2.139, C-7, Android TV Remote driver 0.4.0)*.
+  Home Assistant's `enable_ime` option exists for this case *(community: [HA strings.json](https://github.com/home-assistant/core/blob/dev/homeassistant/components/androidtv_remote/strings.json))*.
 - On an NVIDIA SHIELD (Android 11, remote service `7.00.999235495`), text sent while the search box's
   on-screen keyboard was up did not appear. After one BACK closed the keyboard and left the search box on
   screen, the text appeared in the box and the search could be run. The box sent no message 21, and the
