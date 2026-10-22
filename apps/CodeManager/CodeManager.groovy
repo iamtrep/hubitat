@@ -562,6 +562,7 @@ Map apiClearFacts() {
     int cleared = 0
     try {
         flushFactsLocked()
+        PENDING_FACTS.clear()
         Map pkgs = (state.pkgs ?: [:]) as Map
         state.pkgs = pkgs.collectEntries { String key, Map p ->
             [(key): p + [c: (p.c as List).collect { Map c ->
@@ -584,7 +585,8 @@ private void scheduleLibraryRefreshIfStale() {
 Map fetchItemDetail(String kind, String id, boolean background = false) {
     if (!background && REQUESTS_ACTIVE.get() > 0) PER_ITEM_READS_IN_REQUEST.incrementAndGet()
     String path = kind == "library" ? "/library/ajax/code" : "/${kind}/list/single/data/${id}"
-    Object resp = kind == "library" ? hubRequest(path, "library ${id}", "json", 30, [id: id]) : hubRequest(path, "${kind} ${id}", "json", 30)
+    // No retry: a read that timed out on a busy hub is not fired again at once (it backs off through the fact reader instead).
+    Object resp = hubRequestInternal(path, kind == "library" ? "library ${id}" : "${kind} ${id}", "json", (int) (FACT_READ_TIMEOUT_MS / 1000L), false, kind == "library" ? [id: id] : null)
     Map d = (resp instanceof List) ? ((resp as List) ? (Map) (resp as List)[0] : null) : (resp instanceof Map && !((Map) resp).error ? (Map) resp : null)
     if (d == null) return null
     String source = (d.source ?: "") as String
@@ -759,15 +761,16 @@ Map reconcileRegistry(Map bulk) {
     List hubFiles = fresh.contains('files') ? ((bulk.files ?: []) as List) : null
     Set<String> fmNames = hubFiles == null ? null : (hubFiles.collect { Map f -> f.name as String } as Set)
     Map pkgs = (state.pkgs ?: [:]) as Map
-    // Fail closed: a failed bulk read is indistinguishable from an empty list. If the registry already holds a
-    // component of some kind and this pass's list for that kind came back empty, abort before touching the registry.
-    Set<String> kindsPresent = pkgs.values().collectMany { Map p -> (p.c as List).collect { Map c -> c.k as String } } as Set
+    // Fail closed: an empty list that was not read in this bulk window means a failed read, not an empty hub. If the
+    // registry holds a bound component of that kind, abort before touching the registry. A freshly read empty list is
+    // real (the last bundle was deleted) and is reconciled. The library list is only ever set by a successful read.
+    Set<String> kindsBound = pkgs.values().collectMany { Map p -> (p.c as List).findAll { Map c -> c.id != null }.collect { Map c -> c.k as String } } as Set
     Map<String, List> bulkByKind = [app: apps, driver: drvs, bundle: bundles]
-    if (libs != null) bulkByKind.library = libs
-    for (String kind in ['app', 'driver', 'library', 'bundle']) {
-        if (bulkByKind.containsKey(kind) && kindsPresent.contains(kind) && (bulkByKind[kind] as List).isEmpty()) {
-            logWarn "inventory: aborting pass — ${kind} list came back empty but the registry has ${kind} components (suspected transient fetch failure)"
-            return [items: 0, ms: now() - t0, aborted: "empty ${kind} list" as String]
+    Map<String, String> bulkKey = [app: 'apps', driver: 'drivers', bundle: 'bundles']
+    for (String kind in ['app', 'driver', 'bundle']) {
+        if (kindsBound.contains(kind) && (bulkByKind[kind] as List).isEmpty() && !fresh.contains(bulkKey[kind])) {
+            logWarn "inventory: aborting pass — the ${kind} list could not be read and the registry has ${kind} components"
+            return [items: 0, ms: now() - t0, aborted: "${kind} list not read" as String]
         }
     }
     Map<String, String> memberOf = [:]
@@ -1227,7 +1230,7 @@ static boolean factNeedsRetry(long lm, long readAt, boolean alreadyRetried) {
 // A running reader job whose last step is older than this has lost its chain of steps (an error ended it, or the hub restarted under it).
 @CompileStatic
 static boolean factJobStale(long lastStep, long now) {
-    return (now - lastStep) > 5 * FACT_GAP_MS + FACT_READ_TIMEOUT_MS
+    return (now - lastStep) > 5 * FACT_GAP_MS + 2 * FACT_READ_TIMEOUT_MS   // margin: one read may take its full timeout
 }
 
 private boolean writeOutstanding() { return WRITE.availablePermits() == 0 }
@@ -1235,6 +1238,10 @@ private boolean writeOutstanding() { return WRITE.availablePermits() == 0 }
 // Read results wait here (facts and counters only, never a source) and are written to state.pkgs in batches:
 // every FACT_FLUSH_EVERY reads, at job end and on job failure. reconcileNow() and the status/read endpoints flush first.
 @Field static final ConcurrentHashMap<String, Map> PENDING_FACTS = new ConcurrentHashMap<>()
+// Pending facts this execution has written to state.pkgs. state is committed only when an execution ends, and another
+// execution that writes state.pkgs meanwhile would overwrite them, so an entry leaves PENDING_FACTS only when a later
+// execution finds it in state. Not static: it starts empty in every execution.
+@Field Set<String> factsWrittenThisExec = new HashSet<String>()
 @Field static final List<String> FACT_KEYS = ['loc', 'ih', 'ah', 'iv', 'ivs', 'sz', 'ch', 'pv', 'flm', 'frd', 'ff', 'fnext', 'fe']
 
 private Map withPending(Map c) {
@@ -1270,10 +1277,12 @@ private void storeFact(String ck, Map base, long lm, Map outcome) {
 }
 
 // Writes the pending facts into state.pkgs. The caller holds the registry gate. Only the fact fields are copied, so a reconcile
-// that changed anything else in the meantime is kept.
+// that changed anything else in the meantime is kept. Re-applying an entry is harmless; one that an earlier execution wrote
+// and that state now holds is committed and leaves the queue, as does one whose item left the registry.
 private void flushFactsLocked() {
     if (PENDING_FACTS.isEmpty()) return
     Map snap = new HashMap(PENDING_FACTS)
+    Set<String> found = new HashSet<String>()
     Map pkgs = (state.pkgs ?: [:]) as Map
     Map newPkgs = null
     for (Map.Entry e in pkgs.entrySet()) {
@@ -1282,8 +1291,12 @@ private void flushFactsLocked() {
         for (int i = 0; i < comps.size(); i++) {
             Map c = comps[i] as Map
             if (c.id == null) continue
-            Map pend = snap[ckey(c.k as String, c.id)] as Map
+            String ck = ckey(c.k as String, c.id)
+            Map pend = snap[ck] as Map
             if (pend == null) continue
+            found << ck
+            if (!factsWrittenThisExec.contains(ck) && factsMatch(c, pend)) { PENDING_FACTS.remove(ck, pend); continue }
+            factsWrittenThisExec << ck
             Map m = new LinkedHashMap(c)
             for (String k in FACT_KEYS) { if (pend[k] != null) m[k] = pend[k] else m.remove(k) }
             if (newComps == null) newComps = new ArrayList(comps)
@@ -1295,7 +1308,17 @@ private void flushFactsLocked() {
         }
     }
     if (newPkgs != null) state.pkgs = newPkgs
-    snap.each { k, v -> PENDING_FACTS.remove(k, v) }
+    snap.each { k, v -> if (!found.contains(k)) PENDING_FACTS.remove(k, v) }
+}
+
+// Whether a registry component already holds every fact field of a pending entry (numbers compare by value after the
+// state round trip).
+@CompileStatic
+static boolean factsMatch(Map c, Map pend) {
+    for (String k in FACT_KEYS) {
+        if (c.get(k) != pend.get(k)) return false
+    }
+    return true
 }
 // False when the registry is busy; the facts stay pending and go out with the next flush.
 private boolean flushFacts() {
@@ -1618,6 +1641,7 @@ Map apiDriftCheck() {
     return timed("driftCheck") {
         if (!key || key.startsWith("pkg:")) return [error: "key must be an app, driver or library key such as app:12" as String]
         readDriftCache()
+        reconcileNow()            // lastModified from the shared bulk lists (at most BULK_TTL_MS old), not from the last page load
         Map t = resolveTarget(key)
         if (t == null || t.comp == null) return [error: "not in the registry: ${key}" as String]
         Map c0 = t.comp as Map
@@ -2053,7 +2077,7 @@ Map apiStats() {
     Map fetches = [:]
     BULK_FETCHES.each { String k, AtomicInteger v -> fetches[k] = v.get() }
     return jsonResponse([version: CODE_VERSION, timingsMs: new HashMap(API_TIMINGS), jobs: JOBS.keySet().toList(),
-                         bulkFetches: fetches, perItemReadsInRequest: PER_ITEM_READS_IN_REQUEST.get()])
+                         bulkFetches: fetches, perItemReadsInRequest: PER_ITEM_READS_IN_REQUEST.get(), pendingFacts: PENDING_FACTS.size()])
 }
 
 // ===== Jobs (§10): start/status with terminal status 'done' =====

@@ -414,6 +414,10 @@ if pending0 > 0:
         (ok if st.get("jobId") != lost.get("id") and (st.get("total") or 0) <= max(pend_mid, 1) + 1 else fail)(f"restarted reader queues only unread items (total {st.get('total')} vs {pend_mid} unread)")
     st = facts_wait(600)
     (ok if st.get("status") == "done" else fail)(f"reader finished within 600 s ({st.get('status')}, processed {st.get('processed')}/{st.get('total')})")
+    # queued facts leave the queue only once a later execution finds them committed in state
+    api_get("inventory", timeout=300); api_get("inventory", timeout=300)
+    pf = api_get("stats").get("pendingFacts")
+    (ok if pf == 0 else fail)(f"pending facts drain once committed ({pf} left)")
 else:
     info("every fact is already valid; the first-run and interrupt/resume checks need a fresh registry")
 time.sleep(5)                                         # a provisional fact is re-read once by a following job
