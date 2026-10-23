@@ -179,9 +179,11 @@ node tests/test-forum-export.js         # assembleForumData (client-side forum-e
 node tests/test-forum-render.js         # full forum-export render (buildForumMarkdown end-to-end)
 node tests/test-temp-scale.js           # temperature-scale helpers
 node tests/test-zwave-render.js         # routeChangesCell (Route Changes null -> em-dash), splitGhostNodes
+node tests/test-zwave-topology.js       # Z-Wave Topology card: route parser, matrix + route model, flags, RSSI text
 
 # Extraction-based Groovy tests (TESTING.md Mode 4 variant — bound to shipped Groovy)
 groovy tests/test-zwave-mesh-quality.groovy  # route-change normalization: no-data -> null, excluded from total
+groovy tests/test-zwave-topology.groovy     # /hub/zwaveTopology table -> ids + rows, malformed pages -> null
 groovy tests/test-zwave-ghost-nodes.groovy   # ghost vs failed vs Long Range (LR devices absent from nodes[])
 groovy tests/test-zwave-battery.groovy       # non-listening Z-Wave nodes count as battery devices (both stacks)
 groovy tests/test-audit-dispatch.groovy      # audit fan-out: throw rollback, missing-callback reaper, claim ownership

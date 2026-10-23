@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
 <!-- AUTO:hubinspector-version -->
-**Current version:** 6.1.14
+**Current version:** 6.2.0
 <!-- /AUTO -->
 
 ---
@@ -394,7 +394,11 @@ After a switch from legacy Z-Wave, a hub can return no controller state (the end
 
 #### Z-Wave Topology
 
-Pairwise neighbor adjacency matrix as reported by the Z-Wave controller (`/hub/zwaveTopology`), showing connectivity between each node pair. The card is hidden when no Z-Wave nodes are paired.
+Which nodes hear each other directly, from the Z-Wave controller's neighbour tables (`/hub/zwaveTopology`). Each row is that node's own neighbour list. A square is solid when both nodes list each other, outlined when only one does, and grey when neither does. A dot marks a relay link: a link of a current route that goes through at least one repeater. A direct route's link gets no dot. A route's link can join two nodes that neither neighbour list names, since the hub reports routes and neighbour lists separately; the hover card says so when it happens. Hover or tap a square for the pair and the row node's route to the hub: each hop, the route's speed, LWR RSSI (dB on the legacy stack, dBm on Z-Wave JS), PER, RTT, neighbour count, how many nodes repeat through it, and warnings (2+ repeaters, the 9.6 kbps fallback rate, packet errors, few neighbours). The route's squares are outlined on the matrix while the card is open.
+
+Tiles above the matrix count the nodes that reach the hub directly, the longest route, the nodes at 9.6 kbps and the busiest repeater. **Routes**, collapsed under the matrix, lists every node's route, worst first. Large meshes get smaller squares and scroll, with names pinned. The card is hidden when no Z-Wave nodes are paired.
+
+On the legacy stack, FLiRS door locks report as listening, so they don't get the battery tag.
 
 ### Matter
 

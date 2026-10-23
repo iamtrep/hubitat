@@ -74,6 +74,45 @@ tr:nth-child(even){background:var(--alt)} tr:hover{background:var(--hover)}
 
 .badge{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
 .b-ok{background:var(--ok-bg);color:var(--ok)} .b-warn{background:var(--warn-bg);color:var(--warn)} .b-crit{background:var(--crit-bg);color:var(--crit)} .b-muted{background:var(--muted-bg);color:var(--muted)}
+/* Z-Wave topology matrix */
+.zt-intro{font-size:12px;margin:10px 0 6px}
+.zt-wrap{position:relative}
+.zt-scroll{overflow:auto;max-height:75vh;max-width:100%}
+.zt-grid{display:grid;gap:2px;width:max-content;padding:0 8px 4px 0}
+.zt-corner,.zt-ch{position:sticky;top:0;background:var(--card);z-index:2;height:110px}
+.zt-corner{left:0;z-index:3}
+.zt-ch{position:sticky}
+.zt-ch{display:flex;align-items:flex-end;justify-content:center;padding-bottom:4px;box-sizing:border-box}
+.zt-ch span{writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;font-size:11px;line-height:1;max-height:104px;overflow:hidden;text-overflow:ellipsis}
+.zt-rh{position:sticky;left:0;background:var(--card);z-index:1;height:var(--zt);display:flex;align-items:center;justify-content:flex-end;gap:4px;padding-right:8px;font-size:12px;white-space:nowrap;overflow:hidden;cursor:default}
+.zt-rh a,.zt-rh>span:last-child{overflow:hidden;text-overflow:ellipsis}
+.zt-bat{font-size:9px;color:var(--muted);border:1px solid var(--border);border-radius:3px;padding:0 3px;flex-shrink:0}
+.zt-c{width:var(--zt);height:var(--zt);border-radius:3px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.zt-c i,.zt-sw.zt-dot::after{width:35%;height:35%;border-radius:50%;background:var(--on-primary);display:block;content:''}
+.zt-o i,.zt-n i,.zt-sw.zt-n.zt-dot::after{background:var(--primary)}
+.zt-warn{color:var(--warn-text);margin-top:4px}
+.zt-b{background:var(--primary)} .zt-o{background:var(--card);box-shadow:inset 0 0 0 2px var(--primary)} .zt-n{background:var(--muted-bg)} .zt-s{cursor:default}
+.zt-c.zt-r,.zt-sw.zt-r{outline:2px solid var(--warn);outline-offset:0;z-index:1;position:relative}
+.zt-legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;margin-top:10px}
+.zt-legend span{display:flex;align-items:center;gap:6px}
+.zt-sw{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:3px;flex-shrink:0;box-sizing:border-box}
+.zt-tip{position:absolute;display:none;z-index:5;width:290px;background:var(--card);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 14px var(--shadow-strong);padding:10px 12px;font-size:12px}
+.zt-th{font-weight:600;font-size:13px;margin-bottom:6px}
+.zt-tl{display:flex;gap:8px;align-items:center;margin-bottom:4px}
+.zt-sec{border-top:1px solid var(--border);margin-top:8px;padding-top:8px}
+.zt-cap{font-size:11px;font-weight:600;color:var(--muted);margin-bottom:6px}
+.zt-hops{list-style:none;margin:0 0 8px;padding:0}
+.zt-hops li{position:relative;padding:0 0 6px 18px}
+.zt-hops li::before{content:'';position:absolute;left:3px;top:4px;width:8px;height:8px;border-radius:50%;border:2px solid var(--primary);background:var(--card);box-sizing:border-box}
+.zt-hops li:not(:last-child)::after{content:'';position:absolute;left:6px;top:13px;width:2px;height:calc(100% - 9px);background:var(--border)}
+.zt-hops li.zt-h0::before{background:var(--muted);border-color:var(--muted)}
+.zt-hops li.zt-hn{font-weight:600} .zt-hops li.zt-hn::before{background:var(--primary)}
+.zt-kv{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px 8px}
+.zt-kv span{display:block;font-size:11px;color:var(--muted)}
+.zt-fl{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}
+.zt-routes{margin-top:12px;border:1px solid var(--border);border-radius:6px}
+.zt-routes summary{padding:9px 12px;cursor:pointer;font-weight:600;font-size:13px;background:var(--alt)}
+.zt-routes summary .muted{font-weight:400;font-size:12px;margin-left:6px}
 .badge.clk{cursor:pointer} .badge.clk:hover{filter:brightness(.96);text-decoration:underline}
 @keyframes cardflash{0%{box-shadow:0 0 0 3px var(--primary)}100%{box-shadow:0 0 0 0 transparent}} .card.flash{animation:cardflash 1.4s ease-out}
 /* Clear the sticky header (.hdr 42px + .tabs ~40px) when a pill scrolls a card into view. */
@@ -174,7 +213,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "6.1.14";
+const CODE_VERSION = "6.2.0";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -466,6 +505,142 @@ function zwMeshStats(zw){
   Object.assign(m,{nodeCount:ns.length,avgPer:ns.length?sum(ns,n=>n.per)/ns.length:0,nodesWithErrors:ns.filter(n=>(n.per||0)>0).length,
     totalRouteChanges:sum(ns,n=>n.routeChanges),avgRssi:rs.length?Math.trunc(sum(rs,v=>v)/rs.length):null});
   ns.forEach(n=>{if(n.s0Flag==null)n.s0Flag=/s0/i.test(n.security||'')&&!/DOOR_LOCK|GARAGE|BARRIER/i.test(n.zwaveType||'')});
+}
+// ===== Z-WAVE TOPOLOGY =====
+// Neighbour matrix (zwaveTopology: ids + rows, rows[i][j] '1' when node i lists node j) joined
+// with each node's current route from zwave.mesh.nodes. Rows are each node's own list, so a pair
+// can be listed by one side only. Neighbour counts come from the matrix: on Z-Wave JS the
+// nodes' `neighbors` field is not a count.
+let ZWT=null;
+// "01 -> 0C -> 12 100kbps" → {path:[1,12,18], rate:100}; null for "No route" or empty.
+function zwParseRoute(s){
+  if(!s||!/->/.test(s))return null;
+  const parts=s.split('->').map(p=>p.trim()),last=parts.pop(),m=last.match(/^([0-9a-f]+)\s*(?:([\d.]+)\s*kbps)?/i);
+  if(!m)return null;
+  const path=parts.concat(m[1]).map(x=>parseInt(x,16));
+  return path.some(isNaN)?null:{path,rate:m[2]!=null?parseFloat(m[2]):null};
+}
+function zwTopoModel(topo,meshNodes){
+  const ids=topo.ids,rows=topo.rows,byId={};
+  (meshNodes||[]).forEach(x=>{const id=x.nodeId!=null?x.nodeId:x.id;if(id!=null)byId[id]=x});
+  const hex=id=>Number(id).toString(16).toUpperCase().padStart(2,'0');
+  const N=ids.map((id,i)=>{const x=byId[id]||{},r=zwParseRoute(x.route);
+    return{id,hex:hex(id),hub:id===1,name:id===1?'Hub':(x.name||'Node '+hex(id)),deviceId:x.deviceId,battery:!!x.battery,
+      path:r?r.path:null,rate:r?r.rate:null,rssi:x.rssiStr||'',per:x.per,rtt:x.rtt,nb:(rows[i].match(/1/g)||[]).length}});
+  const idx={};N.forEach((x,i)=>idx[x.id]=i);
+  // hops: relay links, i.e. links of routes that go through at least one repeater, keyed to the
+  // nodes those routes serve. A direct route's only link is the node's own, so it isn't one.
+  // links: every link of every current route, direct ones included.
+  const key=(a,b)=>a<b?a+'|'+b:b+'|'+a,hops={},links={},carries={};
+  N.forEach(x=>{if(!x.path)return;
+    for(let k=0;k<x.path.length-1;k++){const lk=key(x.path[k],x.path[k+1]);links[lk]=1;
+      if(x.path.length>2)(hops[lk]=hops[lk]||[]).push(x.name)}
+    x.path.slice(1,-1).forEach(id=>(carries[id]=carries[id]||[]).push(x.name))});
+  let oneSided=0,unlisted=0;
+  for(let i=0;i<N.length;i++)for(let j=i+1;j<N.length;j++){
+    if((rows[i][j]==='1')!==(rows[j][i]==='1'))oneSided++;
+    if(rows[i][j]!=='1'&&rows[j][i]!=='1'&&links[key(N[i].id,N[j].id)])unlisted++}
+  const routed=N.filter(x=>x.path),deep=routed.reduce((b,x)=>!b||x.path.length>b.path.length?x:b,null);
+  const busiest=Object.keys(carries).reduce((b,id)=>b==null||carries[id].length>carries[b].length?id:b,null);
+  return{N,rows,idx,key,hops,links,carries,oneSided,unlisted,summary:{
+    nodes:N.length-1,routed:routed.length,direct:routed.filter(x=>x.path.length===2).length,
+    deepest:deep&&deep.path.length>2?{name:deep.name,repeaters:deep.path.length-2}:null,
+    slow:routed.filter(x=>x.rate!=null&&x.rate<40).length,
+    busiest:busiest!=null&&idx[busiest]!=null?{name:N[idx[busiest]].name,routes:carries[busiest].length}:null}};
+}
+// Route warnings: 2+ repeaters, the 9.6 kbps fallback rate, packet errors, and few neighbours
+// (only in a mesh of 8+ nodes, where 2 or fewer is unusual). n = nodes in the matrix.
+function zwTopoFlags(x,n){
+  const f=[];if(!x.path)return f;
+  const rep=x.path.length-2;if(rep>=2)f.push(rep+' repeaters');
+  if(x.rate!=null&&x.rate<40)f.push('9.6 kbps fallback');
+  if((x.per||0)>0)f.push('packet errors');
+  if(n>=8&&x.nb<=2)f.push('few neighbours');
+  return f;
+}
+// Hub-reported LWR RSSI text: "-94db" on Z-Wave JS (dBm), "31dB" on Z/IP (dB, positive).
+function zwRssiTxt(s){const m=String(s||'').match(/(-?\d+)/);return m?(+m[1]<0?m[1]+' dBm':m[1]+' dB'):'–'}
+// 100 kbps green; 40 kbps neutral (FLiRS locks and older nodes run there); 9.6 kbps is the fallback rate.
+function zwRateBadge(r){return r==null?'<span class="badge b-muted">?</span>':'<span class="badge '+(r>=100?'b-ok':r>=40?'b-muted':'b-warn')+'">'+r+' kbps</span>'}
+function zwTopoTip(m,i,j){
+  const a=m.N[i],r=m.rows,nm=x=>h(Obf.nm(x));let t='';
+  if(j!=null&&j!==i){const b=m.N[j],ab=r[i][j]==='1',ba=r[j][i]==='1',use=m.hops[m.key(a.id,b.id)];
+    const cls=ab&&ba?'zt-b':ab||ba?'zt-o':'zt-n';
+    t+='<div class="zt-th">'+nm(a.name)+' · '+nm(b.name)+'</div>';
+    t+='<div class="zt-tl"><i class="zt-sw '+cls+'"></i><b>'+(ab&&ba?'Neighbours: each lists the other':ab?nm(a.name)+' lists '+nm(b.name)+'; not the reverse':ba?nm(b.name)+' lists '+nm(a.name)+'; not the reverse':'Not neighbours')+'</b></div>';
+    if(use)t+='<div class="muted">Routes over this link: '+use.slice(0,5).map(nm).join(', ')+(use.length>5?' +'+(use.length-5)+' more':'')+'</div>';
+    if(m.links[m.key(a.id,b.id)]&&!ab&&!ba)t+='<div class="zt-warn">A route uses this link, but neither node lists the other as a neighbour.</div>';
+  }else t+='<div class="zt-th">'+nm(a.name)+'</div>';
+  if(a.hub)return t+'<div class="muted zt-sec">The hub. Its row lists the nodes it hears directly.</div>';
+  t+='<div class="zt-sec"><div class="zt-cap">'+nm(a.name)+(a.battery?' · battery':'')+' · route to the hub</div>';
+  if(a.path)t+='<ol class="zt-hops">'+a.path.map((id,k)=>{const x=m.idx[id]!=null?m.N[m.idx[id]]:null;
+    return'<li class="'+(k===0?'zt-h0':k===a.path.length-1?'zt-hn':'')+'">'+(x?nm(x.name):'Node '+id.toString(16).toUpperCase())+'</li>'}).join('')+'</ol>';
+  else t+='<div class="muted">No route reported.</div>';
+  const cr=m.carries[a.id];
+  t+='<div class="zt-kv"><div><span>Speed</span>'+zwRateBadge(a.rate)+'</div><div><span>LWR RSSI</span><b>'+zwRssiTxt(a.rssi)+'</b></div><div><span>PER</span><b>'+(a.per??'–')+'</b></div>'+
+    '<div><span>RTT</span><b>'+(a.rtt!=null?Math.round(a.rtt)+' ms':'–')+'</b></div><div><span>Neighbours</span><b>'+a.nb+'</b></div><div><span>Repeats for</span><b>'+(cr?cr.length:0)+'</b></div></div>';
+  const f=zwTopoFlags(a,m.N.length);
+  if(f.length)t+='<div class="zt-fl">'+f.map(x=>'<span class="badge b-warn">'+h(x)+'</span>').join('')+'</div>';
+  return t+'</div>';
+}
+function zwTopoHtml(m){
+  const n=m.N.length,sz=n<=30?22:n<=60?16:12,s=m.summary,nm=x=>Obf.nm(x);let o='<div class="ng">';
+  o+=ni('Direct to hub',s.direct+' of '+s.routed);
+  o+=ni('Most repeaters',s.deepest?s.deepest.repeaters+' ('+nm(s.deepest.name)+')':'none');
+  o+=ni('At 9.6 kbps',s.slow,s.slow?'var(--warn)':'');
+  o+=ni('Busiest repeater',s.busiest?nm(s.busiest.name)+' ('+s.busiest.routes+' route'+(s.busiest.routes===1?'':'s')+')':'none');
+  o+='</div><div class="muted zt-intro">Each square says whether two nodes are neighbours, i.e. hear each other directly. A row is that node\'s own neighbour list. Hover or tap a square for the pair and for the row node\'s route to the hub.</div>';
+  o+='<div class="zt-wrap" id="ztWrap"><div class="zt-scroll"><div class="zt-grid" id="ztGrid" style="--zt:'+sz+'px;grid-template-columns:150px repeat('+n+',var(--zt))">';
+  o+='<div class="zt-corner"></div>'+m.N.map(x=>'<div class="zt-ch"><span>'+h(nm(x.name))+'</span></div>').join('');
+  m.N.forEach((a,i)=>{
+    o+='<div class="zt-rh" data-i="'+i+'">'+(a.battery?'<span class="zt-bat" title="Battery: does not repeat">batt</span>':'')+(a.deviceId?dlink(a.deviceId,a.name):'<span>'+h(nm(a.name))+'</span>')+'</div>';
+    for(let j=0;j<n;j++){
+      if(i===j){o+='<div class="zt-c zt-s"></div>';continue}
+      const ab=m.rows[i][j]==='1',ba=m.rows[j][i]==='1',use=m.hops[m.key(a.id,m.N[j].id)];
+      o+='<div class="zt-c '+(ab&&ba?'zt-b':ab||ba?'zt-o':'zt-n')+'" data-i="'+i+'" data-j="'+j+'">'+(use?'<i></i>':'')+'</div>';
+    }
+  });
+  o+='</div></div><div class="zt-tip" id="ztTip"></div></div>';
+  o+='<div class="zt-legend"><span><i class="zt-sw zt-b"></i>Neighbours: each lists the other</span><span><i class="zt-sw zt-o"></i>Only one lists the other'+(m.oneSided?' ('+m.oneSided+')':'')+'</span><span><i class="zt-sw zt-n"></i>Not neighbours</span><span><i class="zt-sw zt-b zt-dot"></i>Relay link: part of a route through a repeater</span><span><i class="zt-sw zt-b zt-r"></i>Route to the hub of the row you point at</span></div>';
+  const score=x=>(x.path.length-2)*10+(x.rate!=null&&x.rate<40?15:0)+((x.per||0)>0?8:0)+(n>=8&&x.nb<=2?6:0);
+  const routed=m.N.filter(x=>x.path).sort((a,b)=>score(b)-score(a));
+  const pathTxt=x=>x.path.map(id=>{const y=m.idx[id]!=null?m.N[m.idx[id]]:null;return h(y?nm(y.name):id.toString(16).toUpperCase())}).join(' → ');
+  o+='<details class="zt-routes"><summary>Routes <span class="muted">'+routed.length+' nodes, worst first</span></summary><div class="tbl-wrap"><table><thead><tr><th>Node</th><th>Route in use</th><th>Speed</th><th>LWR RSSI</th><th>PER</th><th>Neighbours</th></tr></thead><tbody>';
+  routed.forEach(x=>{const f=zwTopoFlags(x,n);
+    o+='<tr><td>'+(x.deviceId?dlink(x.deviceId,x.name):h(nm(x.name)))+'</td><td>'+pathTxt(x)+(f.length?' '+f.map(v=>'<span class="badge b-warn">'+h(v)+'</span>').join(' '):'')+'</td><td>'+zwRateBadge(x.rate)+'</td><td>'+zwRssiTxt(x.rssi)+'</td><td>'+(x.per??'–')+'</td><td>'+x.nb+'</td></tr>'});
+  return o+'</tbody></table></div></details>';
+}
+// A mouse shows the card on hover and a click does nothing. On a touch screen, which has no
+// hover, a tap shows it and keeps it open; a second tap on the same square or a tap outside the
+// matrix closes it.
+function zwTopoBind(m){
+  const grid=document.getElementById('ztGrid'),tip=document.getElementById('ztTip'),wrap=document.getElementById('ztWrap');
+  if(!grid||!tip)return;
+  let pinned=false,ring=[],ptr='mouse';
+  const clear=()=>{ring.forEach(c=>c.classList.remove('zt-r'));ring=[]};
+  const show=el=>{
+    const i=+el.dataset.i,j=el.dataset.j!=null?+el.dataset.j:null,a=m.N[i];clear();
+    if(a.path)for(let k=0;k<a.path.length-1;k++){const p=m.idx[a.path[k]],q=m.idx[a.path[k+1]];
+      if(p==null||q==null)continue;
+      [[p,q],[q,p]].forEach(([x,y])=>{const c=grid.querySelector('[data-i="'+x+'"][data-j="'+y+'"]');if(c){c.classList.add('zt-r');ring.push(c)}})}
+    tip.innerHTML=zwTopoTip(m,i,j);tip.style.display='block';tip.dataset.k=i+'/'+j;
+    const wr=wrap.getBoundingClientRect(),cr=el.getBoundingClientRect(),tw=tip.offsetWidth,th=tip.offsetHeight;
+    let x=cr.right-wr.left+12;if(x+tw>wr.width)x=Math.max(0,cr.left-wr.left-12-tw);
+    const y=Math.max(0,Math.min(cr.top-wr.top-8,wr.height-th));
+    tip.style.left=x+'px';tip.style.top=y+'px';
+  };
+  const hide=()=>{if(pinned)return;tip.style.display='none';clear()};
+  grid.addEventListener('mouseover',e=>{if(pinned)return;const el=e.target.closest('[data-i]');if(el)show(el)});
+  grid.addEventListener('mouseleave',hide);
+  grid.addEventListener('pointerdown',e=>{ptr=e.pointerType||'mouse'});
+  grid.addEventListener('click',e=>{if(ptr==='mouse')return;
+    const el=e.target.closest('[data-i]');if(!el||e.target.closest('a'))return;
+    const k=el.dataset.i+'/'+(el.dataset.j!=null?el.dataset.j:null);
+    if(pinned&&tip.dataset.k===k){pinned=false;hide();return}
+    pinned=true;show(el)});
+  // One document listener for the page's lifetime; each render points it at the current card.
+  zwTopoBind.close=e=>{if(pinned&&!wrap.contains(e.target)){pinned=false;hide()}};
+  if(!zwTopoBind.listening){document.addEventListener('pointerdown',e=>zwTopoBind.close(e));zwTopoBind.listening=true}
 }
 const BADGE={builtin:'<span class="badge b-builtin">Built-in</span>',community:'<span class="badge b-community">Community</span>',platform:'<span class="badge b-platform">Platform</span>'};
 // Source classification → badge markup. emptyAsBuiltin=true renders Built-in for a missing source (apps); false renders nothing (perf rows).
@@ -2812,32 +2987,12 @@ async function rNetwork(){const P='p-network';loading(P);try{
     }
     o+='</div></div>';
   }
-  // Z-Wave Topology (v5.12.0) — embedded HTML adjacency matrix from /hub/zwaveTopology.
-  // Hub returns a degenerate self-only matrix (with malformed unclosed <table>) when no nodes are paired,
-  // which both renders empty AND breaks the DOM for following cards. Gate on real-node presence.
-  // v5.66.2: substitute hex node IDs in <td> label cells with linked device names from d.zwave.mesh.nodes.
-  if(d.zwaveTopologyHtml&&d.zwave&&d.zwave.nodeCount>0){
-    o+='<div class="card"><div class="card-h">Z-Wave Topology</div><div class="card-b">';
-    o+='<div class="muted" style="margin-bottom:8px;font-size:12px">Pairwise neighbor matrix as reported by the Z-Wave controller. Each cell\'s background colour encodes the connectivity between two nodes.</div>';
-    let topo=d.zwaveTopologyHtml;
-    const byHex={};
-    ((d.zwave.mesh&&d.zwave.mesh.nodes)||[]).forEach(n=>{
-      const nid=(n.id!=null?n.id:n.nodeId);
-      if(nid!=null){
-        const hex=Number(nid).toString(16).toUpperCase().padStart(2,'0');
-        byHex[hex]={name:n.name,deviceId:n.deviceId};
-      }
-    });
-    topo=topo.replace(/<td>([0-9A-Fa-f]{2})<\/td>/g,(m,hex)=>{
-      const u=hex.toUpperCase();
-      if(u==='01')return '<td><span class="muted">Hub</span></td>';
-      const e=byHex[u];
-      if(!e)return m;
-      const label=h(Obf.nm(e.name||u));
-      return '<td>'+(e.deviceId?dlink(e.deviceId,label):label)+'</td>';
-    });
-    o+='<div class="tbl-wrap" style="overflow-x:auto;max-width:100%">'+topo+'</div>';
-    o+='</div></div>';
+  // Z-Wave Topology: neighbour matrix (d.zwaveTopology, parsed hub-side) joined with each node's
+  // current route. On a hub with no nodes the matrix is the hub alone, so gate on real nodes.
+  ZWT=null;
+  if(d.zwaveTopology&&d.zwave&&d.zwave.nodeCount>0){
+    ZWT=zwTopoModel(d.zwaveTopology,d.zwave.mesh&&d.zwave.mesh.nodes);
+    o+='<div class="card" id="nc-zwtopo"><div class="card-h">Z-Wave Topology'+hp('/hub/zwaveInfo')+'</div><div class="card-b">'+zwTopoHtml(ZWT)+'</div></div>';
   }
   // Matter
   if(d.matter){const m=d.matter;
@@ -2895,6 +3050,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
     o+='</div></div>';
   }
   document.getElementById(P).innerHTML=o;
+  if(ZWT)zwTopoBind(ZWT);
   // Hub Mesh peer table
   if(d.hubMesh&&d.hubMesh.peers&&d.hubMesh.peers.length){
     tbl('hmPeerTbl',[

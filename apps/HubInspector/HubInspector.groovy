@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "6.1.14"
+@Field static final String CODE_VERSION = "6.2.0"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -453,7 +453,7 @@ Map dashboardPage() {
         }
     }
 
-    dynamicPage(name: "dashboardPage", title: "Hub Inspector", install: true, uninstall: true) {
+    dynamicPage(name: "dashboardPage", install: true, uninstall: true) {
         String uiVer = getUIVersion()
         boolean appUpdateNeeded = isNewer(uiVer, CODE_VERSION)
         String remoteVersion = checkGithubVersion()
@@ -1447,7 +1447,7 @@ Map getNetworkData(Map shared = [:]) {
         zipgatewayVersion: fetchZipgatewayVersion(),
         security: fetchSecurityInfo(shared.hubData as Map),
         zigbeeChannelScan: fetchCachedZigbeeScan(),
-        zwaveTopologyHtml: fetchZwaveTopology()
+        zwaveTopology: fetchZwaveTopology()
     ]
 }
 
@@ -2469,21 +2469,41 @@ Map fetchSecurityInfo(Map prefetchedHubData = null) {
     ]
 }
 
-// ===== Z-Wave Topology HTML embed (Phase 6 sub-3, v5.12.0) =====
+// ===== Z-Wave Topology neighbour matrix (Phase 6 sub-3, v5.12.0) =====
+
+/** Z-Wave neighbour matrix from the hub's topology page, parsed by parseZwaveTopology. */
+Map fetchZwaveTopology() {
+    String txt = (String) hubRequest(ZWAVE_TOPOLOGY_PATH, "Z-Wave topology", "text", 10)
+    return parseZwaveTopology(txt)
+}
 
 /**
- * Returns the bare <table>...</table> HTML adjacency matrix from Hubitat's Z-Wave topology page.
- * Embedded as-is in the Network tab; bgcolor cells encode pairwise connectivity.
+ * Parses the hub's topology <table> (a header row of hex node ids, then one row per node whose
+ * bgcolor cells are blue = neighbour, red = not, white = itself) into
+ * [ids: [1, 12, ...], rows: ["-10", ...]]: rows[i] char j is '1' when node ids[i] lists ids[j]
+ * as a neighbour, '0' when not, '-' on the diagonal, '?' for an unknown colour.
+ * A row is the node's own neighbour list, so the matrix is not always symmetric.
+ * Returns null when the page is missing or not a square matrix.
  */
-String fetchZwaveTopology() {
-    String txt = (String) hubRequest(ZWAVE_TOPOLOGY_PATH, "Z-Wave topology", "text", 10)
+Map parseZwaveTopology(String txt) {
     if (!txt) return null
-    String t = txt.trim()
-    if (!t) return null
-    // Hub omits closing </table> on the no-nodes self-only matrix; append defensively so embedded
-    // HTML can't swallow the DOM of following cards if the bug recurs with real nodes.
-    if (t.toLowerCase().contains("<table") && !t.toLowerCase().contains("</table>")) t += "</table>"
-    return t
+    List<String> trs = txt.split(/(?i)<tr>/).drop(1) as List<String>
+    if (trs.size() < 2) return null
+    List<Integer> ids = []
+    java.util.regex.Matcher hm = (trs[0] =~ /(?i)<td>\s*([0-9a-f]{2,4})\s*<\/td>/)
+    while (hm.find()) ids << Integer.parseInt(hm.group(1), 16)
+    List<String> rows = []
+    for (String tr : trs.drop(1)) {
+        StringBuilder sb = new StringBuilder()
+        java.util.regex.Matcher cm = (tr =~ /(?i)bgcolor\s*=\s*['"]?(\w+)/)
+        while (cm.find()) {
+            String c = cm.group(1).toLowerCase()
+            sb.append(c == 'blue' ? '1' : c == 'red' ? '0' : c == 'white' ? '-' : '?')
+        }
+        rows << sb.toString()
+    }
+    if (!ids || rows.size() != ids.size() || rows.any { it.length() != ids.size() }) return null
+    return [ids: ids, rows: rows]
 }
 
 // ===== Zigbee Channel Scan (Phase 6 sub-1, v5.12.0) =====
@@ -2667,6 +2687,9 @@ Map extractZwaveMeshQuality(Map zwaveData) {
             state: node.nodeState ?: "Unknown",
             lastTime: node.lastTime ?: "",
             listening: node.listening ?: false,
+            // Sleeping nodes have no `listening` key on Z/IP and false on Z-Wave JS, where FLiRS
+            // locks are false too and every node carries batteryPercent (null on mains nodes).
+            battery: node.listening != true || node.batteryPercent != null,
             security: node.security ?: "",
             driverType: driverType,
             zwaveType: node.zwaveType ?: ""

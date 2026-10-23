@@ -13,7 +13,7 @@
 # Coverage current as of v5.13.0 (Phases 0–6 complete + snapshot enrichment).
 # Tests every new field added since v5.8.5: firmwareUpdate, backups, security
 # (incl. cloudController), cpuInfo, loadThreshold, radioHealth, zwaveJs, ntpServer,
-# mdns, zipgatewayVersion, zigbeeChannelScan, zwaveTopologyHtml, snapshot.code,
+# mdns, zipgatewayVersion, zigbeeChannelScan, zwaveTopology, snapshot.code,
 # snapshot diff sections (backupsChanges/securityChanges/codeChanges + extended
 # networkChanges), /api/code, /api/live cpuInfo+loadThreshold persistence
 # (regression guard for the v5.11.2 chip-disappearing bug), and
@@ -636,18 +636,26 @@ else:
     else:
         fail("Missing 'zigbeeChannelScan' field (v5.12.0+)")
 
-    # v5.12.0+ Z-Wave topology HTML embed
-    if "zwaveTopologyHtml" in net:
-        ok("Has 'zwaveTopologyHtml' field")
-        topo = net["zwaveTopologyHtml"]
-        if topo and "<table" in topo:
-            ok("zwaveTopologyHtml contains <table> markup")
-        elif topo is None:
-            warn("zwaveTopologyHtml is null (endpoint failed)")
+    # Z-Wave topology: neighbour matrix parsed hub-side into ids + rows
+    if "zwaveTopology" in net:
+        ok("Has 'zwaveTopology' field")
+        topo = net["zwaveTopology"]
+        if topo is None:
+            warn("zwaveTopology is null (endpoint failed or not a square matrix)")
         else:
-            fail("zwaveTopologyHtml present but has no <table>")
+            ids, rows = topo.get("ids") or [], topo.get("rows") or []
+            if ids and ids[0] == 1 and len(rows) == len(ids) and all(len(r) == len(ids) for r in rows):
+                ok(f"zwaveTopology is a square matrix starting at the hub ({len(ids)} nodes)")
+            else:
+                fail("zwaveTopology is not a square matrix with the hub (node 1) first")
+            if all(r[i] == "-" and set(r) <= set("01-?") for i, r in enumerate(rows)):
+                ok("zwaveTopology rows use 0/1 with '-' on the diagonal")
+            else:
+                fail("zwaveTopology rows have unexpected cells")
     else:
-        fail("Missing 'zwaveTopologyHtml' field (v5.12.0+)")
+        fail("Missing 'zwaveTopology' field")
+    if "zwaveTopologyHtml" in net:
+        fail("Stale 'zwaveTopologyHtml' field still present")
 
 # ── Test 6: GET /api/health ───────────────────────────────────────────
 section("GET /api/health")
