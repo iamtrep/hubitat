@@ -399,6 +399,11 @@ it pairs. Leading zero bytes of each number are dropped before hashing *(spec: [
   after POWER, pings went on (one 7.2 s gap), and `remote_start` on came 0.3 s after the next POWER. It
   reports its volume (range 100) in answer to volume keys, opens `https://` links, and answers a package
   name with `remote_error` 7 *(reported: [forum topic 166822](https://community.hubitat.com/t/166822/47), post 47, driver 0.4.0, hub 2.5.2.135)*.
+- On that TCL TV and on an onn 4K Plus box (Android 14, remote service `7.00.999235495`), SEARCH from the home
+  screen opened `com.google.android.katniss` and showed the Gemini voice prompt, not a text field; neither
+  sent a text field status, and text sent then did not appear *(reported: [forum topic 166822](https://community.hubitat.com/t/166822/47), posts 47 and 49, driver 0.4.0, hub 2.5.2.135)*.
+- On the onn box, play, pause, HOME, BACK, ENTER and the D-pad keys worked in the Jellyfin app. Text sent
+  with `remote_ime_batch_edit` appeared in a Channels DVR text field but not in Jellyfin's *(reported: [forum topic 166822](https://community.hubitat.com/t/166822/49), post 49, driver version not stated, likely 0.4.0 as in posts 43–47)*.
 
 ## Samsung Tizen TVs
 

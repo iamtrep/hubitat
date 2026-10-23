@@ -19,5 +19,5 @@
     "https"
   ],
   "errorCode": 7,
-  "source": "https://community.hubitat.com/t/beta-android-tv-remote-google-tv-and-android-tv-local-control/166822/44 (tester report; only https links and market:// were tried). Not modelled: the volume message at session start has no range or level; pings come every 7 to 9 s while off; an empty 24 after the text in test 14; whether the text reached the search box (not reported)"
+  "source": "https://community.hubitat.com/t/beta-android-tv-remote-google-tv-and-android-tv-local-control/166822/44 (tester report; only https links and market:// were tried) and post 49 (SEARCH opens the Gemini voice prompt, not a text field, so no text field is modelled; play, pause, HOME, BACK, ENTER and DPAD keys work in Jellyfin; sendText types in Channels DVR's text field but not Jellyfin's). Not modelled: the volume message at session start has no range or level; pings come every 7 to 9 s while off; an empty 24 after the text in test 14"
 }
