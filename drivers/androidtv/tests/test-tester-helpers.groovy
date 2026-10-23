@@ -59,7 +59,7 @@ List<String> SIGNATURES = [
     'List<Map> testRows(Map run, Map names) {',
     'List<String> differences(Map fields, Map expect) {',
     'Map searchResult(String msg) {',
-    'Map evalDiscovery(List<Map> lines, String tvId, Map foundTvs) {',
+    'Map evalDiscovery(List<Map> lines, String tvId, Map foundTvs, String tvIP = null) {',
     'private String lastApp(List<Map> lines) {',
     'String formatReport(Map header, List<Map> results) {',
     'String wrongPairingCode(String clientPem, String tvPem) {',
@@ -399,13 +399,19 @@ check 'search line: several', h.searchResult('Found 3 TVs: choose one under TV a
 check 'search line: none', h.searchResult('No Android TV or Google TV found. Check that the TV is on').count == 0
 check 'search line: other lines ignored', h.searchResult('rx 40:{1:1}') == null
 Map dOn = h.evalDiscovery([dl('Found a TV at 192.0.2.10'), dl('rx 40:{1:0}'), dl('Found a TV at 192.0.2.10')], id7, null)
-check 'announced on and off', dOn == [announced: true, tvCount: 1, deviceTvFound: true, announcedOff: true, idKnown: true]
+check 'announced on and off', dOn == [announced: true, tvCount: 1, deviceTvFound: true, ipFound: null, announcedOff: true, idKnown: true]
 Map dOff = h.evalDiscovery([dl('Found a TV at 192.0.2.10'), dl('No Android TV or Google TV found. Check that the TV is on')], null, null)
 check 'silent while off', dOff.announcedOff == false && dOff.announced == true
 check 'id not learned', dOff.idKnown == false
 Map dOther = h.evalDiscovery([dl('Found a TV at 192.0.2.11; to use it, clear the IP address and save')], id7, null)
 check 'another TV found, not the device\'s', dOther.deviceTvFound == false && dOther.announcedOff == null
 check 'several TVs: device\'s among them', h.evalDiscovery([dl('Found 2 TVs: choose one under TV and save')], id7, [(id7): 'Mock TV (192.0.2.10)']).deviceTvFound == true
+Map other8 = ['02:00:00:00:00:08': 'Den (192.0.2.10)', '02:00:00:00:00:09': 'Bedroom (192.0.2.12)']
+Map dIdMismatch = h.evalDiscovery([dl('Found 2 TVs: choose one under TV and save')], id7, other8, '192.0.2.10')
+check 'several TVs: one at the device\'s address under another id', dIdMismatch.deviceTvFound == false && dIdMismatch.ipFound == true
+Map dMissing = h.evalDiscovery([dl('Found 2 TVs: choose one under TV and save')], id7, other8, '192.0.2.11')
+check 'several TVs: none at the device\'s address', dMissing.deviceTvFound == false && dMissing.ipFound == false
+check 'several TVs: no address set, unknown', h.evalDiscovery([dl('Found 2 TVs: choose one under TV and save')], id7, other8, null).ipFound == null
 check 'several TVs: list gone, unknown', h.evalDiscovery([dl('Found 2 TVs: choose one under TV and save')], id7, null).deviceTvFound == null
 Map dNone = h.evalDiscovery([dl('No Android TV or Google TV found. Check that the TV is on')], id7, null)
 check 'nothing announced', dNone.announced == false && dNone.tvCount == 0 && dNone.deviceTvFound == null

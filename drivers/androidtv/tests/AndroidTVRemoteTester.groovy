@@ -27,7 +27,7 @@ import java.security.MessageDigest
 import java.security.cert.CertificateFactory
 import java.text.SimpleDateFormat
 
-@Field static final String CODE_VERSION = "0.6.0"
+@Field static final String CODE_VERSION = "0.6.1"
 
 @Field static final String BUSY = "a run is in progress"
 
@@ -604,7 +604,7 @@ Map evaluateTest(int test, List<Map> lines, Map steps, Map run, List<Map> events
         case 12: f = evalPairing(lines) + evalPairingOptions(lines); break
         case 13:
             Map st = tvStateFields(["tvId", "foundTvs"])
-            f = evalDiscovery(lines, st.tvId as String, st.foundTvs as Map)
+            f = evalDiscovery(lines, st.tvId as String, st.foundTvs as Map, tv.getSetting("tvIP") as String)
             break
         case 14:
             f = evalText(lines)
@@ -1136,13 +1136,16 @@ Map searchResult(String msg) {
 }
 
 // Test 13: the first search runs with the box on, the second while it is off.
-Map evalDiscovery(List<Map> lines, String tvId, Map foundTvs) {
+// With several TVs, ipFound says whether one listed is at the device's address, without naming it:
+// true with deviceTvFound false means the TV there announces another id than the one the device holds.
+Map evalDiscovery(List<Map> lines, String tvId, Map foundTvs, String tvIP = null) {
     List<Map> rs = lines.collect { searchResult(it.msg as String) }.findAll { it != null }
     Map on = rs ? rs[0] : null
     Map off = rs.size() > 1 ? rs[1] : null
     Boolean mine = null
     if (on?.count) mine = on.many ? (foundTvs != null && tvId ? foundTvs.containsKey(tvId) : null) : !on.other
-    return [announced: on == null ? null : on.count > 0, tvCount: on?.count, deviceTvFound: mine,
+    Boolean ipFound = on?.many && foundTvs != null && tvIP ? foundTvs.values().any { it.toString().endsWith("(${tvIP})") } : null
+    return [announced: on == null ? null : on.count > 0, tvCount: on?.count, deviceTvFound: mine, ipFound: ipFound,
             announcedOff: off == null ? null : off.count > 0, idKnown: tvId != null]
 }
 
