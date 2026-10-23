@@ -898,7 +898,7 @@ function renderMaintain(){
     html+=`<div class="health-card">
       <div class="hc-title"><span class="hc-dot ${zwCls}"></span>Z-Wave Radio</div>
       <div class="hc-value">${zw.enabled?'Enabled':'Disabled'}</div>
-      <div class="hc-detail">Region ${h(zw.region)} · ${zwNodeCount} nodes${zw.zwaveJSAvailable?' · JS available':''}</div>
+      <div class="hc-detail">Region ${h(zw.region)} · ${zwNodeCount} nodes${zw.enabled&&!zw.zwaveJS&&hd?.hubVersion>=5?' · JS available':''}</div>
       ${zw.updateInProgress?'<div class="hc-detail" style="color:var(--warn)">⚠ Update in Progress</div>':''}
     </div>`;
   }

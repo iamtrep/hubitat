@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "6.2.0"
+@Field static final String CODE_VERSION = "6.2.1"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -1367,6 +1367,9 @@ Map getNetworkData(Map shared = [:]) {
     Map zigbeeMesh = fetchZigbeeMeshInfo()
     String zwaveVersion = fetchZwaveVersion()
     Map zwaveMesh = extractZwaveMeshQuality(networkData.zwave ?: [:])
+    // The hub's own Z-Wave page offers the switch to Z-Wave JS on hardware generation 5 and later
+    // (hubData.hubVersion); zwaveDetails has no availability flag of its own since 2.5.2.139.
+    Integer hubGeneration = ((shared.hubData ?: fetchHubData())?.hubVersion) as Integer
     List ghostNodes = buildZwaveGhostNodes(networkData.zwave ?: [:])
     Map zigbeeRaw = networkData.zigbee ?: [:]
     Map hubMeshRaw = networkData.hubMesh ?: [:]
@@ -1396,7 +1399,9 @@ Map getNetworkData(Map shared = [:]) {
             enabled: networkData.zwave.enabled, healthy: networkData.zwave.healthy,
             region: networkData.zwave.region, nodeCount: (networkData.zwave.zwDevices ?: [:]).size(),
             isRadioUpdateNeeded: networkData.zwave.isRadioUpdateNeeded,
-            zwaveJS: networkData.zwave.zwaveJS, zwaveJSAvailable: networkData.zwave.zwaveJSAvailable,
+            zwaveJS: networkData.zwave.zwaveJS,
+            zwaveJSAvailable: networkData.zwave.enabled && !networkData.zwave.zwaveJS && hubGeneration != null && hubGeneration >= 5,
+            zwaveJSDownloaded: networkData.zwave.zwaveJSInstallationValid,
             version: zwaveVersion, zwaveJSVersion: networkData.zwave.zwaveJSVersion,
             mesh: zwaveMesh, ghostNodes: ghostNodes,
             messageCounts: extractZwaveMessageCounts(networkData.zwave ?: [:])
