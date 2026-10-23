@@ -64,7 +64,7 @@ import java.security.Signature
 import java.security.cert.CertificateFactory
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.5.0"
+@Field static final String CODE_VERSION = "0.5.1"
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int PAIRING_PORT = 6467
 @Field static final String MDNS_SERVICE = "_androidtvremote2._tcp"
@@ -77,6 +77,7 @@ import java.util.concurrent.ConcurrentHashMap
 @Field static final int MAX_BACKOFF_SECONDS = 300
 @Field static final int CODE_TIMEOUT_SECONDS = 300
 @Field static final long VOLUME_ANSWER_MS = 3000      // a volume message this soon after a volume key answers it
+@Field static final long POWER_DROP_MS = 10000        // a session lost this soon after turning the TV off means it went to sleep
 
 // Feature bits exchanged in remote_configure / remote_set_active
 @Field static final int FEATURE_PING = 1
@@ -244,6 +245,12 @@ String commandRoute(String mode, boolean ready, int held) {
 
 boolean searchDue(Long last, long nowMs, long minMs) {
     last == null || nowMs - last >= minMs
+}
+
+// Whether a lost session follows a POWER key sent while the TV was on: some TVs (TCL) close it and
+// stop answering instead of reporting off.
+boolean offByDrop(Long powerOffAt, long nowMs, long windowMs) {
+    powerOffAt != null && nowMs - powerOffAt <= windowMs
 }
 
 // Whether this entry is another TV than the device's: by id when known, else by the current address.
@@ -790,6 +797,7 @@ private void noteTextField(Map r, Map<Integer, List> status) {
 
 private void sendKeyCode(int code) {
     logCmd "Key ${code}"
+    if (code == KEYCODES.POWER && device.currentValue("switch") == "on") rt().powerOffAt = now()
     sendRemote(pMsg(10, pInt(1, code) + pInt(2, DIRECTION_SHORT)), code in [KEYCODES.VOLUME_UP, KEYCODES.VOLUME_DOWN, KEYCODES.VOLUME_MUTE])
 }
 
@@ -864,7 +872,14 @@ void socketStatus(String message) {
 void socketDropped() {
     Map r = rt()
     try { interfaces.rawSocket.close() } catch (ignored) { }
-    if (r.droppedMode == "remote") scheduleReconnect()
+    if (r.droppedMode == "remote") {
+        if (offByDrop(r.powerOffAt as Long, now(), POWER_DROP_MS)) {
+            logInfo "The TV closed the connection after turning off; it may not answer until turned on by hand"
+            sendEvent(name: "switch", value: "off")
+        }
+        r.powerOffAt = null
+        scheduleReconnect()
+    }
     else if (r.droppedMode == "pair") endPairing()
     r.droppedMode = null
 }

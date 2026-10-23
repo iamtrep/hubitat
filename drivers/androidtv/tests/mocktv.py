@@ -2,7 +2,7 @@
 # Encodes/decodes with androidtvremote2's compiled protobuf modules. Ports: pairing 6467, remote 6466.
 # usage: [MOCKTV_PROFILE=<profile.json>] [MOCKTV_MDNS_NAME=<name> [MOCKTV_BT=<mac>]] mocktv.py <cert.pem> <key.pem> <workdir>
 # A profile describes a box with the tester report's field names; mock-profiles/default.json fills what it leaves out.
-import hashlib, json, os, random, socket, sys, threading, time
+import hashlib, json, os, random, signal, socket, struct, sys, threading, time
 from OpenSSL import SSL, crypto
 from google.protobuf.internal.decoder import _DecodeVarint
 from google.protobuf.internal.encoder import _VarintBytes
@@ -25,6 +25,7 @@ ORDER = [int(t) for t in P["firstMessages"].split(",")]
 ENCODINGS = {"unknown": 0, "alphanumeric": 1, "numeric": 2, "hexadecimal": 3, "qrcode": 4}
 ROLES = {"input": 1, "output": 2}
 assert ORDER[:2] == [1, 2] and set(ORDER[2:]) <= {20, 40, 50}, "firstMessages must start 1,2 then use 20, 40, 50"
+ASLEEP = threading.Event()  # a box with sessionKept false, turned off: it answers no connection until woken
 
 def log(*a):
     print(time.strftime("%H:%M:%S"), *a, flush=True)
@@ -204,6 +205,14 @@ def handle_remote(conn):
             k = msg.remote_key_inject.key_code
             if k == 26:
                 st["on"] = not st["on"]
+                if not st["on"] and not P["sessionKept"]:
+                    # As the TCL TV: no off report, the volume message, then a reset, and nothing answers until woken
+                    if P["volumeDuringChange"]: volume()
+                    ASLEEP.set()
+                    mdns_power(False)
+                    log(f"remote: asleep; wake with kill -USR1 {os.getpid()}")
+                    threading.Timer(0.5, reset, [conn]).start()
+                    continue
                 power()
                 mdns_power(st["on"])
                 if P["volumeDuringChange"]: volume()
@@ -240,13 +249,33 @@ def handle_remote(conn):
     st["alive"] = False
     log("remote: connection closed")
 
+def reset(conn):
+    """Ends the connection with a TCP reset, as a box going to sleep does."""
+    s = conn.get_app_data()
+    try:
+        s.shutdown(socket.SHUT_RD)             # wakes the reading thread
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        s.close()
+    except OSError:
+        pass
+
+def wake(*_):
+    ASLEEP.clear()
+    mdns_power(True)
+    log("awake")
+
 def serve(port, handler):
     ls = socket.socket(); ls.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     ls.bind(("0.0.0.0", port)); ls.listen(4)
     while True:
         s, addr = ls.accept()
         def run(s=s):
-            conn = SSL.Connection(ctx(), s); conn.set_accept_state()
+            if ASLEEP.is_set():
+                # The real box let connects time out; here the TCP connect succeeds and the TLS handshake waits
+                while ASLEEP.is_set(): time.sleep(0.5)
+                s.close()
+                return
+            conn = SSL.Connection(ctx(), s); conn.set_accept_state(); conn.set_app_data(s)
             try:
                 conn.do_handshake()
                 handler(conn)
@@ -290,10 +319,10 @@ if os.environ.get("MOCKTV_MDNS_NAME"):
     atexit.register(lambda: (MDNS[0].unregister_service(MDNS[1]), MDNS[0].close()))
     # Exit through atexit on a kill, so the goodbye goes out: a hub that saw the name expire without one
     # doesn't find it again when it comes back.
-    import signal
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *a: os._exit(0) if MDNS is None else (MDNS[0].unregister_service(MDNS[1]), MDNS[0].close(), os._exit(0)))
 
+signal.signal(signal.SIGUSR1, wake)
 threading.Thread(target=serve, args=(PAIR_PORT, handle_pairing), daemon=True).start()
 log("mock TV listening on", PAIR_PORT, REMOTE_PORT)
 serve(REMOTE_PORT, handle_remote)

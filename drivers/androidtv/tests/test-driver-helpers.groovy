@@ -31,6 +31,7 @@ List<String> SIGNATURES = [
     'String addressFor(Map entry, String current) {',
     'String repairAddress(List<Map> entries, String id, String current) {',
     'boolean searchDue(Long last, long nowMs, long minMs) {',
+    'boolean offByDrop(Long powerOffAt, long nowMs, long windowMs) {',
     'boolean sessionUp(String mode, long lastRx, long nowMs, long limitMs) {',
     'String commandRoute(String mode, boolean ready, int held) {',
     'boolean differentTv(Map entry, String tvId, String current) {',
@@ -91,6 +92,11 @@ println 'searchDue'
 check 'never searched', h.searchDue(null, 1000L, 300000L)
 check 'too soon', !h.searchDue(1000L, 2000L, 300000L)
 check 'due', h.searchDue(1000L, 301000L, 300000L)
+
+println 'offByDrop'
+check 'no power key', !h.offByDrop(null, 5000L, 10000L)
+check 'drop 1 s after power off', h.offByDrop(4000L, 5000L, 10000L)
+check 'drop long after power off', !h.offByDrop(4000L, 20000L, 10000L)
 
 println 'sessionUp'
 check 'open and recent: up', h.sessionUp('remote', 1000L, 20000L, 20000L)

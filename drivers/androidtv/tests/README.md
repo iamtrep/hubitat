@@ -50,13 +50,14 @@ report.
 | `closeAfterErrorS` | seconds before the box closes the session after a refused link |
 | `pingIntervalS` | seconds between pings |
 | `pingsWhileOff` | test 3 `pingGaps`: a box that stops pinging while off shows a long gap |
+| `sessionKept` | test 3 `sessionKept`: false makes POWER put the box to sleep, as a TCL TV did: no off report, the volume message, a TCP reset, then no answer on either port until `kill -USR1 <mock pid>` wakes it. Connects made while it sleeps succeed and then wait, where the real TV let them time out |
 | `announcedOff` | test 13: the box keeps its mDNS announcement while off (needs `MOCKTV_MDNS_NAME`) |
 | `extraMessages` | message types sent, empty, after the session start; any test's `otherMessages` |
 | `inputEncodings`, `outputEncodings`, `preferredRole` | test 11 and 12: the code encodings the TV offers when pairing |
 | `source` | where the values come from, and what the profile leaves out; the mock ignores it |
 
 `mock-profiles/ebox.json` is the EBOX set-top box, from tester runs on it. `google-tv-streamer.json`,
-`nvidia-shield.json`, `sony-bravia-4k-ae3.json` and `eastlink-frc1.json` come from tester reports in the forum thread. The others come from the debug logs of other
+`nvidia-shield.json`, `sony-bravia-4k-ae3.json`, `eastlink-frc1.json`, `tcl-smart-tv-pro.json` and `onn-4k-plus.json` come from tester reports in the forum thread. The others come from the debug logs of other
 projects' issues, named in each `source`: `chromecast-google-tv`, `freebox-player-pop`, `sony-bravia-4k-vh2`,
 `tivo-stream-4k` and `xiaomi-mi-tv-stick`. Those logs give the identity, features, message order, current
 app and volume message; pings, link handling, errors and pairing keep `default.json`'s values. A volume

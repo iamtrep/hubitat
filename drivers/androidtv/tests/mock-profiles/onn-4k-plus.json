@@ -1,0 +1,23 @@
+{
+  "vendor": "onn",
+  "model": "onn. 4K Plus Streaming",
+  "androidVersion": "14",
+  "remoteServiceVersion": "7.00.999235495",
+  "features": 639,
+  "deviceInfo3": 1,
+  "firstMessages": "1,2,50,40,20",
+  "startApp": "com.google.android.youtube.tv",
+  "homeApp": "com.google.android.apps.tv.launcherx",
+  "searchApp": "com.google.android.katniss",
+  "volumeReported": false,
+  "volumeDuringChange": true,
+  "volumeRange": 25,
+  "volumeLevel": 20,
+  "playerModel": "onn. 4K Plus Streaming",
+  "linkSchemes": [
+    "http",
+    "https"
+  ],
+  "errorCode": 7,
+  "source": "https://community.hubitat.com/t/beta-android-tv-remote-google-tv-and-android-tv-local-control/166822/44 (tester report; only https links and market:// were tried). Not modelled: the volume message at session start has no range or level; pings come every 7 to 9 s while off; an empty 24 after the text in test 14; whether the text reached the search box (not reported)"
+}
