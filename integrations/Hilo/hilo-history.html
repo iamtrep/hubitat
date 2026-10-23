@@ -99,14 +99,8 @@ SPDX-License-Identifier: MIT
     .legend b { color: var(--peak-text); font-weight: 500; }
     #tip { position: fixed; pointer-events: none; background: var(--card-bg); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 0.8rem; display: none; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
     .msg { padding: 24px; text-align: center; }
-    .wcbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 0.85rem; font-weight: 400; }
-    .wcbar input { font: inherit; padding: 2px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--card-bg); color: var(--text); }
-    .calc { font-size: 0.88rem; display: grid; gap: 2px; margin: 10px 0; font-variant-numeric: tabular-nums; }
-    .calc b { font-weight: 600; }
-    td.drop { color: var(--text-muted); text-decoration: line-through; }
-    tr.anc td { background: var(--peak); }
-    tr.sum td { font-weight: 600; }
-    .wcnote { margin-top: 6px; }
+    a { color: var(--primary); }
+    .wclink { font-size: 0.85rem; font-weight: 400; margin-left: 8px; }
 </style>
 </head>
 <body>
@@ -147,7 +141,7 @@ const inPeak = h => PEAKS.some(([a, b]) => h >= a && h < b);
 // epoch seconds: its local-time output has 24 hours on clock-change days.
 const TEMP_URL = 'https://archive-api.open-meteo.com/v1/archive';
 
-let files = {};   // location -> [{month, name}]
+let files = {};   // location -> [{month, name, date}]
 let days = [];    // [{date, hours:[{h, kWh}], total, nulls, n}] for the chosen location, sorted
 let selDay = null;
 let view = null;       // {from, to} dates while zoomed into a range dragged on the daily chart, else null
@@ -157,8 +151,8 @@ let tempNote = '';
 let events = null; // [{s, e, slot}] epoch seconds; null until loaded or when unavailable
 let eventNote = '';
 
-async function getJson(url) {
-    const r = await fetch(url, { cache: 'no-store' });
+async function getJson(url, cache = 'no-store') {
+    const r = await fetch(url, { cache });
     if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
     return r.json();
 }
@@ -172,7 +166,7 @@ async function init() {
     }
     for (const f of list.files || []) {
         const m = FILE_RE.exec(f.name);
-        if (m) (files[m[1]] = files[m[1]] || []).push({ month: m[2], name: f.name });
+        if (m) (files[m[1]] = files[m[1]] || []).push({ month: m[2], name: f.name, date: f.date });
     }
     const locs = Object.keys(files).sort();
     if (!locs.length) return fail('No Hilo history files yet. Hilo Manager writes them after its first hourly read.');
@@ -180,18 +174,26 @@ async function init() {
     loc.innerHTML = locs.map(l => `<option value="${esc(l)}">Location ${esc(l)}</option>`).join('');
     loc.hidden = locs.length < 2;
     loc.onchange = () => loadLocation(loc.value);
+    const want = new URLSearchParams(location.hash.slice(1));
+    if (locs.includes(want.get('loc'))) loc.value = want.get('loc');
     $('month').onchange = () => {
         if ($('month').value === 'range') return;
         view = null; zoomStack.length = 0; syncRange(); selDay = null; render();
     };
     addEventListener('keydown', e => { if (e.key === 'Escape' && zoomStack.length) zoomOut(); });
-    await loadLocation(locs[0]);
+    // The page's own hash updates use replaceState, which fires no hashchange; this is a link or a typed address.
+    addEventListener('hashchange', () => location.reload());
+    await loadLocation(loc.value, want);
 }
 
-async function loadLocation(loc) {
+// The hub sends no cache headers; File Manager's modification time in the URL lets the browser
+// keep each month file until it changes.
+const monthUrl = f => `/local/${encodeURIComponent(f.name)}?v=${encodeURIComponent(f.date || Date.now())}`;
+
+async function loadLocation(loc, want) {
     $('status') && ($('status').textContent = 'Reading the history files…');
     const list = files[loc].sort((a, b) => a.month.localeCompare(b.month));
-    const docs = await Promise.all(list.map(f => getJson('/local/' + encodeURIComponent(f.name)).catch(() => null)));
+    const docs = await Promise.all(list.map(f => getJson(monthUrl(f), 'force-cache').catch(() => null)));
     const all = {};
     docs.forEach(d => Object.assign(all, (d && d.days) || {}));
     days = Object.keys(all).sort().map(date => {
@@ -205,14 +207,26 @@ async function loadLocation(loc) {
     sel.innerHTML = `<option value="">All (${months.length} months)</option>` +
         months.slice().reverse().map(m => `<option value="${m}">${monthName(m)}</option>`).join('');
     $('range').textContent = `${dayName(days[0].date)} to ${dayName(days[days.length - 1].date)} · ${days.length} days on file`;
-    selDay = null;
-    view = null; zoomStack.length = 0; syncRange();
+    // The URL hash keeps the day and period: #day=YYYY-MM-DD and from=…&to=… (a zoomed range) or m=YYYY-MM|all.
+    // Without a period, the day opens on its month.
+    const has = k => want && days.some(d => d.date === want.get(k));
+    selDay = has('day') ? want.get('day') : null;
+    view = null; zoomStack.length = 0;
+    const m = want && want.get('m');
+    if (m === 'all') sel.value = '';
+    else if (m && months.includes(m)) sel.value = m;
+    else if (selDay) sel.value = selDay.slice(0, 7);
+    if (has('from') && has('to') && want.get('from') <= want.get('to')) {
+        // Zoom out from a restored range goes to the months it spans: one month, else all.
+        const from = want.get('from'), to = want.get('to');
+        zoomStack.push({ month: from.slice(0, 7) === to.slice(0, 7) ? from.slice(0, 7) : '', view: null });
+        view = { from, to };
+    }
+    syncRange();
     temps = null;
     tempNote = 'Loading outdoor temperature…';
     render();
     loadTemps(days[0].date, days[days.length - 1].date).then(render, e => { tempNote = 'Outdoor temperature unavailable: ' + e.message; render(); });
-    wcFile = await getJson('/local/' + encodeURIComponent(`hilo-${loc}-peak-target.json`)).catch(() => null);
-    wcSel = null;
     events = null;
     eventNote = 'Loading peak events…';
     loadEvents().then(render, e => { eventNote = 'Peak events unavailable: ' + e.message; render(); });
@@ -344,17 +358,12 @@ function render() {
         <div class="legend" style="margin-top:6px">${esc(tempNote)}</div><div class="legend">${esc(eventNote)}</div></div>
     <div class="card"><h2><span id="dayTitle"></span><span class="legend" id="dayNote"></span></h2><div id="hourly"></div>
         <div class="legend" style="margin-top:6px"><b>Shaded</b>: peak windows 6–9 and 16–20, December 1 to March 31${events ? ' · <span class="e">purple</span>: an actual peak event' : ''}</div></div>
-    <div class="card"><h2><span>Winter credit target</span><span class="wcbar"><input type="date" id="wcDay" aria-label="Event day">
-        <select id="wcWin" aria-label="Window"><option value="6">06:00–10:00</option><option value="16">16:00–20:00</option></select>
-        <button id="wcPrev" title="Previous peak event">◀ event</button><button id="wcNext" title="Next peak event">event ▶</button></span></h2>
-        <div id="wc"></div></div>
     ${temps ? `<div class="card"><h2><span>Daily use against mean outdoor temperature</span><span class="legend">Full days only. Click a point for its hours.${events ? ' <span class="e">Coloured</span>: peak-event days.' : ''}</span></h2><div id="scatter"></div></div>` : ''}
     <div class="card"><h2><span>Average day by hour (kWh)${label ? ', ' + esc(label) : ''}</span><span class="legend"><b>Shaded</b>: peak-event windows, 6–9 and 16–20</span></h2><div id="profile"></div><div class="legend" id="profileNote" style="margin-top:6px"></div><div class="legend" id="peakShare"></div></div>
     <div class="card"><h2><span>${dayRows ? 'Days' : 'Months'}</span></h2><div class="scroll" id="table"></div></div>`;
     if ($('zoomOut')) $('zoomOut').onclick = zoomOut;
     drawDaily(set);
     drawDay();
-    drawWc();
     drawProfile(fulls);
     if (temps) drawScatter(set, fulls);
     drawTable(dayRows, set);
@@ -473,7 +482,13 @@ function brush(el, set) {
 function drawDay() {
     const d = days.find(x => x.date === selDay);
     if (!d) return;
-    $('dayTitle').textContent = `${dayName(d.date)}: ${fmt(d.total)} kWh`;
+    // December to March, and event days, link to the winter credit page on the same window.
+    const loc = $('loc').value;
+    const period = view ? `from=${view.from}&to=${view.to}` : `m=${$('month').value || 'all'}`;
+    history.replaceState(null, '', `#day=${d.date}&${period}&loc=${encodeURIComponent(loc)}`);
+    const evStart = events ? d.hours.find(x => x.ev) : null;
+    const wcLink = inSeason(d.date) || evDay(d) ? ` <a class="wclink" href="hilo-winter-credit.html#day=${d.date}&start=${evStart && evStart.h >= 12 ? 16 : 6}&loc=${encodeURIComponent(loc)}">Winter credit analysis →</a>` : '';
+    $('dayTitle').innerHTML = `${esc(dayName(d.date))}: ${fmt(d.total)} kWh${wcLink}`;
     const peak = d.hours.filter(x => inPeak(x.h) && x.kWh != null).reduce((s, x) => s + x.kWh, 0);
     const evRuns = events ? runs(d.hours.map(x => !!x.ev)) : [];
     const evText = evRuns.map(([a, b]) => `${d.hours[a].h}:00–${d.hours[b - 1].h + 1}:00`).join(', ');
@@ -562,203 +577,6 @@ function drawTable(dayRows, set) {
                 (temps ? `<td>${deg(mean(ds.map(d => d.tMean).filter(v => v != null)))}</td>` : '') + (events ? `<td>${ds.filter(evDay).length || ''}</td>` : '') + '</tr>';
         }).join('') + '</table>';
     el.querySelectorAll('tr.click').forEach(r => r.onclick = () => { goMonth(r.dataset.m); scrollTo({ top: 0, behavior: 'smooth' }); });
-}
-
-// ── Winter credit target ──────────────────────────────────────────────
-// The same computation as Hilo Manager's peakTarget (Hydro-Québec Electricity Rates, article 2.59):
-// base = the event hours' means over 5 reference days without their lowest and highest values;
-// target = base + (anchor use − anchor reference) × event hours / anchor hours; past 40 kWh curtailed
-// the adjustment is at most 2 × the anchor reference × the same factor. Days are 'YYYY-MM-DD' strings.
-const WC_CAP = 40;
-let wcFile = null;  // Hilo Manager's last computation (hilo-<location>-peak-target.json), or null
-let wcSel = null;   // {day, start} shown in the card
-
-function ymd(day) { const [y, m, d] = day.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)); }
-function addDays(day, n) { const t = ymd(day); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); }
-function isWeekend(day) { const w = ymd(day).getUTCDay(); return w === 0 || w === 6; }
-
-function easterSunday(year) {
-    const a = year % 19, b = Math.floor(year / 100), c = year % 100, d = Math.floor(b / 4), e = b % 4;
-    const g = Math.floor((8 * b + 13) / 25), h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4;
-    const l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451), n = h + l - 7 * m + 114;
-    return `${year}-${String(Math.floor(n / 31)).padStart(2, '0')}-${String(n % 31 + 1).padStart(2, '0')}`;
-}
-
-// Days without peak hours in the winter around `day`: Dec 24, 25, 26, 31, Jan 1, 2, Good Friday, Easter Monday.
-function noPeakDays(day) {
-    const y = +day.slice(0, 4), w = +day.slice(5, 7) >= 7 ? y : y - 1, e = easterSunday(w + 1);
-    return new Set([`${w}-12-24`, `${w}-12-25`, `${w}-12-26`, `${w}-12-31`, `${w + 1}-01-01`, `${w + 1}-01-02`, addDays(e, -2), addDays(e, 1)]);
-}
-
-// hours: {day: {hour: kWh}}. Returns the same fields as Hilo Manager's peakTarget.
-function peakTarget(hours, day, startHour, eventDays, floor, anchorActual) {
-    const weekend = isWeekend(day), noPeak = noPeakDays(day);
-    const back = startHour < 12 ? 5 : 4, alen = startHour < 12 ? 3 : 2, k = 4 / alen;
-    const refDays = [], skipped = [];
-    let d = day;
-    for (let i = 0; i < 60 && refDays.length < 5; i++) {
-        d = addDays(d, -1);
-        if (isWeekend(d) !== weekend) continue;
-        if (noPeak.has(d)) skipped.push([d, 'no peak hours']);
-        else if (eventDays.has(d)) skipped.push([d, 'event']);
-        else refDays.push(d);
-    }
-    const anchorHours = Array.from({ length: alen }, (_, i) => startHour - back + i);
-    const eventHours = [0, 1, 2, 3].map(i => startHour + i);
-    const missing = [], rows = [];
-    let base = 0, anchorRef = 0;
-    for (const h of [...anchorHours, ...eventHours]) {
-        const values = refDays.map(r => {
-            const v = hours[r] ? hours[r][h] : undefined;
-            if (v == null) missing.push(`${r} ${h}:00`);
-            return v == null ? null : v;
-        });
-        const idx = values.map((_, i) => i).filter(i => values[i] != null);
-        let low = null, high = null;
-        if (idx.length >= 3) {
-            low = idx.reduce((a, i) => values[i] < values[a] ? i : a);
-            high = idx.filter(i => i !== low).reduce((a, i) => values[i] > values[a] ? i : a);
-        }
-        const kept = idx.filter(i => i !== low && i !== high).map(i => values[i]);
-        const mean = kept.length ? kept.reduce((s, v) => s + v, 0) / kept.length : 0;
-        if (eventHours.includes(h)) base += mean; else anchorRef += mean;
-        rows.push({ hour: h, anchor: anchorHours.includes(h), values, low, high, mean });
-    }
-    const capped = base + k * 2 * anchorRef;
-    const out = { day, startHour, refDays, skipped, rows, missing, anchorHours, base, anchorRef, k, cappedTarget: capped, floor };
-    if (capped - floor >= WC_CAP) {
-        out.anchorPlan = 'at least'; out.anchorTarget = 3 * anchorRef; out.expectedCut = capped - floor;
-    } else {
-        out.anchorPlan = 'at most';
-        out.anchorTarget = Math.max((WC_CAP + floor - base) / k + anchorRef, 0);
-        out.expectedCut = Math.min(base + k * (out.anchorTarget - anchorRef) - floor, WC_CAP);
-    }
-    if (anchorActual != null) {
-        const target = base + k * (anchorActual - anchorRef);
-        out.target = target;
-        out.cut = Math.max(curtailed(target, capped, floor), 0);
-        const keep = target - WC_CAP;
-        const keepPays = keep > floor && WC_CAP * 58.490 - (keep - floor) * 11.142 > out.cut * 58.490;
-        out.keepUse = keepPays ? keep : null;
-        out.advice = keepPays ? 'keep' : 'cut';
-    }
-    return out;
-}
-
-// Curtailment for an event use, with the cap.
-function curtailed(target, capped, used) {
-    const c = target - used;
-    return Math.max(c > WC_CAP && target > capped ? capped - used : c, 0);
-}
-
-// Local day and start hour of every known event: the open data plus Hilo Manager's extra events.
-function wcSlots() {
-    const out = new Map();
-    (events || []).forEach(v => {
-        const t = new Date(v.s * 1000);
-        const day = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
-        out.set(`${day}|${t.getHours()}`, { day, start: t.getHours() });
-    });
-    ((wcFile && wcFile.events) || []).forEach(([day, start]) => out.set(`${day}|${start}`, { day, start }));
-    return [...out.values()].sort((a, b) => (a.day + String(a.start).padStart(2, '0')).localeCompare(b.day + String(b.start).padStart(2, '0')));
-}
-
-function wcHours() {
-    const out = {};
-    days.forEach(d => { const m = out[d.date] = {}; d.hours.forEach(x => { if (x.kWh != null) m[x.h] = (m[x.h] || 0) + x.kWh; }); });
-    return out;
-}
-
-// The computation for a window: Hilo Manager's own when it has one (it includes today's hours),
-// else computed here from the history files, with the event day's own use when it is on file.
-function wcCompute(day, start) {
-    const floor = wcFile ? +wcFile.floor : 3;
-    const slots = wcSlots();
-    const isEvent = slots.some(x => x.day === day && x.start === start);
-    const fromApp = wcFile && (wcFile.results || []).find(r => r.day === day && r.startHour === start);
-    if (fromApp) return { ...fromApp, source: `Hilo Manager, ${wcFile.generated.replace('T', ' ').slice(0, 16)}` };
-    const hours = wcHours();
-    const back = start < 12 ? 5 : 4, alen = start < 12 ? 3 : 2;
-    const own = hours[day];
-    const anchor = own ? Array.from({ length: alen }, (_, i) => own[start - back + i]) : [];
-    const anchorActual = anchor.length && anchor.every(v => v != null) ? anchor.reduce((s, v) => s + v, 0) : null;
-    const r = peakTarget(hours, day, start, new Set(slots.filter(x => x.day !== day).map(x => x.day)), floor, anchorActual);
-    const used = own ? [0, 1, 2, 3].map(i => own[start + i]) : [];
-    if (used.length && used.every(v => v != null)) r.used = used.reduce((s, v) => s + v, 0);
-    r.event = isEvent;
-    r.source = 'computed in this page from the history files';
-    return r;
-}
-
-function drawWc() {
-    const el = $('wc');
-    if (!el) return;
-    const slots = wcSlots();
-    if (!wcSel) {
-        const next = wcFile && (wcFile.results || []).find(r => r.event) || (wcFile && (wcFile.results || [])[wcFile.results.length - 2]);
-        const last = slots.filter(x => days.some(d => d.date === x.day)).pop();
-        wcSel = next ? { day: next.day, start: next.startHour } : last ? { day: last.day, start: last.start } : { day: days[days.length - 1].date, start: 6 };
-    }
-    $('wcDay').value = wcSel.day;
-    $('wcWin').value = String(wcSel.start);
-    $('wcDay').onchange = () => { if ($('wcDay').value) { wcSel = { day: $('wcDay').value, start: wcSel.start }; drawWc(); } };
-    $('wcWin').onchange = () => { wcSel = { day: wcSel.day, start: +$('wcWin').value }; drawWc(); };
-    const key = s => s.day + String(s.start).padStart(2, '0');
-    const prev = slots.filter(x => key(x) < key(wcSel)).pop(), next = slots.find(x => key(x) > key(wcSel));
-    $('wcPrev').disabled = !prev; $('wcNext').disabled = !next;
-    $('wcPrev').onclick = () => { wcSel = { ...prev }; drawWc(); };
-    $('wcNext').onclick = () => { wcSel = { ...next }; drawWc(); };
-
-    const r = wcCompute(wcSel.day, wcSel.start);
-    const win = r.startHour < 12 ? '06:00–10:00' : '16:00–20:00';
-    const anc = r.startHour < 12 ? '01:00–04:00' : '12:00–14:00';
-    const k = r.startHour < 12 ? '4/3' : '2';
-    const lines = [];
-    lines.push(`<div><b>Base</b> = the event hours' trimmed means = <b>${fmt(r.base)}</b> kWh</div>`);
-    lines.push(`<div><b>Anchor reference</b> = the ${anc} trimmed means = <b>${fmt(r.anchorRef)}</b> kWh</div>`);
-    lines.push(`<div><b>Capped target</b> = ${fmt(r.base)} + ${k} × 2 × ${fmt(r.anchorRef)} = <b>${fmt(r.cappedTarget)}</b> kWh, the target once more than 40 kWh is curtailed (if lower)</div>`);
-    if (r.target != null) {
-        const aUsed = (r.target - r.base) / r.k + r.anchorRef;
-        lines.push(`<div><b>Target</b> = ${fmt(r.base)} + ${k} × (${fmt(aUsed)} used ${anc} − ${fmt(r.anchorRef)}) = <b>${fmt(r.target)}</b> kWh</div>`);
-        if (r.used != null) {
-            const c = curtailed(r.target, r.cappedTarget, r.used), capped = r.target - r.used > WC_CAP && r.target > r.cappedTarget;
-            lines.push(`<div><b>Curtailed</b> with ${fmt(r.used)} kWh used during the event: ${capped ? `${fmt(r.target - r.used)} is over 40, so ${fmt(r.cappedTarget)} − ${fmt(r.used)} = ` : ''}<b>${fmt(c)}</b> kWh</div>`);
-        }
-        lines.push(`<div>With the event cut to ${fmt(r.floor)} kWh: curtail ${fmt(r.cut)}` + (r.advice === 'keep' ? `; using ${fmt(r.keepUse)} kWh during the event keeps 40, which pays more.` : '.') + '</div>');
-    } else {
-        lines.push(`<div><b>Plan</b>: ${r.anchorPlan === 'at most' ? `use at most <b>${fmt(r.anchorTarget)}</b> kWh during ${anc} (target ${fmt(r.floor + WC_CAP)}), then cut to ${fmt(r.floor)} kWh: curtail 40` : `cut deep; ${anc} use of at least <b>${fmt(r.anchorTarget)}</b> kWh sets the target at or above the capped target, leaving ${fmt(r.expectedCut)} kWh to curtail`}.</div>`);
-    }
-    const dayLabel = d => new Date(d + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
-    const own = wcHours()[r.day] || {};
-    let t = `<table><tr><th>Hour</th>${r.refDays.map(d => `<th>${esc(dayLabel(d))}</th>`).join('')}<th>Mean</th><th>${esc(dayLabel(r.day))}</th></tr>`;
-    const sumOwn = rows => rows.every(x => own[x.hour] != null) ? fmt(rows.reduce((s, x) => s + own[x.hour], 0), 2) : '–';
-    const block = (rows, label, total) => rows.map(x => `<tr class="${x.anchor ? 'anc' : ''}"><td>${x.hour}:00</td>` +
-            x.values.map((v, i) => `<td class="${i === x.low || i === x.high ? 'drop' : ''}">${v == null ? '–' : fmt(v, 2)}</td>`).join('') +
-            `<td>${fmt(x.mean, 2)}</td><td>${own[x.hour] == null ? '–' : fmt(own[x.hour], 2)}</td></tr>`).join('') +
-        `<tr class="sum"><td>${label}</td>${r.refDays.map(() => '<td></td>').join('')}<td>${fmt(total, 2)}</td><td>${sumOwn(rows)}</td></tr>`;
-    t += block(r.rows.filter(x => x.anchor), 'Anchor', r.anchorRef) + block(r.rows.filter(x => !x.anchor), 'Event', r.base) + '</table>';
-    const kind = isWeekend(r.day) ? 'weekend days' : 'weekdays';
-    const skipped = r.skipped.length ? ` Skipped: ${r.skipped.map(([d, why]) => `${dayLabel(d)} (${why === 'event' ? 'peak event' : 'no peak hours'})`).join(', ')}.` : '';
-    el.innerHTML = `<div class="legend">${esc(dayName(r.day))}, ${win} · ${r.event ? '<span class="e">peak event</span>' : 'not an event: as if it were one'} · ${esc(r.source)}</div>` +
-        `<div class="calc">${lines.join('')}</div><div class="scroll">${t}</div>` +
-        `<div class="legend wcnote">Reference days: the 5 ${kind} before, without a peak event.${esc(skipped)} Struck values: each hour's lowest and highest, left out of the mean. Shaded rows: the anchor window.` +
-        (r.missing.length ? ` ${r.missing.length} reference hours have no value yet.` : '') + `</div>` + wcHistory();
-    el.querySelectorAll('tr.click').forEach(row => row.onclick = () => { wcSel = { day: row.dataset.d, start: +row.dataset.h }; drawWc(); });
-}
-
-// Every event on file, as Hydro-Québec would have scored it.
-function wcHistory() {
-    if (!events) return '';
-    const onFile = new Set(days.map(d => d.date));
-    const rows = wcSlots().filter(x => onFile.has(x.day)).map(x => ({ x, r: wcCompute(x.day, x.start) })).filter(({ r }) => r.target != null && !r.missing.length);
-    if (!rows.length) return '';
-    return `<h2 style="margin-top:14px"><span>Events on file</span><span class="legend">Click a row to show it above.</span></h2><div class="scroll"><table><tr><th>Event</th><th>Target</th><th>Capped target</th><th>Used</th><th>Curtailed</th><th>Cut to ${fmt(rows[0].r.floor)} kWh</th></tr>` +
-        rows.slice().reverse().map(({ x, r }) => {
-            const c = r.used == null ? null : curtailed(r.target, r.cappedTarget, r.used);
-            const capped = r.used != null && r.target - r.used > WC_CAP && r.target > r.cappedTarget;
-            return `<tr class="click" data-d="${x.day}" data-h="${x.start}"><td>${esc(dayName(x.day))} ${x.start < 12 ? 'AM' : 'PM'}</td><td>${fmt(r.target)}</td><td>${fmt(r.cappedTarget)}</td>` +
-                `<td>${fmt(r.used)}</td><td>${fmt(c)}${capped ? ' (capped)' : ''}</td><td>${fmt(r.cut)}</td></tr>`;
-        }).join('') + '</table></div>';
 }
 
 init().catch(e => fail('Could not read the history: ' + e.message));

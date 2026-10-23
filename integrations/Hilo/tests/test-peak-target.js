@@ -1,7 +1,7 @@
 // Copyright (c) 2026 PJ
 // SPDX-License-Identifier: MIT
 //
-// Mode 3 unit test for the winter-credit target in hilo-history.html. Extracts the page's
+// Mode 3 unit test for the winter-credit target in hilo-winter-credit.html. Extracts the page's
 // functions by name and runs the cases of test-peak-target.groovy, so the page and Hilo Manager
 // compute the same thing.
 //
@@ -10,7 +10,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const html = fs.readFileSync(path.join(__dirname, '..', 'hilo-history.html'), 'utf8');
+const html = fs.readFileSync(path.join(__dirname, '..', 'hilo-winter-credit.html'), 'utf8');
 
 function extract(name) {
     const start = html.indexOf(`function ${name}(`);

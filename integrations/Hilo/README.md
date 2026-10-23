@@ -15,6 +15,7 @@ Parent/child integration for [Hilo](https://www.hiloenergie.com/), Hydro-Québec
 | **Hilo Energy Meter** | Driver | One device per location: energy today, yesterday and last hour, live power |
 | **Hilo Winter Credit** | Driver | Optional, one device per location: the next peak event's target and the plan for the hours before it |
 | `hilo-history.html` | Page | Charts the history files; served from File Manager |
+| `hilo-winter-credit.html` | Page | Optional: each winter's peak events, targets and curtailment; served from File Manager |
 
 ## Installation
 
@@ -123,22 +124,22 @@ On first setup the manager finds where the account's history starts, then reads 
 
 ### Browsing the history
 
-`hilo-history.html` is a page that charts the files (and the winter credit targets, see above): daily totals, each day's hours, the average day by hour with the peak-event windows (6–9 and 16–20) marked, and a month table. Upload it to File Manager (**Settings → File Manager**); the app page then shows a **Browse the history** link, or open `http://<hub>/local/hilo-history.html`. It reads the files from the hub it is served by. With internet access it also overlays the hourly outdoor temperature at the hub's location (Settings → Hub Details), taken from [Open-Meteo](https://open-meteo.com/en/docs/historical-weather-api)'s historical model data, and adds a chart of daily use against mean outdoor temperature. It also marks Hydro-Québec's actual peak events, from the utility's [open data](https://donnees.hydroquebec.com/explore/dataset/evenements-pointe/) for the residential winter credit (offer CPC-D, the feed the Hydro Peak Events app uses): a mark on each event day, the event's hours shaded in purple on that day's chart, event days coloured in the temperature chart, and the average day drawn separately for event days. The 6–9 and 16–20 windows are shaded on days from December 1 to March 31. Drag across days on the daily chart to zoom every chart and table into that range; **Zoom out** (or Esc) goes back one step, and picking a month from the table is a step too. Without internet access the page shows the energy charts alone.
+`hilo-history.html` is a page that charts the files: daily totals, each day's hours, the average day by hour with the peak-event windows (6–9 and 16–20) marked, and a month table. Upload it to File Manager (**Settings → File Manager**); the app page then shows a **Browse the history** link, or open `http://<hub>/local/hilo-history.html`. It reads the files from the hub it is served by. With internet access it also overlays the hourly outdoor temperature at the hub's location (Settings → Hub Details), taken from [Open-Meteo](https://open-meteo.com/en/docs/historical-weather-api)'s historical model data, and adds a chart of daily use against mean outdoor temperature. It also marks Hydro-Québec's actual peak events, from the utility's [open data](https://donnees.hydroquebec.com/explore/dataset/evenements-pointe/) for the residential winter credit (offer CPC-D, the feed the Hydro Peak Events app uses): a mark on each event day, the event's hours shaded in purple on that day's chart, event days coloured in the temperature chart, and the average day drawn separately for event days. The 6–9 and 16–20 windows are shaded on days from December 1 to March 31. Drag across days on the daily chart to zoom every chart and table into that range; **Zoom out** (or Esc) goes back one step, and picking a month from the table is a step too. Without internet access the page shows the energy charts alone. From December to March, and on event days, a day's chart links to the same day on the [winter credit page](#winter-credit-page).
 
 Read a file from another app or a script with `downloadHubFile`, or over HTTP from `http://<hub>/local/<file name>`.
 
 ## Winter credit targets
 
-For a home on Hydro-Québec's Rate D with the Winter Credit Option. During a peak event the credit pays for every kWh below a target, the app's "limite de consommation". Hydro-Québec doesn't show the target before the event, and past 40 kWh curtailed it can drop. The manager computes it from the history ahead of time.
+For a home on Hydro-Québec's Rate D with the Winter Credit Option. During a peak event the credit pays for every kWh below a target: Hydro-Québec's *reference energy*, the Hilo app's "limite de consommation". Device attributes and settings say *target*; the winter credit page uses Hydro-Québec's terms. Hydro-Québec doesn't show the target before the event, and past 40 kWh curtailed it can drop. The manager computes it from the history ahead of time.
 
 ### The rule
 
 From Hydro-Québec's Electricity Rates, chapter 2, article 2.59:
 
-- **Base:** for each of the event's 4 hours, the mean of that hour on the 5 previous days of the same kind (weekdays, or weekend days) without a peak event, leaving out the lowest and the highest value. Days without peak hours (December 24, 25, 26 and 31, January 1 and 2, Good Friday, Easter Monday) are not reference days.
-- **Anchor window:** 01:00–04:00 before a morning event, 12:00–14:00 before an evening one. Its reference is computed the same way.
-- **Target** = base + (anchor-window use − anchor reference) × 4/3 for a morning event, × 2 for an evening one.
-- **Cap:** when more than 40 kWh is curtailed, the adjustment is at most 2 × the anchor reference × the same factor. The target then becomes the **capped target**, base + 2 × anchor reference × the factor, when that is lower.
+- **Base:** for each of the event's 4 hours, the mean of that hour on the 5 previous days of the same kind (weekdays, or weekend days) without a peak event, leaving out the lowest and the highest value. These days are the *reference period*. Days without peak hours (December 24, 25, 26 and 31, January 1 and 2, Good Friday, Easter Monday) are not reference days.
+- **Anchor window** (Hydro-Québec's *période d'ancrage*): 01:00–04:00 before a morning event, 12:00–14:00 before an evening one. Its reference is computed the same way.
+- **Target** (*reference energy*) = base + (anchor-window use − anchor reference) × 4/3 for a morning event, × 2 for an evening one. The second term is the *temperature adjustment*.
+- **Cap:** when the *energy curtailed* exceeds 40 kWh, the temperature adjustment is *limited* to 2 × the anchor reference × the same factor. The target then becomes the **capped target**, base + 2 × anchor reference × the factor, when that is lower.
 
 This reproduces Hydro-Québec's targets for winter 2025–26 to 0.1 kWh, the event's own anchor-window use aside, where Hilo's hourly values and Hydro-Québec's can differ by about a kWh.
 
@@ -173,7 +174,23 @@ Shows the next announced event, or tomorrow morning as if it were one:
 
 A rule can stop pre-heating when `anchorPlan` is `at most` and `anchorUsed` reaches `anchorTarget`. **Refresh** recomputes.
 
-The last computation, inputs included, is in File Manager as `hilo-<location id>-peak-target.json`. The history page's **Winter credit target** card shows how any day's target is built: the reference days and the days skipped, each hour's values with the lowest and highest struck out, and the arithmetic. It also lists every event on file with its target, capped target, use and curtailment.
+The last computation, inputs included, is in File Manager as `hilo-<location id>-peak-target.json`.
+
+### Winter credit page
+
+`hilo-winter-credit.html` shows one winter (December to March) at a time, in the terms of Hydro-Québec's Electricity Rates (article 2.59). Upload it to File Manager next to `hilo-history.html`; the app page then shows a **Winter credit analysis** link under **Winter credit**, or open `http://<hub>/local/hilo-winter-credit.html`. It needs internet access for Hydro-Québec's event list, and adds the events entered under **Events missing from Hydro-Québec's open data**.
+
+- Tiles: the winter's peak events, the energy curtailed, the events where the temperature adjustment was limited, and the credit at 58.49 ¢/kWh before taxes. Only events with every hour on file count.
+- A calendar of the winter with the events marked. Click a day for:
+  - its hours: the anchor period (01:00–04:00 or 12:00–14:00) with each hour's reference-period average and the consumption above it, which raises the reference energy; the event hours with each hour's share of the reference energy and the energy curtailed under it;
+  - a sentence with the reference energy, the consumption and the energy curtailed, and, when the energy curtailed would exceed 40 kWh, how the limit on the temperature adjustment changed it;
+  - a flow chart: the reference period and the temperature adjustment make the reference energy, which splits into consumption and energy curtailed; the part of the adjustment over the limit is shown apart;
+  - under **How Hydro-Québec computes it**, the arithmetic and the reference period: each hour's values with the minimum and maximum struck out.
+
+  A day without an event is computed as if it had one; pick the morning or evening event above the chart.
+- The energy curtailed at each event, against 40 kWh, and a table of every event with its reference energy, the reference energy with the limit, the consumption and the energy curtailed.
+
+**Open in history** shows the same day on the history page. The address keeps the day and event (`#day=2026-01-24&start=6`), so a link or bookmark opens on them.
 
 ## Credits
 

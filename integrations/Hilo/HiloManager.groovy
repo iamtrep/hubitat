@@ -57,6 +57,7 @@ definition(
 @Field static final String DNI_PREFIX = "hilo-"
 @Field static final String DRIVER_METER = "Hilo Energy Meter"
 @Field static final String VIEWER_FILE = "hilo-history.html"
+@Field static final String WC_VIEWER_FILE = "hilo-winter-credit.html"
 @Field static final String DRIVER_PEAK = "Hilo Winter Credit"
 // Hydro-Québec open data: peak events of the residential winter credit.
 @Field static final String PEAK_EVENTS_URL = "https://donnees.hydroquebec.com/api/explore/v2.1/catalog/datasets/evenements-pointe/records"
@@ -147,6 +148,7 @@ Map mainPage() {
                     input "wcNotifyDaily", "bool", title: "Notify every winter evening, even without an event", defaultValue: false
                     input "wcExtraEvents", "text", title: "Events missing from Hydro-Québec's open data (e.g. 2025-12-07 PM, 2026-01-05 AM)", required: false
                     paragraph peakSummary()
+                    if (viewerInstalled(WC_VIEWER_FILE)) paragraph "<a href='/local/${WC_VIEWER_FILE}' target='_blank'>Winter credit analysis</a>"
                     input "btnPeakNow", "button", title: "Compute now"
                 }
             }
@@ -650,13 +652,13 @@ private String historySummary() {
     String files = "<a href='/hub/fileManager' target='_blank'>File Manager</a>, ${historyFile('YYYY-MM')}"
     String text = left > 0 ? "History: from ${state.historyStart}, ${left} days still to read (${files})" :
                              "History: complete from ${state.historyStart} (${files})"
-    if (viewerInstalled()) text += "<br><a href='/local/${VIEWER_FILE}' target='_blank'>Browse the history</a>"
+    if (viewerInstalled(VIEWER_FILE)) text += "<br><a href='/local/${VIEWER_FILE}' target='_blank'>Browse the history</a>"
     return text
 }
 
-// The viewer page is uploaded to File Manager by hand; see the README.
-private boolean viewerInstalled() {
-    try { return downloadHubFile(VIEWER_FILE) != null } catch (Exception e) { return false }
+// The viewer pages are uploaded to File Manager by hand; see the README.
+private boolean viewerInstalled(String name) {
+    try { return downloadHubFile(name) != null } catch (Exception e) { return false }
 }
 
 @CompileStatic
