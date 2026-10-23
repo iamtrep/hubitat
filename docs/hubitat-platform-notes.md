@@ -475,14 +475,14 @@ The firmware version that introduced each option is unknown *(source: `/ui2/js/a
 
 ## File Manager API
 
-The file methods, the file-name rule and their signatures are documented (on-hub `shared-files`). There is no append and no rename, so adding a line means downloading the whole file and uploading it again: `appendHubFile`, `appendToHubFile` and a three-argument `uploadHubFile` throw `MissingMethodException` *(probed 2.5.3.102, C-8 Pro, throwaway driver)*. For a missing file, `downloadHubFile` threw `java.nio.file.NoSuchFileException` on a C-7 and on a C-8 Pro, although the docs said it returns null *(probed 2.5.2.129–2.5.2.135; false 2.5.3.102)*. From 2.5.3 it returns null, as the docs say *(probed 2.5.3.102, C-8 Pro, throwaway app and driver; docs: on-hub shared-files)*. Code that runs on both treats a null return and `NoSuchFileException` the same way.
+The file methods, the file-name rule and their signatures are documented (on-hub `shared-files`). There is no append and no rename, so adding a line means downloading the whole file and uploading it again: `appendHubFile`, `appendToHubFile` and a three-argument `uploadHubFile` throw `MissingMethodException` *(probed 2.5.3.102, C-8 Pro, throwaway driver)*. For a missing file, `downloadHubFile` threw `java.nio.file.NoSuchFileException` on a C-7 and on a C-8 Pro, although the docs said it returns null *(probed 2.5.2.129–2.5.2.135; false 2.5.3.102)*. On 2.5.3.102 it returned null, as the docs say *(probed 2.5.3.102, C-8 Pro, throwaway app and driver; docs: on-hub shared-files; false 2.5.3.105)*. On 2.5.3.105 it throws `NoSuchFileException` again, the file name as message *(probed 2.5.3.105, C-8 Pro, throwaway app and driver)*. Code treats a null return and `NoSuchFileException` the same way.
 
 The name rule and what each call does with a bad name differ *(probed 2.5.2.135–2.5.3.102, C-8 Pro, throwaway app and driver)*:
 
 | Call | Missing file | Bad name (`a b.txt`, `x/y`, `é`) | `.hidden` | `""` | null |
 |---|---|---|---|---|---|
 | `uploadHubFile` | creates it | ignored, nothing written | `IllegalArgumentException` | `FileSystemException` | `NullPointerException` |
-| `downloadHubFile` | `NoSuchFileException` (the name as message) up to 2.5.2; null from 2.5.3 | `IllegalArgumentException` | not tested | `FileSystemException` | returns null |
+| `downloadHubFile` | `NoSuchFileException` (the name as message) up to 2.5.2 and on 2.5.3.105; null on 2.5.3.102 | `IllegalArgumentException` | not tested | `FileSystemException` | returns null |
 | `deleteHubFile` | nothing | `IllegalArgumentException` (`é` tested) | not tested | not tested | nothing |
 
 The `IllegalArgumentException` message is "Invalid file name {name} valid characters are: a-z, A-Z, 0-9, - and _"; dots inside a name (`zz..txt`) are accepted. `getHubFiles()` returns an ArrayList of `com.hubitat.hub.service.fileManager.FileManagerEntry` whose `name`, `type` (`file`), `size`, `date` (epoch milliseconds) and `id` are all Strings, readable by property or subscript (`entry["name"]`); `toMap()` has the keys `id`, `type`, `name`, `size`, `date`. A folder that does not exist lists nothing. An empty byte array writes an empty file, and null bytes do not throw *(probed 2.5.2.135, throwaway app)*.
