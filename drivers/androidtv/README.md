@@ -44,6 +44,12 @@ be read back, and the driver asks you to pair again.
 On hub firmware before 2.5.3, right after pairing, the log shows an error `java.lang.InterruptedException (method socketStatus)`. The hub
 logs it when the pairing connection closes; it is harmless, and the remote session connects right after.
 
+### If the TV can't be turned back on
+
+Some TVs leave the network when they are turned off, so the driver can't turn them on again. The switch
+shows `off`, and the driver reconnects once the TV is turned on another way. On a TCL Google TV, setting
+**Settings > System > Power & Energy > Energy Modes** to **Increased** keeps the TV reachable while off.
+
 ## Commands and attributes
 
 - `on`, `off`: the TV's power key. `switch` follows the power state the TV reports.

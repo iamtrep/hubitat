@@ -1,0 +1,16 @@
+{
+  "vendor": "TCL",
+  "model": "Smart TV Pro",
+  "androidVersion": "14",
+  "remoteServiceVersion": "7.00.999235495",
+  "features": 639,
+  "deviceInfo3": 1,
+  "firstMessages": "1,2,20,40,50",
+  "startApp": "com.google.android.apps.tv.launcherx",
+  "volumeDuringChange": true,
+  "volumeRange": 100,
+  "volumeLevel": 14,
+  "playerModel": "Smart TV Pro",
+  "sessionKept": false,
+  "source": "https://community.hubitat.com/t/beta-android-tv-remote-google-tv-and-android-tv-local-control/166822/43 (tester report with Settings > System > Power & Energy > Energy Modes below Increased; the TV went to sleep at the first POWER key, so tests 4 to 15 were skipped and their values are default.json's; tcl-smart-tv-pro.json has the same TV set to Increased). Not modelled: the volume message at POWER reports muted; the real TV let connects time out while asleep"
+}

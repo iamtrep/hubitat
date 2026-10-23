@@ -391,6 +391,14 @@ it pairs. Leading zero bytes of each number are dropped before hashing *(spec: [
   on-screen keyboard was up did not appear. After one BACK closed the keyboard and left the search box on
   screen, the text appeared in the box and the search could be run. The box sent no message 21, and the
   search screen (`com.google.android.katniss`) closed by itself 9 s after it opened *(reported: [forum topic 166822](https://community.hubitat.com/t/166822/37), posts 37–38, driver 0.3.1, hub 2.5.3.103)*.
+- A TCL Google TV (model `Smart TV Pro`, Android 14, remote service `7.00.999235495`) with **Settings > System >
+  Power & Energy > Energy Modes** below Increased: POWER brought a volume message reporting mute, then the TV
+  reset the connection 1.1 s after the key without a `remote_start` off. Connects then timed out after 31.8 s
+  until the TV was turned on by hand *(reported: [forum topic 166822](https://community.hubitat.com/t/166822/43), post 43, driver 0.4.0, hub 2.5.2.135)*.
+- The same TV with Energy Modes set to Increased kept the session while off: `remote_start` off came 1.2 s
+  after POWER, pings went on (one 7.2 s gap), and `remote_start` on came 0.3 s after the next POWER. It
+  reports its volume (range 100) in answer to volume keys, opens `https://` links, and answers a package
+  name with `remote_error` 7 *(reported: [forum topic 166822](https://community.hubitat.com/t/166822/47), post 47, driver 0.4.0, hub 2.5.2.135)*.
 
 ## Samsung Tizen TVs
 

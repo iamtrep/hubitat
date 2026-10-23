@@ -5,12 +5,19 @@
   "remoteServiceVersion": "7.00.999235495",
   "features": 639,
   "deviceInfo3": 1,
-  "firstMessages": "1,2,20,40,50",
+  "firstMessages": "1,2,40,20,50",
   "startApp": "com.google.android.apps.tv.launcherx",
+  "homeApp": "com.google.android.apps.tv.launcherx",
+  "searchApp": "com.google.android.katniss",
+  "volumeReported": true,
   "volumeDuringChange": true,
   "volumeRange": 100,
   "volumeLevel": 14,
   "playerModel": "Smart TV Pro",
-  "sessionKept": false,
-  "source": "https://community.hubitat.com/t/beta-android-tv-remote-google-tv-and-android-tv-local-control/166822/43 (tester report; the TV went to sleep at the first POWER key, so tests 4 to 15 were skipped and their values are default.json's). Not modelled: the volume message at POWER reports muted; the real TV let connects time out while asleep"
+  "linkSchemes": [
+    "http",
+    "https"
+  ],
+  "errorCode": 7,
+  "source": "https://community.hubitat.com/t/beta-android-tv-remote-google-tv-and-android-tv-local-control/166822/47 (tester report with Settings > System > Power & Energy > Energy Modes set to Increased; only https links and market:// were tried). An earlier session sent 20 before 40. Not modelled: the volume message at POWER off reports muted; one 7.2 s ping gap while off; an empty 24 after the text in test 14; whether the text reached the search box (not reported)"
 }

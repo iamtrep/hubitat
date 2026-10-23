@@ -57,7 +57,7 @@ report.
 | `source` | where the values come from, and what the profile leaves out; the mock ignores it |
 
 `mock-profiles/ebox.json` is the EBOX set-top box, from tester runs on it. `google-tv-streamer.json`,
-`nvidia-shield.json`, `sony-bravia-4k-ae3.json`, `eastlink-frc1.json`, `tcl-smart-tv-pro.json` and `onn-4k-plus.json` come from tester reports in the forum thread. The others come from the debug logs of other
+`nvidia-shield.json`, `sony-bravia-4k-ae3.json`, `eastlink-frc1.json`, `tcl-smart-tv-pro.json`, `tcl-smart-tv-pro-sleep.json` (the same TV in a lower energy mode) and `onn-4k-plus.json` come from tester reports in the forum thread. The others come from the debug logs of other
 projects' issues, named in each `source`: `chromecast-google-tv`, `freebox-player-pop`, `sony-bravia-4k-vh2`,
 `tivo-stream-4k` and `xiaomi-mi-tv-stick`. Those logs give the identity, features, message order, current
 app and volume message; pings, link handling, errors and pairing keep `default.json`'s values. A volume
