@@ -13,6 +13,7 @@ Parent/child integration for [Hilo](https://www.hiloenergie.com/), Hydro-Québec
 |---|---|---|
 | **Hilo Manager** | App | Hilo login, hourly consumption read, history files in File Manager |
 | **Hilo Energy Meter** | Driver | One device per location: energy today, yesterday and last hour, live power |
+| **Hilo Winter Credit** | Driver | Optional, one device per location: the next peak event's target and the plan for the hours before it |
 | `hilo-history.html` | Page | Charts the history files; served from File Manager |
 
 ## Installation
@@ -29,6 +30,12 @@ Save. Do the same in **Drivers Code** (**New Driver** → **Import**) with:
 
 ```
 https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/integrations/Hilo/HiloEnergyMeter.groovy
+```
+
+For the [winter credit targets](#winter-credit-targets), add this driver too:
+
+```
+https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/integrations/Hilo/HiloWinterCredit.groovy
 ```
 
 ### 2. Add the app
@@ -116,9 +123,57 @@ On first setup the manager finds where the account's history starts, then reads 
 
 ### Browsing the history
 
-`hilo-history.html` is a page that charts the files: daily totals, each day's hours, the average day by hour with the peak-event windows (6–9 and 16–20) marked, and a month table. Upload it to File Manager (**Settings → File Manager**); the app page then shows a **Browse the history** link, or open `http://<hub>/local/hilo-history.html`. It reads the files from the hub it is served by. With internet access it also overlays the hourly outdoor temperature at the hub's location (Settings → Hub Details), taken from [Open-Meteo](https://open-meteo.com/en/docs/historical-weather-api)'s historical model data, and adds a chart of daily use against mean outdoor temperature. It also marks Hydro-Québec's actual peak events, from the utility's [open data](https://donnees.hydroquebec.com/explore/dataset/evenements-pointe/) for the residential winter credit (offer CPC-D, the feed the Hydro Peak Events app uses): a mark on each event day, the event's hours shaded in purple on that day's chart, event days coloured in the temperature chart, and the average day drawn separately for event days. The 6–9 and 16–20 windows are shaded on days from December 1 to March 31. Drag across days on the daily chart to zoom every chart and table into that range; **Zoom out** (or Esc) goes back one step, and picking a month from the table is a step too. Without internet access the page shows the energy charts alone.
+`hilo-history.html` is a page that charts the files (and the winter credit targets, see above): daily totals, each day's hours, the average day by hour with the peak-event windows (6–9 and 16–20) marked, and a month table. Upload it to File Manager (**Settings → File Manager**); the app page then shows a **Browse the history** link, or open `http://<hub>/local/hilo-history.html`. It reads the files from the hub it is served by. With internet access it also overlays the hourly outdoor temperature at the hub's location (Settings → Hub Details), taken from [Open-Meteo](https://open-meteo.com/en/docs/historical-weather-api)'s historical model data, and adds a chart of daily use against mean outdoor temperature. It also marks Hydro-Québec's actual peak events, from the utility's [open data](https://donnees.hydroquebec.com/explore/dataset/evenements-pointe/) for the residential winter credit (offer CPC-D, the feed the Hydro Peak Events app uses): a mark on each event day, the event's hours shaded in purple on that day's chart, event days coloured in the temperature chart, and the average day drawn separately for event days. The 6–9 and 16–20 windows are shaded on days from December 1 to March 31. Drag across days on the daily chart to zoom every chart and table into that range; **Zoom out** (or Esc) goes back one step, and picking a month from the table is a step too. Without internet access the page shows the energy charts alone.
 
 Read a file from another app or a script with `downloadHubFile`, or over HTTP from `http://<hub>/local/<file name>`.
+
+## Winter credit targets
+
+For a home on Hydro-Québec's Rate D with the Winter Credit Option. During a peak event the credit pays for every kWh below a target, the app's "limite de consommation". Hydro-Québec doesn't show the target before the event, and past 40 kWh curtailed it can drop. The manager computes it from the history ahead of time.
+
+### The rule
+
+From Hydro-Québec's Electricity Rates, chapter 2, article 2.59:
+
+- **Base:** for each of the event's 4 hours, the mean of that hour on the 5 previous days of the same kind (weekdays, or weekend days) without a peak event, leaving out the lowest and the highest value. Days without peak hours (December 24, 25, 26 and 31, January 1 and 2, Good Friday, Easter Monday) are not reference days.
+- **Anchor window:** 01:00–04:00 before a morning event, 12:00–14:00 before an evening one. Its reference is computed the same way.
+- **Target** = base + (anchor-window use − anchor reference) × 4/3 for a morning event, × 2 for an evening one.
+- **Cap:** when more than 40 kWh is curtailed, the adjustment is at most 2 × the anchor reference × the same factor. The target then becomes the **capped target**, base + 2 × anchor reference × the factor, when that is lower.
+
+This reproduces Hydro-Québec's targets for winter 2025–26 to 0.1 kWh, the event's own anchor-window use aside, where Hilo's hourly values and Hydro-Québec's can differ by about a kWh.
+
+Everything but the anchor-window use is known the evening before, so the plan is too:
+
+- **Capped target at least 40 kWh above what the home uses with the heating cut** (the *floor*): cut as deep as possible during the event. Anchor-window use of at least 3 × its reference lifts the target to the capped target; more changes nothing.
+- **Capped target lower than that:** use **at most** the anchor budget in the anchor window, which sets the target at floor + 40, and do the rest of the pre-heat after it (04:00–06:00 or 14:00–16:00 count for nothing). Cutting deep then curtails exactly 40 kWh.
+
+### Settings
+
+Under **Winter credit** on the app page:
+
+- **Winter credit targets** turns the feature on and creates the Hilo Winter Credit device.
+- **kWh the home uses during a 4-hour event with the heating cut**: the floor, 3 kWh by default.
+- **Notify** and **Evening notification at** (22:00 by default): the evening before an event, a notification with the target and the plan. With **Notify every winter evening**, one every evening from December to March, as if the next morning were an event.
+- **Events missing from Hydro-Québec's open data**: the open data has missed an event; add it as `YYYY-MM-DD AM` or `PM`, comma-separated. A missing past event changes the reference days.
+- **Compute now** computes at once, in any season.
+
+Peak events come from Hydro-Québec's [open data](https://donnees.hydroquebec.com/explore/dataset/evenements-pointe/) (offer CPC-D), read at about 15:15 and 21:15. From December to March the targets are recomputed after each hourly read. A minute after each anchor window ends on an event day, the manager recomputes with that window's use and notifies when using energy during the event would pay more than cutting to the floor.
+
+### Hilo Winter Credit device
+
+Shows the next announced event, or tomorrow morning as if it were one:
+
+- `eventDate`, `window` (`AM` / `PM`), `announced` (`true` / `false`)
+- `base`, `anchorReference`, `cappedTarget` — kWh
+- `anchorPlan` (`at most` / `at least`) and `anchorTarget` — kWh to use in the anchor window
+- `expectedCurtailment` — kWh curtailed if the plan is followed and the event is cut to the floor
+- `anchorUsed` / `anchorWindow` — the anchor window's energy so far, counted from the live power, during 01:00–04:00 and 12:00–14:00
+- `target`, `advice` (`pending` / `cut` / `keep`), `keepUse` — once the anchor window is over. `keep` means using `keepUse` kWh during the event keeps 40 kWh curtailed and pays more than cutting to the floor.
+- `referenceDays`, `summary`
+
+A rule can stop pre-heating when `anchorPlan` is `at most` and `anchorUsed` reaches `anchorTarget`. **Refresh** recomputes.
+
+The last computation, inputs included, is in File Manager as `hilo-<location id>-peak-target.json`. The history page's **Winter credit target** card shows how any day's target is built: the reference days and the days skipped, each hour's values with the lowest and highest struck out, and the arithmetic. It also lists every event on file with its target, capped target, use and curtailment.
 
 ## Credits
 

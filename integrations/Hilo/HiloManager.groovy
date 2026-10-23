@@ -57,6 +57,12 @@ definition(
 @Field static final String DNI_PREFIX = "hilo-"
 @Field static final String DRIVER_METER = "Hilo Energy Meter"
 @Field static final String VIEWER_FILE = "hilo-history.html"
+@Field static final String DRIVER_PEAK = "Hilo Winter Credit"
+// Hydro-Québec open data: peak events of the residential winter credit.
+@Field static final String PEAK_EVENTS_URL = "https://donnees.hydroquebec.com/api/explore/v2.1/catalog/datasets/evenements-pointe/records"
+@Field static final String PEAK_OFFER = "CPC-D"
+// Reference days can reach about three weeks back over the holidays; read this far.
+@Field static final int PEAK_LOOKBACK_DAYS = 45
 
 @Field static final long TOKEN_REFRESH_BUFFER_MS = 300_000L
 @Field static final int HTTP_TIMEOUT = 20
@@ -131,6 +137,19 @@ Map mainPage() {
                 paragraph historySummary()
                 if (state.pollStreak) paragraph "History reads failing since ${formatClock((state.pollStreak as Map).since as long)}"
             }
+            section("Winter credit") {
+                input "wcEnable", "bool", title: "Winter credit targets", defaultValue: false, submitOnChange: true,
+                      description: "Each evening, the target of a peak event the next morning and evening, whether or not one is announced"
+                if (settings.wcEnable) {
+                    input "wcFloor", "decimal", title: "kWh the home uses during a 4-hour event with the heating cut", defaultValue: 3.0, range: "0..40"
+                    input "wcNotify", "capability.notification", title: "Notify", multiple: true, required: false
+                    input "wcNotifyTime", "time", title: "Evening notification at", defaultValue: "22:00", required: false
+                    input "wcNotifyDaily", "bool", title: "Notify every winter evening, even without an event", defaultValue: false
+                    input "wcExtraEvents", "text", title: "Events missing from Hydro-Québec's open data (e.g. 2025-12-07 PM, 2026-01-05 AM)", required: false
+                    paragraph peakSummary()
+                    input "btnPeakNow", "button", title: "Compute now"
+                }
+            }
             section("Account") {
                 input "btnLogout", "button", title: "Log out of Hilo"
             }
@@ -172,6 +191,7 @@ void initialize() {
     if (!ensureChild()) return
     schedulePolling()
     runIn(5, "poll")
+    if (settings.wcEnable) peakInitialize()
 }
 
 // A code push doesn't run updated(); entry points call this so the first one after a
@@ -188,6 +208,7 @@ void appButtonHandler(String btn) {
     checkVersion()
     switch (btn) {
         case "btnLogout":     logout(); break
+        case "btnPeakNow":    peakRun(true); break
         default: logWarn "unhandled button: ${btn}"
     }
 }
@@ -271,7 +292,8 @@ void logout() {
     ACCESS.remove(app.id.toString())
     dropSecret("refreshTokenEnc")
     ["refreshTokenEnc", "locations", "locationId", "locationHiloId", "locationName", "pollStreak", "childError", "childRequestedAt",
-     "historyStart", "lastCompleteDay", "historyBusy", "backfilling", "finalDay", "lastHourMs"].each { state.remove(it) }
+     "historyStart", "lastCompleteDay", "historyBusy", "backfilling", "finalDay", "lastHourMs",
+     "todayHours", "yesterdayHours", "peakEvents", "peakLast", "anchorLive"].each { state.remove(it) }
     app.removeSetting("locationId")
     meterChild()?.stopLiveStream()
     meterChild()?.updateHealth("offline", "logged out of Hilo")
@@ -438,6 +460,10 @@ void energyCallback(resp, data) {
     Map ev = [:]
     String today = new Date().format("yyyy-MM-dd", location.timeZone)
     List<Map> known = hours.findAll { it.kWh != null }
+    // The files hold complete days only; the target needs today's hours and an unfinished yesterday.
+    List<Map> kept = hours.collect { [start: it.start, kWh: it.kWh == null ? null : round3(it.kWh as BigDecimal)] }
+    if (day == today) state.todayHours = [day: day, hours: kept]
+    else state.yesterdayHours = [day: day, hours: kept]
     if (day == today) {
         ev.energy = round3(known.sum(0.0) { it.kWh as BigDecimal } as BigDecimal)
     } else if (known && known.size() == hours.size()) {
@@ -456,6 +482,7 @@ void energyCallback(resp, data) {
     }
     state.lastPoll = now()
     meterChild()?.updateEnergy(ev)
+    if (settings.wcEnable && day == today) runIn(5, "peakUpdate")
 }
 
 // Each hour keeps its own start time, so 23- and 25-hour days need no special case.
@@ -634,6 +661,410 @@ private boolean viewerInstalled() {
 
 @CompileStatic
 private static BigDecimal round3(BigDecimal v) { return v.setScale(3, BigDecimal.ROUND_HALF_UP) }
+
+// ── Winter credit target ──────────────────────────────────────────────
+// Hydro-Québec Electricity Rates, chapter 2, article 2.59. The target (the Hilo app's
+// "limite de consommation") is the base plus the temperature adjustment:
+//  - base: for each event hour, the mean of that hour on the 5 previous days of the same kind
+//    (weekday or weekend) with no event, without the lowest and highest value;
+//  - adjustment: (use in the anchor window − the same mean over the anchor window) × event hours /
+//    anchor hours. Anchor: 3 h from 5 h before a morning event, 2 h from 4 h before an evening one;
+//  - above 40 kWh curtailed, the adjustment is the smaller of that and 2 × the anchor reference ×
+//    the same proration (the "smaller of" wording is Hydro-Québec's clarification, Régie file
+//    R-4307-2025, B-0194).
+// Days without peak hours are skipped as reference days; this and the proration reproduce
+// Hydro-Québec's targets for winter 2025-26 (see the README).
+@Field static final BigDecimal CAP_KWH = 40.0
+@Field static final int EVENT_HOURS = 4
+// Credit per kWh curtailed and the energy price above 40 kWh a day, ¢ (Rates April 1, 2026, 2.64 and
+// 2.5): weigh using energy during an event to keep 40 kWh against letting the cap apply.
+@Field static final BigDecimal CREDIT_CENTS = 58.490
+@Field static final BigDecimal ENERGY_CENTS = 11.142
+
+// Easter Sunday, Gregorian (anonymous algorithm).
+@CompileStatic
+static LocalDate easterSunday(int year) {
+    int a = year % 19, b = year.intdiv(100) as int, c = year % 100
+    int d = b.intdiv(4) as int, e = b % 4
+    int g = (8 * b + 13).intdiv(25) as int
+    int h = (19 * a + b - d - g + 15) % 30
+    int i = c.intdiv(4) as int, k = c % 4
+    int l = (32 + 2 * e + 2 * i - h - k) % 7
+    int m = (a + 11 * h + 22 * l).intdiv(451) as int
+    int n = h + l - 7 * m + 114
+    return LocalDate.of(year, n.intdiv(31) as int, (n % 31) + 1)
+}
+
+// Days with no peak hours in the winter around `day` (2.59): Dec 24, 25, 26, 31, Jan 1, 2,
+// Good Friday and Easter Monday.
+@CompileStatic
+static Set<String> noPeakDays(LocalDate day) {
+    int w = day.monthValue >= 7 ? day.year : day.year - 1
+    LocalDate e = easterSunday(w + 1)
+    return ([LocalDate.of(w, 12, 24), LocalDate.of(w, 12, 25), LocalDate.of(w, 12, 26), LocalDate.of(w, 12, 31),
+             LocalDate.of(w + 1, 1, 1), LocalDate.of(w + 1, 1, 2), e.minusDays(2), e.plusDays(1)]
+            .collect { it.toString() }) as Set<String>
+}
+
+/**
+ * The target of a winter-credit event, computed from hourly kWh. Self-contained, for tests.
+ * hours: "YYYY-MM-DD" -> local hour (0-23) -> kWh. day/startHour: the event (6 or 16).
+ * eventDays: days with an event, never reference days. floorKWh: what the home uses in an event
+ * with everything cut. anchorActual: the event day's anchor-window kWh, or null before it is known.
+ * Returns refDays, skipped [[day, why]], rows (per hour: the five values, which were dropped, the
+ * mean), base, anchorRef, k, cappedTarget, anchorPlan ("at most" / "at least"), anchorTarget,
+ * expectedCut, missing (hours with no value) and, with anchorActual: target, cut (curtailment if
+ * the event is cut to the floor), keepUse (event use that holds curtailment at 40, or null) and
+ * advice ("cut" / "keep").
+ */
+@CompileStatic
+static Map peakTarget(Map<String, Map<Integer, BigDecimal>> hours, String day, int startHour, Set<String> eventDays,
+                      BigDecimal floorKWh, BigDecimal anchorActual) {
+    LocalDate d0 = LocalDate.parse(day)
+    boolean weekend = d0.dayOfWeek.value >= 6
+    Set<String> noPeak = noPeakDays(d0)
+    int back = startHour < 12 ? 5 : 4
+    int alen = startHour < 12 ? 3 : 2
+    BigDecimal k = (EVENT_HOURS as BigDecimal) / alen
+    List<String> refs = []
+    List<List<String>> skipped = []
+    LocalDate d = d0
+    for (int i = 0; i < 60 && refs.size() < 5; i++) {
+        d = d.minusDays(1)
+        String s = d.toString()
+        if ((d.dayOfWeek.value >= 6) != weekend) continue
+        if (noPeak.contains(s)) skipped << [s, "no peak hours"]
+        else if (eventDays.contains(s)) skipped << [s, "event"]
+        else refs << s
+    }
+    List<String> missing = []
+    List<Map> rows = []
+    BigDecimal base = 0.0, anchorRef = 0.0
+    List<Integer> eventHrs = (startHour..<(startHour + EVENT_HOURS)).toList()
+    List<Integer> anchorHrs = ((startHour - back)..<(startHour - back + alen)).toList()
+    (anchorHrs + eventHrs).each { Integer h ->
+        List<BigDecimal> vals = refs.collect { String r ->
+            BigDecimal v = hours[r]?.get(h)
+            if (v == null) missing << "${r} ${h}:00".toString()
+            v
+        }
+        List<Integer> idx = (0..<vals.size()).findAll { vals[it as int] != null }
+        Integer lo = null, hi = null
+        if (idx.size() >= 3) {
+            lo = idx.min { vals[it as int] }
+            hi = idx.findAll { it != lo }.max { vals[it as int] }
+        }
+        List<BigDecimal> kept = idx.findAll { it != lo && it != hi }.collect { vals[it as int] }
+        BigDecimal mean = kept ? (kept.sum() as BigDecimal) / kept.size() : 0.0
+        if (eventHrs.contains(h)) base += mean else anchorRef += mean
+        rows << [hour: h, anchor: anchorHrs.contains(h), values: vals, low: lo, high: hi, mean: mean]
+    }
+    BigDecimal capped = base + k * 2 * anchorRef
+    Map out = [day: day, startHour: startHour, refDays: refs, skipped: skipped, rows: rows, missing: missing,
+               anchorHours: anchorHrs, base: base, anchorRef: anchorRef, k: k, cappedTarget: capped, floor: floorKWh]
+    if (capped - floorKWh >= CAP_KWH) {
+        // Cutting deep earns at least 40 kWh; anchor use up to 3 × its reference raises it to the capped target.
+        out.anchorPlan = "at least"
+        out.anchorTarget = 3 * anchorRef
+        out.expectedCut = capped - floorKWh
+    } else {
+        // The cap would cost: anchor use that puts the target at floor + 40, and no more.
+        out.anchorPlan = "at most"
+        out.anchorTarget = [(CAP_KWH + floorKWh - base) / k + anchorRef, 0.0].max()
+        out.expectedCut = [base + k * ((out.anchorTarget as BigDecimal) - anchorRef) - floorKWh, CAP_KWH].min()
+    }
+    if (anchorActual != null) {
+        BigDecimal target = base + k * (anchorActual - anchorRef)
+        BigDecimal cut = target - floorKWh
+        if (cut > CAP_KWH && target > capped) cut = capped - floorKWh
+        out.target = target
+        out.cut = [cut, 0.0].max()
+        BigDecimal keep = target - CAP_KWH
+        // Keeping 40 kWh pays when it beats the capped curtailment by more than the energy it uses.
+        boolean keepPays = keep > floorKWh && CAP_KWH * CREDIT_CENTS - (keep - floorKWh) * ENERGY_CENTS > (out.cut as BigDecimal) * CREDIT_CENTS
+        out.keepUse = keepPays ? keep : null
+        out.advice = keepPays ? "keep" : "cut"
+    }
+    return out
+}
+
+// ── Winter credit: schedule, data and outputs ─────────────────────────
+// Hydro-Québec's peak events come from its open data (the winter credit's offer, CPC-D), read
+// twice a day. Each hourly read of today's consumption recomputes the targets of the next
+// morning and evening events, announced or not, and writes them to File Manager for the viewer;
+// the Hilo Winter Credit device shows the next one. During an anchor window the device counts
+// the window's energy from the live power, so a rule can stop pre-heating at the plan's limit.
+
+private void peakInitialize() {
+    if (!ensurePeakChild()) return
+    Random rng = new Random()
+    // Events are announced before 15:00 the day before.
+    schedule("${rng.nextInt(60)} ${15 + rng.nextInt(30)} 15 ? * *", "fetchPeakEvents")
+    schedule("${rng.nextInt(60)} ${rng.nextInt(30)} 21 ? * *", "fetchPeakEvents")
+    if (settings.wcNotifyTime) schedule(timeToday(settings.wcNotifyTime as String, location.timeZone), "peakEvening")
+    else schedule("0 0 22 ? * *", "peakEvening")
+    // A minute after each anchor window ends.
+    schedule("0 1 4,14 ? * *", "peakAnchorEnded")
+    subscribe(meterChild(), "power", "peakPowerHandler")
+    runIn(10, "fetchPeakEvents")
+}
+
+private String peakDni() { return "${DNI_PREFIX}${state.locationHiloId}-wintercredit" }
+
+private ChildDeviceWrapper peakChild() { return state.locationHiloId ? getChildDevice(peakDni()) : null }
+
+private boolean ensurePeakChild() {
+    if (peakChild()) return true
+    try {
+        ChildDeviceWrapper d = addChildDevice("iamtrep", DRIVER_PEAK, peakDni(), [name: DRIVER_PEAK, label: "Hilo ${state.locationName} winter credit"])
+        logCfg "created ${d.displayName}"
+        return true
+    } catch (Exception e) {
+        logError "could not create the winter credit device: ${e.message}"
+        return false
+    }
+}
+
+// Called by the child's refresh().
+void peakRefresh() { checkVersion(); peakRun(true) }
+
+void fetchPeakEvents() {
+    String since = LocalDate.now(location.timeZone.toZoneId()).minusDays(PEAK_LOOKBACK_DAYS).toString()
+    logNet "peak events since ${since}"
+    asynchttpGet("peakEventsCallback", [uri: PEAK_EVENTS_URL, contentType: "application/json", timeout: HTTP_TIMEOUT,
+                                        query: [refine: "offre:\"${PEAK_OFFER}\"", where: "datedebut >= '${since}'",
+                                                order_by: "datedebut", limit: 100]])
+}
+
+void peakEventsCallback(resp, data) {
+    if (resp.hasError() || resp.getStatus() != 200) {
+        // The last list is kept; the next read tries again.
+        logWarn "Hydro-Québec peak events unavailable: ${httpError(resp)}"
+        return
+    }
+    List<Map> evs
+    try {
+        evs = ((resp.getJson()?.results ?: []) as List<Map>).collect { Map r ->
+            [s: OffsetDateTime.parse(r.datedebut as String).toInstant().toEpochMilli(),
+             e: OffsetDateTime.parse(r.datefin as String).toInstant().toEpochMilli()]
+        }
+    } catch (Exception e) {
+        logWarn "Hydro-Québec peak events unreadable: ${e.message}"
+        return
+    }
+    List<Map> before = (state.peakEvents ?: []) as List<Map>
+    state.peakEvents = evs
+    long t = now()
+    evs.findAll { (it.s as long) > t && !before.any { b -> b.s == it.s } }.each {
+        logInfo "peak event announced: ${formatClock(it.s as long)} to ${new Date(it.e as long).format('HH:mm', location.timeZone)}"
+    }
+    peakRun(false)
+}
+
+// [day "YYYY-MM-DD", start hour] of every event in the list and in the extra-events setting.
+private List<List> peakEventSlots() {
+    List<List> out = ((state.peakEvents ?: []) as List<Map>).collect { Map ev ->
+        Date d = new Date(ev.s as long)
+        [d.format("yyyy-MM-dd", location.timeZone), d.format("H", location.timeZone) as int]
+    }
+    ((settings.wcExtraEvents ?: "") as String).split(",").each { String x ->
+        def m = x.trim() =~ /^(\d{4}-\d{2}-\d{2})\s*(AM|PM)$/
+        if (m.matches()) out << [m.group(1), m.group(2) == "AM" ? 6 : 16]
+        else if (x.trim()) logWarn "extra event not understood: '${x.trim()}' (use YYYY-MM-DD AM or PM)"
+    }
+    return out.unique()
+}
+
+// Hourly kWh by day and local hour, from the month files plus the hours kept from today's reads.
+private Map<String, Map<Integer, BigDecimal>> peakHours(LocalDate from, LocalDate to) {
+    Map<String, Map<Integer, BigDecimal>> out = [:]
+    Closure add = { String day, List<Map> hrs ->
+        Map<Integer, BigDecimal> m = [:]
+        hrs.each { Map h ->
+            if (h.kWh == null) return
+            int hr = (h.start as String).substring(11, 13) as int
+            m[hr] = (m[hr] ?: 0.0) + (h.kWh as BigDecimal)
+        }
+        out[day] = m
+    }
+    for (LocalDate m = from.withDayOfMonth(1); m <= to; m = m.plusMonths(1)) {
+        Map doc = readHistoryFile(historyFile(m.toString().take(7)))
+        ((doc?.days ?: [:]) as Map).each { String day, List hrs -> if (day >= from.toString() && day <= to.toString()) add(day, hrs as List<Map>) }
+    }
+    [state.yesterdayHours, state.todayHours].each { Map kept ->
+        if (kept?.day && !out.containsKey(kept.day as String)) add(kept.day as String, kept.hours as List<Map>)
+    }
+    return out
+}
+
+private static boolean inWinter(LocalDate d) { return d.monthValue == 12 || d.monthValue <= 3 }
+
+// After each hourly read of today.
+void peakUpdate() { peakRun(false) }
+
+// Recomputes the next morning and evening targets. Outside December to March only on request.
+void peakRun(boolean force) {
+    if (!settings.wcEnable || !state.locationId) return
+    LocalDate today = LocalDate.now(location.timeZone.toZoneId())
+    LocalDate tomorrow = today.plusDays(1)
+    if (!force && !inWinter(tomorrow) && !inWinter(today)) return
+    List<List> slots = peakEventSlots()
+    Set<String> eventDays = slots.collect { it[0] as String } as Set
+    int nowHour = new Date().format("H", location.timeZone) as int
+    // The windows still ahead: today's evening before 16:00 and tomorrow's two.
+    List<List> windows = []
+    if (nowHour < 6) windows << [today.toString(), 6]
+    if (nowHour < 16) windows << [today.toString(), 16]
+    windows << [tomorrow.toString(), 6]
+    windows << [tomorrow.toString(), 16]
+    Map<String, Map<Integer, BigDecimal>> hours = peakHours(today.minusDays(PEAK_LOOKBACK_DAYS), today)
+    BigDecimal floorKWh = (settings.wcFloor ?: 3.0) as BigDecimal
+    List<Map> results = windows.collect { List w ->
+        String day = w[0] as String
+        int h = w[1] as int
+        Map r = peakTarget(hours, day, h, eventDays.findAll { it != day } as Set<String>, floorKWh, peakAnchorActual(day, h, hours))
+        r.event = slots.any { it[0] == day && it[1] == h }
+        r
+    }
+    // The device shows the next announced event, else tomorrow morning's simulation.
+    Map next = results.find { it.event } ?: results.find { it.day == tomorrow.toString() && it.startHour == 6 }
+    state.peakLast = [at: now(), next: peakBrief(next)]
+    peakChild()?.updatePeak(peakAttributes(next))
+    writePeakFile(results, floorKWh)
+}
+
+// The event day's anchor-window kWh once the window is over: Hilo's hourly values when all are in,
+// else the live count. Null before the window ends.
+private BigDecimal peakAnchorActual(String day, int startHour, Map<String, Map<Integer, BigDecimal>> hours) {
+    int back = startHour < 12 ? 5 : 4, alen = startHour < 12 ? 3 : 2
+    long end = timeOf(day, startHour - back + alen)
+    if (now() < end) return null
+    List<BigDecimal> vals = ((startHour - back)..<(startHour - back + alen)).collect { hours[day]?.get(it) }
+    if (vals.every { it != null }) return vals.sum() as BigDecimal
+    Map live = state.anchorLive as Map
+    if (live?.day == day && live?.startHour == startHour) return (live.kWh as BigDecimal)
+    return null
+}
+
+private long timeOf(String day, int hour) {
+    return Date.parse("yyyy-MM-dd H", "${day} ${hour}", location.timeZone).time
+}
+
+// Live count of the anchor window's energy, from the meter's power (held until the next reading).
+void peakPowerHandler(evt) {
+    if (!settings.wcEnable) return
+    Date t = new Date()
+    int h = t.format("H", location.timeZone) as int
+    Integer startHour = (h >= 1 && h < 4) ? 6 : ((h >= 12 && h < 14) ? 16 : null)
+    String day = t.format("yyyy-MM-dd", location.timeZone)
+    Map live = (state.anchorLive ?: [:]) as Map
+    if (startHour == null) {
+        if (live.open) { live.open = false; state.anchorLive = live }
+        return
+    }
+    BigDecimal w = (evt.value ?: 0) as BigDecimal
+    if (!(live.open && live.day == day && live.startHour == startHour)) {
+        // sentKWh below zero, so the new window's 0 is sent at once.
+        live = [day: day, startHour: startHour, open: true, kWh: 0.0, lastMs: t.time, lastW: w, sentKWh: -1.0]
+    } else {
+        long dt = t.time - (live.lastMs as long)
+        // A gap over 10 min in the stream counts nothing rather than guess.
+        if (dt > 0 && dt < 600_000L) live.kWh = (live.kWh as BigDecimal) + (live.lastW as BigDecimal) * dt / 3_600_000_000.0
+        live.lastMs = t.time
+        live.lastW = w
+    }
+    state.anchorLive = live
+    BigDecimal used = round3(live.kWh as BigDecimal)
+    if (used - (live.sentKWh as BigDecimal) >= 0.1) {
+        live.sentKWh = used
+        state.anchorLive = live
+        peakChild()?.updatePeak([anchorUsed: used, anchorWindow: "${day} ${startHour == 6 ? '01:00-04:00' : '12:00-14:00'}"])
+    }
+}
+
+// After an anchor window: recompute and, on an event day, say what the event needs.
+void peakAnchorEnded() {
+    if (!settings.wcEnable) return
+    peakRun(false)
+    Date t = new Date()
+    String day = t.format("yyyy-MM-dd", location.timeZone)
+    int startHour = (t.format("H", location.timeZone) as int) < 12 ? 6 : 16
+    if (!peakEventSlots().any { it[0] == day && it[1] == startHour }) return
+    Map next = (state.peakLast as Map)?.next as Map
+    if (next?.day == day && next?.startHour == startHour && next?.message) peakNotify(next.message as String)
+}
+
+void peakEvening() {
+    if (!settings.wcEnable) return
+    peakRun(false)
+    LocalDate tomorrow = LocalDate.now(location.timeZone.toZoneId()).plusDays(1)
+    List<List> slots = peakEventSlots().findAll { it[0] == tomorrow.toString() }
+    if (!slots && !(settings.wcNotifyDaily && inWinter(tomorrow))) return
+    Map next = (state.peakLast as Map)?.next as Map
+    if (next?.message) peakNotify(next.message as String)
+}
+
+private void peakNotify(String msg) {
+    logInfo msg
+    ((settings.wcNotify ?: []) as List).each { it.deviceNotification(msg) }
+}
+
+// The fields the device and the notifications use, plus a one-paragraph message.
+private Map peakBrief(Map r) {
+    if (!r) return null
+    String when = "${r.day} ${r.startHour == 6 ? '06:00-10:00' : '16:00-20:00'}"
+    String anchor = r.startHour == 6 ? "01:00-04:00" : "12:00-14:00"
+    String head = r.event ? "Hilo: peak event ${when}." : "Hilo: if ${when} were a peak event:"
+    String plan = r.anchorPlan == "at most" ?
+        "keep ${anchor} at most ${f1(r.anchorTarget)} kWh (target ${f1(r.floor + 40)}, then cut: curtail 40)." :
+        "cut deep: the capped target ${f1(r.cappedTarget)} leaves ${f1(r.expectedCut)} to curtail; ${anchor} use of at least ${f1(r.anchorTarget)} kWh gets it."
+    String after = ""
+    if (r.target != null) {
+        after = r.advice == "keep" ?
+            " Anchor done: target ${f1(r.target)}, over the cap. Using ${f1(r.keepUse)} kWh during the event keeps 40; cutting to ${f1(r.floor)} gives ${f1(r.cut)}." :
+            " Anchor done: target ${f1(r.target)}; cut to ${f1(r.floor)} kWh to curtail ${f1(r.cut)}."
+    }
+    String missing = r.missing ? " Provisional: ${(r.missing as List).size()} reference hours not in yet." : ""
+    return [day: r.day, startHour: r.startHour, event: r.event, plan: r.anchorPlan, anchorTarget: r.anchorTarget,
+            message: "${head} Base ${f1(r.base)}, capped target ${f1(r.cappedTarget)}: ${plan}${after}${missing}".toString()]
+}
+
+private Map peakAttributes(Map r) {
+    if (!r) return [:]
+    Map a = [eventDate: r.day, window: r.startHour == 6 ? "AM" : "PM", announced: r.event ? "true" : "false",
+             base: round3(r.base as BigDecimal), anchorReference: round3(r.anchorRef as BigDecimal),
+             cappedTarget: round3(r.cappedTarget as BigDecimal), anchorPlan: r.anchorPlan,
+             anchorTarget: round3(r.anchorTarget as BigDecimal), expectedCurtailment: round3(r.expectedCut as BigDecimal),
+             referenceDays: (r.refDays as List).join(", "), summary: peakBrief(r).message]
+    a.target = r.target == null ? null : round3(r.target as BigDecimal)
+    a.advice = r.advice ?: "pending"
+    a.keepUse = r.keepUse == null ? null : round3(r.keepUse as BigDecimal)
+    return a
+}
+
+private static String f1(v) { return v == null ? "-" : String.format("%.1f", (v as BigDecimal).doubleValue()) }
+
+// File Manager copy of the last computation, inputs included, for the history viewer.
+private void writePeakFile(List<Map> results, BigDecimal floorKWh) {
+    // events: every event day and start hour the computation knew, extra ones included.
+    Map doc = [generated: new Date().format("yyyy-MM-dd'T'HH:mm:ssXXX", location.timeZone), floor: floorKWh,
+               offer: PEAK_OFFER, events: peakEventSlots(), results: results]
+    try {
+        uploadHubFile(peakFile(), JsonOutput.toJson(doc).getBytes("UTF-8"))
+    } catch (Exception e) {
+        logWarn "could not write ${peakFile()}: ${getObjectClassName(e)}: ${e.message}"
+    }
+}
+
+private String peakFile() { return "hilo-${state.locationId}-peak-target.json" }
+
+private String peakSummary() {
+    Map last = state.peakLast as Map
+    if (!last) return "No target computed yet. Targets are computed from December to March after each hourly read, or now with the button."
+    String text = "${(last.next as Map)?.message ?: 'No window ahead.'}<br><span style='font-size:smaller'>Computed ${formatClock(last.at as long)}"
+    int n = ((state.peakEvents ?: []) as List).size()
+    return text + " · ${n} Hydro-Québec events on file from the last ${PEAK_LOOKBACK_DAYS} days on</span>"
+}
 
 // ── Outages ───────────────────────────────────────────────────────────
 
