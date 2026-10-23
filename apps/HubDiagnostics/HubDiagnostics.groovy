@@ -423,7 +423,7 @@ Map dashboardPage() {
         }
     }
 
-    dynamicPage(name: "dashboardPage", title: "Hub Inspector", install: true, uninstall: true) {
+    dynamicPage(name: "dashboardPage", install: true, uninstall: true) {
         String uiVer = getUIVersion()
         boolean appUpdateNeeded = isNewer(uiVer, CODE_VERSION)
         String remoteVersion = checkGithubVersion()

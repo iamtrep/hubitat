@@ -117,7 +117,7 @@ preferences {
 }
 
 Map mainPage() {
-    dynamicPage(name: "mainPage", title: "FGLair Manager", install: true, uninstall: true) {
+    dynamicPage(name: "mainPage", install: true, uninstall: true) {
         if (isAuthenticated()) {
             section("Status") {
                 paragraph "<b>Connected</b> to FGLair (${settings.region ?: 'us'})"

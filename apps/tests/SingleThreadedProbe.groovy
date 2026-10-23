@@ -48,7 +48,7 @@ mappings {
 }
 
 Map mainPage() {
-    dynamicPage(name: "mainPage", title: "Single Threaded Probe", install: true, uninstall: true) {
+    dynamicPage(name: "mainPage", install: true, uninstall: true) {
         section {
             label title: "Instance label", required: false
             input "workButton", "button", title: "Work"

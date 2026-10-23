@@ -135,7 +135,7 @@ Map mainPage() {
             }
         }
     }
-    dynamicPage(name: "mainPage", title: "Code Manager", install: true, uninstall: true) {
+    dynamicPage(name: "mainPage", install: true, uninstall: true) {
         String uiVer = getUIVersion()
         String remote = checkGithubVersion()
         section("Versions") {

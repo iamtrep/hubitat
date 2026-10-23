@@ -33,7 +33,7 @@ preferences {
 String esc(Object s) { s == null ? '' : s.toString().replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace("'", '&#39;') }
 
 Map mainPage() {
-    dynamicPage(name: "mainPage", title: "HVAC Interlock", install: true, uninstall: true) {
+    dynamicPage(name: "mainPage", install: true, uninstall: true) {
         section {
             input "seasonDevice", "capability.actuator", title: "Season device (the one HVAC Season Manager created)", required: true, submitOnChange: true
             if (seasonDevice && !seasonDevice.hasAttribute("season"))

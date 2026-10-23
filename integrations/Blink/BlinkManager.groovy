@@ -88,7 +88,7 @@ preferences {
 // --- Pages ---
 
 Map mainPage() {
-    dynamicPage(name: "mainPage", title: "Blink Manager", install: true, uninstall: true) {
+    dynamicPage(name: "mainPage", install: true, uninstall: true) {
         if (isAuthenticated()) {
             section("🟢 Status") {
                 paragraph "Connected to Blink — region <b>${state.tier ?: '?'}</b>, account <b>${state.accountId ?: '?'}</b>"

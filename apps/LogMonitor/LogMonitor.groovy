@@ -59,7 +59,7 @@ Map mainPage() {
     savePendingBridge()
     savePendingFilter()
 
-    dynamicPage(name: "mainPage", title: "Log Monitor", install: true, uninstall: true) {
+    dynamicPage(name: "mainPage", install: true, uninstall: true) {
         section("Bridges") {
             List<Map> bridges = state.bridges ?: []
             if (bridges.size() == 0) {

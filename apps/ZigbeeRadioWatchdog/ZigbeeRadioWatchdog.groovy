@@ -66,7 +66,7 @@ preferences {
 }
 
 Map mainPage() {
-    dynamicPage(name: "mainPage", title: "Zigbee Radio Watchdog", install: true, uninstall: true) {
+    dynamicPage(name: "mainPage", install: true, uninstall: true) {
         section("Status") {
             paragraph statusHtml()
             input name: "btnCapture", type: "button", title: "Capture diagnostics now"

@@ -47,7 +47,7 @@ preferences {
 }
 
 Map mainPage() {
-    dynamicPage(name: "mainPage", title: "VisiblAir Manager", install: true, uninstall: true) {
+    dynamicPage(name: "mainPage", install: true, uninstall: true) {
         section("API Configuration") {
             input "apiEmail", "text", title: "VisiblAir Email", required: true
             input "apiPassword", "password", title: state.passwordEnc ? "VisiblAir Password (stored, enter only to change it)" : "VisiblAir Password",

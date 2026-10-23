@@ -100,7 +100,7 @@ preferences {
 // MAIN PAGE
 // ========================================
 Map mainPage() {
-    dynamicPage(name: "mainPage", title: "Pushover Notification Tester", install: true, uninstall: true) {
+    dynamicPage(name: "mainPage", install: true, uninstall: true) {
         section("Device Selection") {
             input "pushoverDevice", "capability.notification", title: "Select Pushover Device", required: true, submitOnChange: true
         }
