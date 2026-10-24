@@ -69,9 +69,10 @@ shows `off`, and the driver reconnects once the TV is turned on another way. On 
 
 ## Keys
 
-`sendKey` takes one of these names (any case; a `KEYCODE_` prefix is ignored), or any key code number
-from Android's [`KeyEvent` list](https://developer.android.com/reference/android/view/KeyEvent), such as
-`7`–`16` for the digits 0–9 or `183`–`186` for the color keys:
+`sendKey` takes any key name from Android's [`KeyEvent` list](https://developer.android.com/reference/android/view/KeyEvent)
+(any case, with or without the `KEYCODE_` prefix, such as `LAST_CHANNEL` or `TV_INPUT_HDMI_1`), or a key
+code number from that list. The digit keys need the prefix, `KEYCODE_0` to `KEYCODE_9`, since a bare
+number is a key code: `7` is code 7, the digit 0. The names used most:
 
 | Name | Code | Name | Code |
 |---|---|---|---|

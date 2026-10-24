@@ -35,6 +35,7 @@ List<String> SIGNATURES = [
     'boolean sessionUp(String mode, long lastRx, long nowMs, long limitMs) {',
     'String commandRoute(String mode, boolean ready, int held) {',
     'boolean differentTv(Map entry, String tvId, String current) {',
+    'Integer keyCode(String keyArg, Map<String, Integer> codes) {',
 ]
 def h = new GroovyShell().parse(SIGNATURES.collect { extract(text, it) }.join("\n") + "\nreturn this\n").run()
 
@@ -110,6 +111,27 @@ check 'starting: hold', h.commandRoute('remote', false, 19) == 'hold'
 check 'starting, 20 held: full', h.commandRoute('remote', false, 20) == 'full'
 check 'closed: drop', h.commandRoute(null, true, 0) == 'drop'
 check 'pairing: drop', h.commandRoute('pair', false, 0) == 'drop'
+
+println 'keyCode'
+Map<String, Integer> codes = [HOME: 3, "0": 7, "7": 14, LAST_CHANNEL: 229]
+check 'name', h.keyCode('HOME', codes) == 3
+check 'name, any case and spaces', h.keyCode(' home ', codes) == 3
+check 'KEYCODE_ name', h.keyCode('KEYCODE_HOME', codes) == 3
+check 'bare number is a code', h.keyCode('7', codes) == 7
+check 'KEYCODE_ digit is the digit key', h.keyCode('KEYCODE_7', codes) == 14
+check 'KEYCODE_0 is the digit key', h.keyCode('KEYCODE_0', codes) == 7
+check 'KEYCODE_ number with no name is a code', h.keyCode('KEYCODE_229', codes) == 229
+check 'name outside the old table', h.keyCode('last_channel', codes) == 229
+check 'unknown name', h.keyCode('NUM0', codes) == null
+check 'empty', h.keyCode('', codes) == null && h.keyCode(null, codes) == null
+
+println 'KEYCODES'
+String mapText = (text =~ /(?s)Map<String, Integer> KEYCODES = (\[.*?\n\])/)[0][1]
+Map keyMap = new GroovyShell().evaluate(mapText) as Map
+check 'every AOSP key but UNKNOWN', keyMap.size() == 337 && !keyMap.containsKey('UNKNOWN')
+check 'digit names are strings', keyMap['0'] == 7 && keyMap['9'] == 16
+check 'old table unchanged', [HOME: 3, BACK: 4, POWER: 26, MEDIA_PLAY: 126, VOLUME_MUTE: 164, TV_INPUT: 178, WAKEUP: 224].every { k, v -> keyMap[k] == v }
+check 'requested keys', keyMap.LAST_CHANNEL == 229 && keyMap.TV_INPUT_HDMI_1 == 243
 
 println "\n${pass} passed, ${fail} failed"
 System.exit(fail ? 1 : 0)
