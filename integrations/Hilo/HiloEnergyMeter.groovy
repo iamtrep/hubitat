@@ -40,17 +40,49 @@ metadata {
     }
 
     preferences {
-        input name: "liveEnable",  type: "bool", title: "Live power from Hilo", defaultValue: true,
-              description: "Keeps a connection open to Hilo, which pushes the meter's power about once a minute."
-        input name: "txtEnable",   type: "bool", title: "Enable info logging", defaultValue: true
-        input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
+        input name: "liveEnable",  type: "bool", title: tr("pref.live"), defaultValue: true, description: tr("pref.liveDesc")
+        input name: "txtEnable",   type: "bool", title: tr("log.info"), defaultValue: true
+        input name: "debugEnable", type: "bool", title: tr("log.debug"), defaultValue: false, submitOnChange: true
         if (debugEnable) {
-            input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
+            input name: "traceEnable", type: "bool", title: tr("log.trace"), defaultValue: false
         }
     }
 }
 
 @Field static final String CODE_VERSION = "0.1.0"
+
+// Event descriptions and preference titles, in the language the parent app sets. Logs stay in
+// English and never come from here.
+@Field static final Map<String, Map<String, String>> I18N = [
+    en: [
+        "pref.live"     : "Live power from Hilo",
+        "pref.liveDesc" : "Keeps a connection open to Hilo, which pushes the meter's power about once a minute.",
+        "log.info"      : "Enable info logging",
+        "log.debug"     : "Enable debug logging",
+        "log.trace"     : "Enable trace logging",
+        "ev.lastHour"   : "{name} used {kwh} kWh in the hour from {start}",
+        "ev.online"     : "{name} is online",
+        "ev.onlineWhy"  : "{name} is online: {why}",
+        "ev.offline"    : "{name} is offline",
+        "ev.offlineWhy" : "{name} is offline: {why}",
+        "why.streamDown": "live power stream down",
+        "why.streamBack": "live power back",
+    ],
+    fr: [
+        "pref.live"     : "Puissance en direct de Hilo",
+        "pref.liveDesc" : "Garde une connexion ouverte avec Hilo, qui envoie la puissance du compteur environ une fois par minute.",
+        "log.info"      : "Activer les journaux d'information",
+        "log.debug"     : "Activer les journaux de débogage",
+        "log.trace"     : "Activer les journaux de trace",
+        "ev.lastHour"   : "{name} a consommé {kwh} kWh dans l'heure de {start}",
+        "ev.online"     : "{name} est en ligne",
+        "ev.onlineWhy"  : "{name} est en ligne : {why}",
+        "ev.offline"    : "{name} est hors ligne",
+        "ev.offlineWhy" : "{name} est hors ligne : {why}",
+        "why.streamDown": "flux de puissance en direct interrompu",
+        "why.streamBack": "puissance en direct rétablie",
+    ],
+] // end I18N
 
 @Field static final String GRAPHQL_URL = "https://platform.hiloenergie.com/api/digital-twin/v3/graphql"
 @Field static final String SUBSCRIPTION = 'subscription onAnyDeviceUpdated($locationHiloId: String!) { onAnyDeviceUpdated(locationHiloId: $locationHiloId) { deviceType transmissionTime device { ... on BasicSmartMeter { power { value kind } } } } }'
@@ -113,6 +145,20 @@ private void checkVersion(boolean reinit = true) {
 
 private boolean liveEnabled() { return settings.liveEnable != false }
 
+// ── Interface language ────────────────────────────────────────────────
+
+// Called by the parent with its page's language.
+void setLanguage(String lang) { state.uiLang = lang }
+
+// state is empty while preferences are saved; the titles then don't show.
+private String uiLang() { return (state?.uiLang ?: "fr") as String }
+
+private String tr(String key, Map args = [:], String lang = null) {
+    String s = I18N[lang ?: uiLang()]?.get(key) ?: I18N.en.get(key) ?: key
+    args.each { k, v -> s = s.replace("{${k}}".toString(), v == null ? "" : v.toString()) }
+    return s
+}
+
 // ── Parent interface ──────────────────────────────────────────────────
 
 // Hourly consumption from the parent's history read; only the keys present are sent.
@@ -122,7 +168,8 @@ void updateEnergy(Map m) {
     if (m.energyYesterday != null) sendEvent(name: "energyYesterday", value: m.energyYesterday, unit: "kWh")
     if (m.energyLastHour != null) {
         sendEvent(name: "energyLastHour", value: m.energyLastHour, unit: "kWh",
-                  descriptionText: "${device.displayName} used ${m.energyLastHour} kWh in the hour from ${m.lastHourStart}")
+                  descriptionText: tr("ev.lastHour", [name: device.displayName, start: m.lastHourStart,
+                                       kwh: uiLang() == "fr" ? m.energyLastHour.toString().replace(".", ",") : m.energyLastHour]))
         sendEvent(name: "lastHourStart", value: m.lastHourStart)
     }
     sendEvent(name: "lastUpdate", value: new Date().format("yyyy-MM-dd HH:mm:ss", location.timeZone))
@@ -130,11 +177,14 @@ void updateEnergy(Map m) {
 }
 
 // Called by the parent with "offline" when Hilo or the login is lost, and "online"
-// with the recovery line. The reason goes in the event description.
-void updateHealth(String status, String reason = null) {
+// with the recovery line. The reason goes in the log in English (reason) and in the
+// event description in the parent's language (reasonUi).
+void updateHealth(String status, String reason = null, String reasonUi = null) {
     String prev = device.currentValue("healthStatus")
     String why = reason ? ": ${reason}" : ""
-    sendEvent(name: "healthStatus", value: status, descriptionText: "${device.displayName} is ${status}${why}")
+    String key = status == "online" ? "ev.online" : "ev.offline"
+    sendEvent(name: "healthStatus", value: status, descriptionText: reason ?
+        tr(key + "Why", [name: device.displayName, why: reasonUi ?: reason]) : tr(key, [name: device.displayName]))
     if (prev != null && prev != status) {
         if (status == "offline") logWarn "offline${why}"
         else logInfo "back online${why}"
@@ -210,7 +260,7 @@ private void streamFailed(String why) {
     state.streamFailures = n
     state.reconnectDelay = Math.min(delay * 2, BACKOFF_MAX_SECS)
     if (n < STREAM_OFFLINE_AFTER) logDebug "${why}; reconnecting in ${delay} s"
-    else if (n == STREAM_OFFLINE_AFTER) { logWarn "live power lost (${why}); retrying every ${delay}–${BACKOFF_MAX_SECS} s"; updateHealth("offline", "live power stream down") }
+    else if (n == STREAM_OFFLINE_AFTER) { logWarn "live power lost (${why}); retrying every ${delay}–${BACKOFF_MAX_SECS} s"; updateHealth("offline", tr("why.streamDown", [:], "en"), tr("why.streamDown")) }
     else logDebug "${why}; reconnect ${n} in ${delay} s"
     runIn(delay, "connectStream")
 }
@@ -234,7 +284,7 @@ void parse(String s) {
         boolean wasOffline = (state.streamFailures as int) >= STREAM_OFFLINE_AFTER
         state.remove("streamFailures")
         state.remove("reconnectDelay")
-        if (wasOffline) updateHealth("online", "live power back")
+        if (wasOffline) updateHealth("online", tr("why.streamBack", [:], "en"), tr("why.streamBack"))
     }
 }
 

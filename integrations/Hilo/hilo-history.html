@@ -3,11 +3,11 @@ Copyright (c) 2026 PJ
 SPDX-License-Identifier: MIT
 -->
 <!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Hilo Energy History</title>
+<title>Historique de consommation Hilo</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%233b4a8a'/%3E%3Crect x='6' y='17' width='5' height='9' rx='1' fill='%23fff'/%3E%3Crect x='13.5' y='11' width='5' height='15' rx='1' fill='%23fff'/%3E%3Crect x='21' y='6' width='5' height='20' rx='1' fill='%23f39c34'/%3E%3C/svg%3E">
 <script>
 // Follow the hub UI theme, which the hub keeps in this origin's localStorage (absent on firmware without dark mode).
@@ -106,19 +106,215 @@ SPDX-License-Identifier: MIT
 <body>
 <header>
     <div>
-        <h1>Hilo energy history</h1>
-        <div class="muted" id="range">Loading…</div>
+        <h1 id="pageTitle"></h1>
+        <div class="muted" id="range"></div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <select id="loc" aria-label="Location" hidden></select>
-        <select id="month" aria-label="Period"></select>
+        <select id="loc" hidden></select>
+        <select id="month"></select>
     </div>
 </header>
 <main id="main">
-    <div class="card msg muted" id="status">Reading the history files from File Manager…</div>
+    <div class="card msg muted" id="status"></div>
 </main>
 <div id="tip"></div>
 <script>
+// Interface text in English and French; {name} placeholders are filled by t(). Console logs stay
+// in English. French follows Hydro-Québec's Tarifs d'électricité (article 2.59); hub UI names
+// (File Manager) keep their English names, since the hub's interface is English only.
+const I18N = {
+    en: {
+        'page.title': 'Hilo energy history',
+        'page.loading': 'Loading…',
+        'aria.loc': 'Location',
+        'aria.period': 'Period',
+        'st.readingFM': 'Reading the history files from File Manager…',
+        'st.reading': 'Reading the history files…',
+        'err.list': "Could not list File Manager ({why}). Open this page from the hub's own address.",
+        'err.noFiles': 'No Hilo history files yet. Hilo Manager writes them after its first hourly read.',
+        'err.noDays': 'The history files hold no days yet.',
+        'err.read': 'Could not read the history: {why}',
+        'loc.option': 'Location {id}',
+        'opt.all': 'All ({n} months)',
+        'range.onFile': '{from} to {to} · {n} days on file',
+        'range.to': '{from} to {to}',
+        'range.minMax': '{min} to {max}',
+        'temp.loading': 'Loading outdoor temperature…',
+        'temp.unavailable': 'Outdoor temperature unavailable: {why}',
+        'temp.noLoc': 'the hub has no location set',
+        'temp.note': "Outdoor temperature: Open-Meteo model data for the hub's location ({lat}, {lon}), not a station reading.",
+        'ev.loading': 'Loading peak events…',
+        'ev.unavailable': 'Peak events unavailable: {why}',
+        'ev.note': 'Peak events: Hydro-Québec open data, winter credit ({offer}), {n} events{span} ({k} within the history on file).',
+        'ev.span': ', {from} to {to}',
+        'ev.label': '{slots} peak event',
+        'w.and': ' and ',
+        'tile.usedRange': 'used, {label}',
+        'tile.usedIn': 'used in {label}',
+        'tile.usedAll': 'used, all days on file',
+        'tile.avg': 'a day on average ({n} full days)',
+        'tile.maxDay': 'heaviest day',
+        'tile.maxDayOn': 'heaviest day, {day}',
+        'tile.maxHour': 'heaviest hour',
+        'tile.maxHourAt': 'heaviest hour, {day} {h}:00',
+        'daily.title': 'Daily use (kWh)',
+        'btn.zoomOut': 'Zoom out',
+        'btn.zoomOutTip': 'Back to the previous period (Esc)',
+        'daily.legend': 'Click a day for its hours; drag across days to zoom in. Pale bars: hours missing.',
+        'daily.legendTemp': '<span class="t">Line</span>: mean outdoor temperature.',
+        'daily.legendEv': '<span class="e">Mark</span>: peak event.',
+        'hourly.legend': '<b>Shaded</b>: peak windows {windows}, December 1 to March 31',
+        'hourly.legendEv': '<span class="e">purple</span>: an actual peak event',
+        'scatter.title': 'Daily use against mean outdoor temperature',
+        'scatter.legend': 'Full days only. Click a point for its hours.',
+        'scatter.legendEv': '<span class="e">Coloured</span>: peak-event days.',
+        'scatter.none': 'No full day has a temperature yet.',
+        'scatter.axis': 'mean outdoor °{unit}',
+        'profile.title': 'Average day by hour (kWh)',
+        'profile.legend': '<b>Shaded</b>: peak-event windows, {windows}',
+        'profile.note': 'Bars: {n} days without an event · <span class="e">line</span>: {k} peak-event days',
+        'share.head': "Share of the day's energy",
+        'share.headNoEv': "Share of the day's energy, days without an event",
+        'share.line': '{head}: {base} ({hours} of the hours)',
+        'share.ev': 'event days: {v}',
+        'table.days': 'Days',
+        'table.months': 'Months',
+        'table.missing': '* some hours missing',
+        'th.day': 'Day',
+        'th.peak': 'Peak windows',
+        'th.low': 'Lowest hour (kWh)',
+        'th.high': 'Highest hour (kWh)',
+        'th.outMean': 'Outdoors, mean',
+        'th.minMax': 'min to max',
+        'th.event': 'Peak event',
+        'th.month': 'Month',
+        'th.days': 'Days',
+        'th.kwhDay': 'kWh a day',
+        'th.maxDay': 'Heaviest day (kWh)',
+        'th.evDays': 'Event days',
+        'link.wc': 'Winter credit analysis →',
+        'day.title': '{day}: {kwh} kWh',
+        'day.clock': '{n}-hour day (clock change)',
+        'day.missing': '{n} hours missing',
+        'day.inPeak': '{pct} % in peak windows',
+        'day.outdoors': 'outdoors {min} to {max} (red line)',
+        'tip.kv': '{k}: {v}',
+        'tip.missing': '({n} of {total} hours missing)',
+        'tip.temp': '{mean} mean, {min} to {max}',
+        'tip.hour': '{a}:00 to {b}:00',
+        'tip.noValue': 'no value',
+        'tip.peakEvent': 'peak event',
+        'tip.avg': '{v} kWh on average',
+        'tip.avgEv': '{v} on event days',
+        'tip.scatter': '{kwh} kWh at {t} mean',
+    },
+    fr: {
+        'page.title': 'Historique de consommation Hilo',
+        'page.loading': 'Chargement…',
+        'aria.loc': 'Emplacement',
+        'aria.period': 'Période',
+        'st.readingFM': "Lecture des fichiers d'historique dans File Manager…",
+        'st.reading': "Lecture des fichiers d'historique…",
+        'err.list': "Impossible de lister File Manager ({why}). Ouvrez cette page à partir de l'adresse du hub.",
+        'err.noFiles': "Aucun fichier d'historique Hilo pour l'instant. Hilo Manager les écrit après sa première lecture horaire.",
+        'err.noDays': "Les fichiers d'historique ne contiennent encore aucun jour.",
+        'err.read': "Impossible de lire l'historique : {why}",
+        'loc.option': 'Emplacement {id}',
+        'opt.all': 'Tout ({n} mois)',
+        'range.onFile': 'Du {from} au {to} · {n} jours enregistrés',
+        'range.to': 'du {from} au {to}',
+        'range.minMax': '{min} à {max}',
+        'temp.loading': 'Chargement de la température extérieure…',
+        'temp.unavailable': 'Température extérieure indisponible : {why}',
+        'temp.noLoc': "le hub n'a pas d'emplacement défini",
+        'temp.note': "Température extérieure : données de modèle d'Open-Meteo pour l'emplacement du hub ({lat}; {lon}), pas une mesure de station.",
+        'ev.loading': 'Chargement des événements de pointe…',
+        'ev.unavailable': 'Événements de pointe indisponibles : {why}',
+        'ev.note': "Événements de pointe : données ouvertes d'Hydro-Québec, crédit hivernal ({offer}), {n} événements{span} ({k} dans l'historique enregistré).",
+        'ev.span': ', du {from} au {to}',
+        'ev.label': 'événement de pointe {slots}',
+        'w.and': ' et ',
+        'tile.usedRange': 'consommés, {label}',
+        'tile.usedIn': 'consommés en {label}',
+        'tile.usedAll': 'consommés, tous les jours enregistrés',
+        'tile.avg': 'par jour en moyenne ({n} jours complets)',
+        'tile.maxDay': 'jour de plus forte consommation',
+        'tile.maxDayOn': 'jour de plus forte consommation, {day}',
+        'tile.maxHour': 'heure de plus forte consommation',
+        'tile.maxHourAt': 'heure de plus forte consommation, {day} {h}:00',
+        'daily.title': 'Consommation quotidienne (kWh)',
+        'btn.zoomOut': 'Zoom arrière',
+        'btn.zoomOutTip': 'Retour à la période précédente (Échap)',
+        'daily.legend': 'Cliquez sur un jour pour voir ses heures; glissez sur plusieurs jours pour zoomer. Barres pâles : heures manquantes.',
+        'daily.legendTemp': '<span class="t">Ligne</span> : température extérieure moyenne.',
+        'daily.legendEv': '<span class="e">Marque</span> : événement de pointe.',
+        'hourly.legend': '<b>Ombré</b> : plages de pointe {windows}, du 1er décembre au 31 mars',
+        'hourly.legendEv': '<span class="e">violet</span> : un événement de pointe réel',
+        'scatter.title': 'Consommation quotidienne selon la température extérieure moyenne',
+        'scatter.legend': 'Jours complets seulement. Cliquez sur un point pour voir ses heures.',
+        'scatter.legendEv': "<span class=\"e\">En couleur</span> : jours d'événement de pointe.",
+        'scatter.none': "Aucun jour complet n'a encore de température.",
+        'scatter.axis': '°{unit} extérieur moyen',
+        'profile.title': 'Journée moyenne par heure (kWh)',
+        'profile.legend': '<b>Ombré</b> : plages des événements de pointe, {windows}',
+        'profile.note': "Barres : {n} jours sans événement · <span class=\"e\">ligne</span> : {k} jours d'événement de pointe",
+        'share.head': "Part de l'énergie de la journée",
+        'share.headNoEv': "Part de l'énergie de la journée, jours sans événement",
+        'share.line': '{head} : {base} ({hours} des heures)',
+        'share.ev': "jours d'événement : {v}",
+        'table.days': 'Jours',
+        'table.months': 'Mois',
+        'table.missing': '* heures manquantes',
+        'th.day': 'Jour',
+        'th.peak': 'Plages de pointe',
+        'th.low': 'Heure la plus basse (kWh)',
+        'th.high': 'Heure la plus haute (kWh)',
+        'th.outMean': 'Extérieur, moyenne',
+        'th.minMax': 'min à max',
+        'th.event': 'Événement de pointe',
+        'th.month': 'Mois',
+        'th.days': 'Jours',
+        'th.kwhDay': 'kWh par jour',
+        'th.maxDay': 'Jour le plus élevé (kWh)',
+        'th.evDays': "Jours d'événement",
+        'link.wc': 'Analyse du crédit hivernal →',
+        'day.title': '{day} : {kwh} kWh',
+        'day.clock': "journée de {n} heures (changement d'heure)",
+        'day.missing': '{n} heures manquantes',
+        'day.inPeak': '{pct} % pendant les plages de pointe',
+        'day.outdoors': 'dehors de {min} à {max} (ligne rouge)',
+        'tip.kv': '{k} : {v}',
+        'tip.missing': '({n} heures manquantes sur {total})',
+        'tip.temp': 'moyenne {mean}, de {min} à {max}',
+        'tip.hour': '{a}:00 à {b}:00',
+        'tip.noValue': 'aucune valeur',
+        'tip.peakEvent': 'événement de pointe',
+        'tip.avg': '{v} kWh en moyenne',
+        'tip.avgEv': "{v} les jours d'événement",
+        'tip.scatter': '{kwh} kWh à {t} de moyenne',
+    },
+}; // end I18N
+
+// The language: #lang= in the URL hash, else the one Hilo Manager wrote for the location
+// (hilo-<location>-ui.json), else French. Set once, before the first render.
+const HASH_LANG = (v => v === 'fr' || v === 'en' ? v : null)(new URLSearchParams(location.hash.slice(1)).get('lang'));
+let LANG = HASH_LANG || 'fr';
+const locale = () => LANG === 'fr' ? 'fr-CA' : 'en-CA';
+const t = (key, args = {}) => {
+    let s = (I18N[LANG] || {})[key] ?? I18N.en[key] ?? key;
+    for (const [k, v] of Object.entries(args)) s = s.split(`{${k}}`).join(v == null ? '' : String(v));
+    return s;
+};
+function applyStatic() {
+    document.documentElement.lang = LANG;
+    document.title = t('page.title');
+    $('pageTitle').textContent = t('page.title');
+    $('loc').setAttribute('aria-label', t('aria.loc'));
+    $('month').setAttribute('aria-label', t('aria.period'));
+    if (!$('range').textContent) $('range').textContent = t('page.loading');
+    if ($('status')) $('status').textContent = t('st.readingFM');
+}
+
 // Reads the Hilo Manager's month files (hilo-<location>-energy-YYYY-MM.json) from this hub's
 // File Manager. Hours are keyed by their local start time, so 23- and 25-hour days need no case.
 const FILE_RE = /^hilo-(.+)-energy-(\d{4}-\d{2})\.json$/;
@@ -126,18 +322,17 @@ const FILE_RE = /^hilo-(.+)-energy-(\d{4}-\d{2})\.json$/;
 // Morning events ran 06:00–09:00 in winter 2024–25 and 06:00–10:00 from 2025–26 (Hydro-Québec open data).
 // A date outside winter takes the window of the winter that follows it.
 const peaksFor = date => { const y = +date.slice(0, 4), w = +date.slice(5, 7) >= 7 ? y : y - 1; return w >= 2025 ? [[6, 10], [16, 20]] : [[6, 9], [16, 20]]; };
-const windowsText = P => P.map(([a, b]) => `${String(a).padStart(2, '0')}:00–${String(b).padStart(2, '0')}:00`).join(' and ');
+const windowsText = P => P.map(([a, b]) => `${String(a).padStart(2, '0')}:00–${String(b).padStart(2, '0')}:00`).join(t('w.and'));
 const inSeason = date => ['12', '01', '02', '03'].includes(date.slice(5, 7));
 // Actual peak events: Hydro-Québec open data, the residential winter-credit offer (CPC-D), the same
 // feed as the Hydro Peak Events app. The API allows cross-origin reads; times come back in UTC.
 const EVENTS_URL = 'https://donnees.hydroquebec.com/api/explore/v2.1/catalog/datasets/evenements-pointe/records';
 const EVENT_OFFER = 'CPC-D';
 const $ = id => document.getElementById(id);
-const fmt = (v, d = 1) => v == null ? '–' : v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+const fmt = (v, d = 1) => v == null ? '–' : v.toLocaleString(locale(), { minimumFractionDigits: d, maximumFractionDigits: d });
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const monthName = m => `${MONTHS[+m.slice(5, 7) - 1]} ${m.slice(0, 4)}`;
-const dayName = d => new Date(d + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+const monthName = m => new Date(m + '-15T12:00:00').toLocaleDateString(locale(), { month: 'short', year: 'numeric' });
+const dayName = d => new Date(d + 'T12:00:00').toLocaleDateString(locale(), { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 const hourOf = start => +start.slice(11, 13);
 const inPeak = (h, date) => peaksFor(date).some(([a, b]) => h >= a && h < b);
 // Outdoor temperature comes from Open-Meteo's historical API at the hub's coordinates. Asked in UTC
@@ -161,24 +356,32 @@ async function getJson(url, cache = 'no-store') {
 }
 
 async function init() {
+    applyStatic();
     let list;
     try {
         list = await getJson('/hub/fileManager/json');
     } catch (e) {
-        return fail(`Could not list File Manager (${e.message}). Open this page from the hub's own address.`);
+        return fail(t('err.list', { why: e.message }));
     }
     for (const f of list.files || []) {
         const m = FILE_RE.exec(f.name);
         if (m) (files[m[1]] = files[m[1]] || []).push({ month: m[2], name: f.name, date: f.date });
     }
     const locs = Object.keys(files).sort();
-    if (!locs.length) return fail('No Hilo history files yet. Hilo Manager writes them after its first hourly read.');
+    if (!locs.length) return fail(t('err.noFiles'));
+    const want = new URLSearchParams(location.hash.slice(1));
+    const first = locs.includes(want.get('loc')) ? want.get('loc') : locs[0];
+    if (!HASH_LANG) {
+        const ui = (list.files || []).find(f => f.name === `hilo-${first}-ui.json`);
+        const doc = ui ? await getJson(monthUrl(ui), 'force-cache').catch(() => null) : null;
+        if (doc && (doc.lang === 'fr' || doc.lang === 'en')) LANG = doc.lang;
+        applyStatic();
+    }
     const loc = $('loc');
-    loc.innerHTML = locs.map(l => `<option value="${esc(l)}">Location ${esc(l)}</option>`).join('');
+    loc.innerHTML = locs.map(l => `<option value="${esc(l)}">${esc(t('loc.option', { id: l }))}</option>`).join('');
     loc.hidden = locs.length < 2;
     loc.onchange = () => loadLocation(loc.value);
-    const want = new URLSearchParams(location.hash.slice(1));
-    if (locs.includes(want.get('loc'))) loc.value = want.get('loc');
+    loc.value = first;
     $('month').onchange = () => {
         if ($('month').value === 'range') return;
         view = null; zoomStack.length = 0; syncRange(); selDay = null; render();
@@ -194,7 +397,7 @@ async function init() {
 const monthUrl = f => `/local/${encodeURIComponent(f.name)}?v=${encodeURIComponent(f.date || Date.now())}`;
 
 async function loadLocation(loc, want) {
-    $('status') && ($('status').textContent = 'Reading the history files…');
+    $('status') && ($('status').textContent = t('st.reading'));
     const list = files[loc].sort((a, b) => a.month.localeCompare(b.month));
     const docs = await Promise.all(list.map(f => getJson(monthUrl(f), 'force-cache').catch(() => null)));
     const all = {};
@@ -204,12 +407,12 @@ async function loadLocation(loc, want) {
         const known = hours.filter(x => x.kWh != null);
         return { date, hours, n: hours.length, nulls: hours.length - known.length, total: known.reduce((s, x) => s + x.kWh, 0) };
     });
-    if (!days.length) return fail('The history files hold no days yet.');
+    if (!days.length) return fail(t('err.noDays'));
     const months = [...new Set(days.map(d => d.date.slice(0, 7)))];
     const sel = $('month');
-    sel.innerHTML = `<option value="">All (${months.length} months)</option>` +
+    sel.innerHTML = `<option value="">${esc(t('opt.all', { n: months.length }))}</option>` +
         months.slice().reverse().map(m => `<option value="${m}">${monthName(m)}</option>`).join('');
-    $('range').textContent = `${dayName(days[0].date)} to ${dayName(days[days.length - 1].date)} · ${days.length} days on file`;
+    $('range').textContent = t('range.onFile', { from: dayName(days[0].date), to: dayName(days[days.length - 1].date), n: days.length });
     // The URL hash keeps the day and period: #day=YYYY-MM-DD and from=…&to=… (a zoomed range) or m=YYYY-MM|all.
     // Without a period, the day opens on its month.
     const has = k => want && days.some(d => d.date === want.get(k));
@@ -227,12 +430,12 @@ async function loadLocation(loc, want) {
     }
     syncRange();
     temps = null;
-    tempNote = 'Loading outdoor temperature…';
+    tempNote = t('temp.loading');
     render();
-    loadTemps(days[0].date, days[days.length - 1].date).then(render, e => { tempNote = 'Outdoor temperature unavailable: ' + e.message; render(); });
+    loadTemps(days[0].date, days[days.length - 1].date).then(render, e => { tempNote = t('temp.unavailable', { why: e.message }); render(); });
     events = null;
-    eventNote = 'Loading peak events…';
-    loadEvents().then(render, e => { eventNote = 'Peak events unavailable: ' + e.message; render(); });
+    eventNote = t('ev.loading');
+    loadEvents().then(render, e => { eventNote = t('ev.unavailable', { why: e.message }); render(); });
 }
 
 // All CPC-D events, a page of 100 at a time; marks each hour inside one (x.ev) and each day's slots (d.ev).
@@ -255,13 +458,12 @@ async function loadEvents() {
         d.ev = [...new Set(out.filter(v => d.hours.some(x => x.at >= v.s && x.at < v.e)).map(v => v.slot))].sort();
     });
     const inRange = out.filter(v => days.length && v.e > days[0].hours[0]?.at);
-    eventNote = `Peak events: Hydro-Québec open data, winter credit (${EVENT_OFFER}), ${out.length} events` +
-        (out.length ? `, ${dayName(new Date(out[0].s * 1000).toISOString().slice(0, 10))} to ${dayName(new Date(out[out.length - 1].s * 1000).toISOString().slice(0, 10))}` : '') +
-        ` (${inRange.length} within the history on file).`;
+    eventNote = t('ev.note', { offer: EVENT_OFFER, n: out.length, k: inRange.length, span: out.length ? t('ev.span', {
+        from: dayName(new Date(out[0].s * 1000).toISOString().slice(0, 10)), to: dayName(new Date(out[out.length - 1].s * 1000).toISOString().slice(0, 10)) }) : '' });
 }
 
 const evDay = d => events && d.ev && d.ev.length > 0;
-const evLabel = d => evDay(d) ? d.ev.join(' + ') + ' peak event' : '';
+const evLabel = d => evDay(d) ? t('ev.label', { slots: d.ev.join(' + ') }) : '';
 
 // Index runs [a, b) where flags are true.
 function runs(flags) {
@@ -272,7 +474,7 @@ function runs(flags) {
 
 async function loadTemps(from, to) {
     const hub = await getJson('/hub/details/json');
-    if (hub.latitude == null || hub.longitude == null) throw new Error('the hub has no location set');
+    if (hub.latitude == null || hub.longitude == null) throw new Error(t('temp.noLoc'));
     const unit = hub.tempScale === 'F' ? 'F' : 'C';
     // Dates are UTC: a local evening falls on the next UTC day, so ask one day past the last.
     const next = new Date(Date.parse(to + 'T00:00:00Z') + 86400000).toISOString().slice(0, 10);
@@ -291,7 +493,7 @@ async function loadTemps(from, to) {
         d.tMin = known.length ? Math.min(...known) : null;
         d.tMax = known.length ? Math.max(...known) : null;
     });
-    tempNote = `Outdoor temperature: Open-Meteo model data for the hub's location (${fmt(+hub.latitude, 2)}, ${fmt(+hub.longitude, 2)}), not a station reading.`;
+    tempNote = t('temp.note', { lat: fmt(+hub.latitude, 2), lon: fmt(+hub.longitude, 2) });
 }
 
 const deg = (v, d = 1) => v == null ? '–' : fmt(v, d) + ' °' + temps.unit;
@@ -310,8 +512,8 @@ function periodSet() {
     const m = $('month').value;
     return m ? days.filter(d => d.date.startsWith(m)) : days;
 }
-const shortDay = d => new Date(d + 'T12:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
-const rangeName = () => view ? `${shortDay(view.from)} to ${shortDay(view.to)}` : '';
+const shortDay = d => new Date(d + 'T12:00:00').toLocaleDateString(locale(), { day: 'numeric', month: 'short', year: 'numeric' });
+const rangeName = () => view ? t('range.to', { from: shortDay(view.from), to: shortDay(view.to) }) : '';
 
 // While zoomed, the period list shows the range as its own entry.
 function syncRange() {
@@ -352,18 +554,18 @@ function render() {
 
     $('main').innerHTML = `
     <div class="tiles">
-        ${tile(fmt(total, 0) + ' kWh', view ? `used, ${label}` : m ? `used in ${label}` : 'used, all days on file')}
-        ${tile(avg == null ? '–' : fmt(avg) + ' kWh', `a day on average (${fulls.length} full days)`)}
-        ${tile(maxDay ? fmt(maxDay.total) + ' kWh' : '–', maxDay ? 'heaviest day, ' + dayName(maxDay.date) : 'heaviest day')}
-        ${tile(maxHour ? fmt(maxHour.kWh, 2) + ' kWh' : '–', maxHour ? `heaviest hour, ${dayName(maxHour.date)} ${maxHour.h}:00` : 'heaviest hour')}
+        ${tile(fmt(total, 0) + ' kWh', view ? t('tile.usedRange', { label }) : m ? t('tile.usedIn', { label }) : t('tile.usedAll'))}
+        ${tile(avg == null ? '–' : fmt(avg) + ' kWh', t('tile.avg', { n: fulls.length }))}
+        ${tile(maxDay ? fmt(maxDay.total) + ' kWh' : '–', maxDay ? t('tile.maxDayOn', { day: dayName(maxDay.date) }) : t('tile.maxDay'))}
+        ${tile(maxHour ? fmt(maxHour.kWh, 2) + ' kWh' : '–', maxHour ? t('tile.maxHourAt', { day: dayName(maxHour.date), h: maxHour.h }) : t('tile.maxHour'))}
     </div>
-    <div class="card"><h2><span>Daily use (kWh)${label ? ', ' + esc(label) : ''} ${zoomStack.length ? '<button id="zoomOut" title="Back to the previous period (Esc)">Zoom out</button>' : ''}</span><span class="legend">Click a day for its hours; drag across days to zoom in. Pale bars: hours missing.${temps ? ' <span class="t">Line</span>: mean outdoor temperature.' : ''}${events ? ' <span class="e">Mark</span>: peak event.' : ''}</span></h2><div id="daily"></div>
+    <div class="card"><h2><span>${t('daily.title')}${label ? ', ' + esc(label) : ''} ${zoomStack.length ? `<button id="zoomOut" title="${esc(t('btn.zoomOutTip'))}">${t('btn.zoomOut')}</button>` : ''}</span><span class="legend">${t('daily.legend')}${temps ? ' ' + t('daily.legendTemp') : ''}${events ? ' ' + t('daily.legendEv') : ''}</span></h2><div id="daily"></div>
         <div class="legend" style="margin-top:6px">${esc(tempNote)}</div><div class="legend">${esc(eventNote)}</div></div>
     <div class="card"><h2><span id="dayTitle"></span><span class="legend" id="dayNote"></span></h2><div id="hourly"></div>
-        <div class="legend" style="margin-top:6px"><b>Shaded</b>: peak windows ${windowsText(peaksFor(selDay || set[set.length - 1].date))}, December 1 to March 31${events ? ' · <span class="e">purple</span>: an actual peak event' : ''}</div></div>
-    ${temps ? `<div class="card"><h2><span>Daily use against mean outdoor temperature</span><span class="legend">Full days only. Click a point for its hours.${events ? ' <span class="e">Coloured</span>: peak-event days.' : ''}</span></h2><div id="scatter"></div></div>` : ''}
-    <div class="card"><h2><span>Average day by hour (kWh)${label ? ', ' + esc(label) : ''}</span><span class="legend"><b>Shaded</b>: peak-event windows, ${windowsText(peaksFor(set[set.length - 1].date))}</span></h2><div id="profile"></div><div class="legend" id="profileNote" style="margin-top:6px"></div><div class="legend" id="peakShare"></div></div>
-    <div class="card"><h2><span>${dayRows ? 'Days' : 'Months'}</span></h2><div class="scroll" id="table"></div></div>`;
+        <div class="legend" style="margin-top:6px">${t('hourly.legend', { windows: windowsText(peaksFor(selDay || set[set.length - 1].date)) })}${events ? ' · ' + t('hourly.legendEv') : ''}</div></div>
+    ${temps ? `<div class="card"><h2><span>${t('scatter.title')}</span><span class="legend">${t('scatter.legend')}${events ? ' ' + t('scatter.legendEv') : ''}</span></h2><div id="scatter"></div></div>` : ''}
+    <div class="card"><h2><span>${t('profile.title')}${label ? ', ' + esc(label) : ''}</span><span class="legend">${t('profile.legend', { windows: windowsText(peaksFor(set[set.length - 1].date)) })}</span></h2><div id="profile"></div><div class="legend" id="profileNote" style="margin-top:6px"></div><div class="legend" id="peakShare"></div></div>
+    <div class="card"><h2><span>${t(dayRows ? 'table.days' : 'table.months')}</span></h2><div class="scroll" id="table"></div></div>`;
     if ($('zoomOut')) $('zoomOut').onclick = zoomOut;
     drawDaily(set);
     drawDay();
@@ -435,8 +637,8 @@ function drawDaily(set) {
     const every = Math.max(1, Math.ceil(set.length / 16));
     el.innerHTML = bars(vals, { labelEvery: every, line: temps && set.map(d => d.tMean), fmtTip: v => {
         const d = set.find(x => x.date === v.key);
-        return `${dayName(v.key)}: ${fmt(v.value)} kWh` + (d.nulls ? ` (${d.nulls} of ${d.n} hours missing)` : '') + (evDay(d) ? ` · ${evLabel(d)}` : '') +
-            (temps && d.tMean != null ? ` · ${deg(d.tMean)} mean, ${deg(d.tMin)} to ${deg(d.tMax)}` : '');
+        return t('tip.kv', { k: dayName(v.key), v: `${fmt(v.value)} kWh` }) + (d.nulls ? ' ' + t('tip.missing', { n: d.nulls, total: d.n }) : '') + (evDay(d) ? ` · ${evLabel(d)}` : '') +
+            (temps && d.tMean != null ? ' · ' + t('tip.temp', { mean: deg(d.tMean), min: deg(d.tMin), max: deg(d.tMax) }) : '');
     } });
     wire(el);
     brush(el, set);
@@ -488,17 +690,17 @@ function drawDay() {
     // December to March, and event days, link to the winter credit page on the same window.
     const loc = $('loc').value;
     const period = view ? `from=${view.from}&to=${view.to}` : `m=${$('month').value || 'all'}`;
-    history.replaceState(null, '', `#day=${d.date}&${period}&loc=${encodeURIComponent(loc)}`);
+    history.replaceState(null, '', `#day=${d.date}&${period}&loc=${encodeURIComponent(loc)}${HASH_LANG ? '&lang=' + HASH_LANG : ''}`);
     const evStart = events ? d.hours.find(x => x.ev) : null;
-    const wcLink = inSeason(d.date) || evDay(d) ? ` <a class="wclink" href="hilo-winter-credit.html#day=${d.date}&start=${evStart && evStart.h >= 12 ? 16 : 6}&loc=${encodeURIComponent(loc)}">Winter credit analysis →</a>` : '';
-    $('dayTitle').innerHTML = `${esc(dayName(d.date))}: ${fmt(d.total)} kWh${wcLink}`;
+    const wcLink = inSeason(d.date) || evDay(d) ? ` <a class="wclink" href="hilo-winter-credit.html#day=${d.date}&start=${evStart && evStart.h >= 12 ? 16 : 6}&loc=${encodeURIComponent(loc)}&lang=${LANG}">${t('link.wc')}</a>` : '';
+    $('dayTitle').innerHTML = esc(t('day.title', { day: dayName(d.date), kwh: fmt(d.total) })) + wcLink;
     const peak = d.hours.filter(x => inPeak(x.h, d.date) && x.kWh != null).reduce((s, x) => s + x.kWh, 0);
     const evRuns = events ? runs(d.hours.map(x => !!x.ev)) : [];
     const evText = evRuns.map(([a, b]) => `${d.hours[a].h}:00–${d.hours[b - 1].h + 1}:00`).join(', ');
     $('dayNote').textContent = (evRuns.length ? `${evLabel(d)} ${evText} · ` : '') +
-        (d.n !== 24 ? `${d.n}-hour day (clock change) · ` : '') + (d.nulls ? `${d.nulls} hours missing · ` : '') +
-        (d.total ? `${fmt(100 * peak / d.total, 0)} % in peak windows` : '') +
-        (temps && d.tMean != null ? ` · outdoors ${deg(d.tMin)} to ${deg(d.tMax)} (red line)` : '');
+        (d.n !== 24 ? t('day.clock', { n: d.n }) + ' · ' : '') + (d.nulls ? t('day.missing', { n: d.nulls }) + ' · ' : '') +
+        (d.total ? t('day.inPeak', { pct: fmt(100 * peak / d.total, 0) }) : '') +
+        (temps && d.tMean != null ? ' · ' + t('day.outdoors', { min: deg(d.tMin), max: deg(d.tMax) }) : '');
     const el = $('hourly');
     // Peak windows on every winter day; an actual event's hours in their own colour, replacing the window they overlap.
     const shade = (d.n === 24 && inSeason(d.date) ? peaksFor(d.date) : [])
@@ -506,8 +708,8 @@ function drawDay() {
         .concat(evRuns.map(([a, b]) => ({ a, b, cls: 'event' })));
     el.innerHTML = bars(d.hours.map((x, i) => ({ key: i, value: x.kWh, label: String(x.h) })), { height: 180, shade, unitDigits: 2,
         line: temps && d.hours.map(x => x.t),
-        fmtTip: v => `${d.hours[v.key].h}:00 to ${d.hours[v.key].h + 1}:00: ${v.value == null ? 'no value' : fmt(v.value, 2) + ' kWh'}` +
-            (temps && d.hours[v.key].t != null ? ` · ${deg(d.hours[v.key].t)}` : '') + (d.hours[v.key].ev ? ' · peak event' : '') });
+        fmtTip: v => t('tip.kv', { k: t('tip.hour', { a: d.hours[v.key].h, b: d.hours[v.key].h + 1 }), v: v.value == null ? t('tip.noValue') : fmt(v.value, 2) + ' kWh' }) +
+            (temps && d.hours[v.key].t != null ? ` · ${deg(d.hours[v.key].t)}` : '') + (d.hours[v.key].ev ? ' · ' + t('tip.peakEvent') : '') });
     wire(el);
 }
 
@@ -525,23 +727,23 @@ function drawProfile(fulls) {
     const P = fulls.length ? peaksFor(fulls[fulls.length - 1].date) : peaksFor(new Date().toISOString().slice(0, 10));
     el.innerHTML = bars(avg.map((v, h) => ({ key: h, value: v, label: String(h) })), { height: 180, unitDigits: 2, overlay: evAvg,
         shade: P.map(([a, b]) => ({ a, b, cls: 'peak' })),
-        fmtTip: v => `${v.key}:00 to ${v.key + 1}:00: ${fmt(v.value, 2)} kWh on average` + (evAvg ? `, ${fmt(evAvg[v.key], 2)} on event days` : '') });
+        fmtTip: v => t('tip.kv', { k: t('tip.hour', { a: v.key, b: v.key + 1 }), v: t('tip.avg', { v: fmt(v.value, 2) }) }) + (evAvg ? ', ' + t('tip.avgEv', { v: fmt(evAvg[v.key], 2) }) : '') });
     wire(el);
-    $('profileNote').innerHTML = evAvg ? `Bars: ${ords.length} days without an event · <span class="e">line</span>: ${evs.length} peak-event days` : '';
+    $('profileNote').innerHTML = evAvg ? t('profile.note', { n: ords.length, k: evs.length }) : '';
     const shares = a => {
         const tot = a.reduce((s, v) => s + (v || 0), 0);
         return tot ? P.map(([x, y]) => `${String(x).padStart(2, '0')}:00–${String(y).padStart(2, '0')}:00 ${fmt(a.slice(x, y).reduce((s, v) => s + (v || 0), 0) / tot * 100, 0)} %`).join(', ') : '';
     };
     const base = shares(avg);
-    $('peakShare').textContent = base ? `Share of the day's energy${evAvg ? ', days without an event' : ''}: ${base} (${P.map(([a, b]) => fmt(100 * (b - a) / 24, 0) + ' %').join(' and ')} of the hours)` +
-        (evAvg ? `; event days: ${shares(evAvg)}.` : '.') : '';
+    $('peakShare').textContent = base ? t('share.line', { head: t(evAvg ? 'share.headNoEv' : 'share.head'), base,
+        hours: P.map(([a, b]) => fmt(100 * (b - a) / 24, 0) + ' %').join(t('w.and')) }) + (evAvg ? '; ' + t('share.ev', { v: shares(evAvg) }) + '.' : '.') : '';
 }
 
 // Each full day as a point: mean outdoor temperature across, kWh up.
 function drawScatter(set, fulls) {
     const el = $('scatter');
     const pts = fulls.filter(d => d.tMean != null);
-    if (!pts.length) { el.innerHTML = '<div class="legend">No full day has a temperature yet.</div>'; return; }
+    if (!pts.length) { el.innerHTML = `<div class="legend">${t('scatter.none')}</div>`; return; }
     const W = 1000, H = 260, L = 44, R = 12, T = 10, B = 30;
     const xs = pts.map(d => d.tMean), ymax = Math.max(...pts.map(d => d.total), 0.001);
     const xstep = niceStep(Math.max(Math.max(...xs) - Math.min(...xs), 1)), ystep = niceStep(ymax);
@@ -552,8 +754,8 @@ function drawScatter(set, fulls) {
     for (let g = 0; g <= ytop + 1e-9; g += ystep) s += `<line class="grid" x1="${L}" x2="${W - R}" y1="${py(g)}" y2="${py(g)}"/><text x="${L - 6}" y="${py(g) + 4}" text-anchor="end">${fmt(g, Number.isInteger(ystep) ? 0 : 1)}</text>`;
     for (let g = x0; g <= x1 + 1e-9; g += xstep) s += `<line class="grid" x1="${px(g)}" x2="${px(g)}" y1="${T}" y2="${H - B}"/><text x="${px(g)}" y="${H - 12}" text-anchor="middle">${fmt(g, Number.isInteger(xstep) ? 0 : 1)}°</text>`;
     pts.forEach(d => s += `<circle class="dot ${d.date === selDay ? 'sel' : (evDay(d) ? 'ev' : '')}" cx="${px(d.tMean)}" cy="${py(d.total)}" r="${d.date === selDay ? 5 : 3.5}"/>`);
-    pts.forEach(d => s += `<circle class="hit" cx="${px(d.tMean)}" cy="${py(d.total)}" r="8" data-k="${d.date}" data-tip="${esc(`${dayName(d.date)}: ${fmt(d.total)} kWh at ${deg(d.tMean)} mean` + (evDay(d) ? ` · ${evLabel(d)}` : ''))}"/>`);
-    el.innerHTML = s + `<text x="${W - R}" y="${H - 1}" text-anchor="end">mean outdoor °${temps.unit}</text></svg>`;
+    pts.forEach(d => s += `<circle class="hit" cx="${px(d.tMean)}" cy="${py(d.total)}" r="8" data-k="${d.date}" data-tip="${esc(t('tip.kv', { k: dayName(d.date), v: t('tip.scatter', { kwh: fmt(d.total), t: deg(d.tMean) }) }) + (evDay(d) ? ` · ${evLabel(d)}` : ''))}"/>`);
+    el.innerHTML = s + `<text x="${W - R}" y="${H - 1}" text-anchor="end">${esc(t('scatter.axis', { unit: temps.unit }))}</text></svg>`;
     wire(el, k => { selDay = k; drawDaily(set); drawDay(); drawScatter(set, fulls); });
 }
 
@@ -561,30 +763,30 @@ function drawTable(dayRows, set) {
     const el = $('table');
     const peakOf = d => d.hours.filter(x => inPeak(x.h, d.date) && x.kWh != null).reduce((s, x) => s + x.kWh, 0);
     if (dayRows) {
-        el.innerHTML = `<table><tr><th>Day</th><th>kWh</th><th>Peak windows</th><th>Lowest hour (kWh)</th><th>Highest hour (kWh)</th>${temps ? '<th>Outdoors, mean</th><th>min to max</th>' : ''}${events ? '<th>Peak event</th>' : ''}</tr>` +
+        el.innerHTML = `<table><tr><th>${t('th.day')}</th><th>kWh</th><th>${t('th.peak')}</th><th>${t('th.low')}</th><th>${t('th.high')}</th>${temps ? `<th>${t('th.outMean')}</th><th>${t('th.minMax')}</th>` : ''}${events ? `<th>${t('th.event')}</th>` : ''}</tr>` +
             set.slice().reverse().map(d => {
                 const known = d.hours.filter(x => x.kWh != null).map(x => x.kWh);
                 return `<tr class="click" data-d="${d.date}"><td>${dayName(d.date)}</td><td>${fmt(d.total)}${d.nulls ? ' *' : ''}</td>` +
                     `<td>${d.total ? fmt(100 * peakOf(d) / d.total, 0) + ' %' : '–'}</td><td>${known.length ? fmt(Math.min(...known), 2) : '–'}</td><td>${known.length ? fmt(Math.max(...known), 2) : '–'}</td>` +
-                    (temps ? `<td>${deg(d.tMean)}</td><td>${deg(d.tMin, 0)} to ${deg(d.tMax, 0)}</td>` : '') + (events ? `<td>${evDay(d) ? esc(d.ev.join(' + ')) : ''}</td>` : '') + '</tr>';
-            }).join('') + '</table>' + (set.some(d => d.nulls) ? '<div class="legend" style="margin-top:6px">* some hours missing</div>' : '');
+                    (temps ? `<td>${deg(d.tMean)}</td><td>${t('range.minMax', { min: deg(d.tMin, 0), max: deg(d.tMax, 0) })}</td>` : '') + (events ? `<td>${evDay(d) ? esc(d.ev.join(' + ')) : ''}</td>` : '') + '</tr>';
+            }).join('') + '</table>' + (set.some(d => d.nulls) ? `<div class="legend" style="margin-top:6px">${t('table.missing')}</div>` : '');
         el.querySelectorAll('tr.click').forEach(r => r.onclick = () => { selDay = r.dataset.d; drawDaily(set); drawDay(); if (temps) drawScatter(set, set.filter(full)); $('dayTitle').scrollIntoView({ behavior: 'smooth', block: 'center' }); });
         return;
     }
     const by = {};
     set.forEach(d => (by[d.date.slice(0, 7)] = by[d.date.slice(0, 7)] || []).push(d));
-    el.innerHTML = `<table><tr><th>Month</th><th>Days</th><th>kWh</th><th>kWh a day</th><th>Heaviest day (kWh)</th><th>Peak windows</th>${temps ? '<th>Outdoors, mean</th>' : ''}${events ? '<th>Event days</th>' : ''}</tr>` +
+    el.innerHTML = `<table><tr><th>${t('th.month')}</th><th>${t('th.days')}</th><th>kWh</th><th>${t('th.kwhDay')}</th><th>${t('th.maxDay')}</th><th>${t('th.peak')}</th>${temps ? `<th>${t('th.outMean')}</th>` : ''}${events ? `<th>${t('th.evDays')}</th>` : ''}</tr>` +
         Object.keys(by).sort().reverse().map(k => {
-            const ds = by[k], f = ds.filter(full), t = ds.reduce((s, d) => s + d.total, 0);
+            const ds = by[k], f = ds.filter(full), tot = ds.reduce((s, d) => s + d.total, 0);
             const mx = f.reduce((a, d) => !a || d.total > a.total ? d : a, null), p = ds.reduce((s, d) => s + peakOf(d), 0);
-            return `<tr class="click" data-m="${k}"><td>${monthName(k)}</td><td>${ds.length}</td><td>${fmt(t, 0)}</td><td>${f.length ? fmt(f.reduce((s, d) => s + d.total, 0) / f.length) : '–'}</td>` +
-                `<td>${mx ? fmt(mx.total) + ' (' + +mx.date.slice(8) + ')' : '–'}</td><td>${t ? fmt(100 * p / t, 0) + ' %' : '–'}</td>` +
+            return `<tr class="click" data-m="${k}"><td>${monthName(k)}</td><td>${ds.length}</td><td>${fmt(tot, 0)}</td><td>${f.length ? fmt(f.reduce((s, d) => s + d.total, 0) / f.length) : '–'}</td>` +
+                `<td>${mx ? fmt(mx.total) + ' (' + +mx.date.slice(8) + ')' : '–'}</td><td>${tot ? fmt(100 * p / tot, 0) + ' %' : '–'}</td>` +
                 (temps ? `<td>${deg(mean(ds.map(d => d.tMean).filter(v => v != null)))}</td>` : '') + (events ? `<td>${ds.filter(evDay).length || ''}</td>` : '') + '</tr>';
         }).join('') + '</table>';
     el.querySelectorAll('tr.click').forEach(r => r.onclick = () => { goMonth(r.dataset.m); scrollTo({ top: 0, behavior: 'smooth' }); });
 }
 
-init().catch(e => fail('Could not read the history: ' + e.message));
+init().catch(e => fail(t('err.read', { why: e.message })));
 </script>
 </body>
 </html>

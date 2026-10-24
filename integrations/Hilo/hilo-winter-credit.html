@@ -159,7 +159,7 @@ SPDX-License-Identifier: MIT
 <body>
 <header>
     <div>
-        <h1>Hilo winter credit</h1>
+        <h1 id="hdrTitle">Hilo winter credit</h1>
         <div class="muted" id="range">Loading…</div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -173,9 +173,302 @@ SPDX-License-Identifier: MIT
 </main>
 <div id="tip"></div>
 <script>
+// ── Interface text ────────────────────────────────────────────────────
+// What the page shows, in English and French; console output stays English. {name} placeholders are
+// filled by t(). French follows Hydro-Québec's Tarifs d'électricité (article 2.59); hub UI names
+// (File Manager) stay English, since the hub's interface is English only.
+const I18N = {
+    en: {
+        'page.title': 'Hilo Winter Credit',
+        'hdr.title': 'Hilo winter credit',
+        'hdr.loading': 'Loading…',
+        'hdr.toHistory': 'Energy history',
+        'hdr.locLabel': 'Location',
+        'hdr.seasonLabel': 'Winter',
+        'status.listing': 'Reading the history files from File Manager…',
+        'status.reading': 'Reading the history files…',
+        'err.list': "Could not list File Manager ({why}). Open this page from the hub's own address.",
+        'err.noFiles': 'No Hilo history files yet. Hilo Manager writes them after its first hourly read.',
+        'err.noDays': 'The history files hold no days yet.',
+        'err.noWinter': 'No winter (December to March) in the history yet.',
+        'err.read': 'Could not read the history: {why}',
+        'loc.option': 'Location {id}',
+        'season.option': 'Winter {s}–{e}',
+        'range': 'History {from} to {to}',
+        'ev.loading': 'Loading peak events…',
+        'ev.unavailable': 'Peak events unavailable: {why}',
+        'ev.note': 'Peak events: Hydro-Québec open data, winter credit ({offer}){plus}.',
+        'ev.notePlus': ', plus the events Hilo Manager knows of',
+        'ev.none': 'No peak event this winter with history on file.',
+        'temp.noHubLocation': 'the hub has no location set',
+        'temp.note': "Outdoor temperature: Open-Meteo model data for the hub's location ({coords}), not a station reading.",
+        'temp.loading': 'Loading outdoor temperature…',
+        'temp.unavailable': 'Outdoor temperature unavailable: {why}',
+        'tile.events': 'peak events, winter {s}–{e}',
+        'tile.eventsPartial': '({n} with every hour on file)',
+        'tile.curtailed': 'energy curtailed, {n} events',
+        'tile.limited': 'events where the temperature adjustment was limited',
+        'tile.credit': 'credit before taxes, at {rates} ¢/kWh',
+        'note.oldRules': 'This page applies the rules in force from winter 2025–26: 4-hour events and the limit on the temperature adjustment. In winter 2024–25 morning events lasted 3 hours (06:00–09:00) and the limit did not exist yet (it applies from winter 2025–26, Régie decision D-2025-091), so these figures are not what was credited that winter.',
+        'cal.legend': 'Click a day for its hours and reference energy. <span class="e">AM / PM</span>: peak event. Struck: no peak hours. Pale: no history on file. Under each date: the day\'s mean outdoor temperature.',
+        'cal.dow': 'S M T W T F S',
+        'btn.prev': '◀ event',
+        'btn.prevTitle': 'Previous peak event',
+        'btn.next': 'event ▶',
+        'btn.nextTitle': 'Next peak event',
+        'lnk.dayHistory': 'Open in history →',
+        'hourly.legend': '<span class="a">Green</span>: the anchor period, whose consumption sets the temperature adjustment; the tick is each hour\'s reference-period average, and consumption above it (green) raises the reference energy · <span class="e">purple</span>: the event (pale amber when not an event); the <b>amber tick</b> is each hour\'s share of the reference energy, and the dashed box under it is the energy curtailed · <span class="t">red line</span>: outdoor temperature, right scale',
+        'hourly.noHours': 'No hours on file for this day yet; the ticks show the reference period.',
+        'card.evChart': 'Energy curtailed by event (kWh)',
+        'card.evChartLegend': 'Click a bar to show it above. <b>Amber</b>: temperature adjustment limited. Dashed: 40 kWh.',
+        'card.evTable': 'Events this winter',
+        'card.evTableLegend': 'Click a row to show it above.',
+        'term.refEnergy': 'Reference energy',
+        'term.curtailed': 'Energy curtailed',
+        'term.peakEvent': 'peak event',
+        'term.adjustment': 'Temperature adjustment',
+        'term.anchor': 'Anchor period',
+        'term.eventHours': 'Event hours',
+        'term.outdoors': 'Outdoors',
+        'tip.peakEvent': '{slots} peak event',
+        'tip.noPeak': 'no peak hours',
+        'tip.noHistory': 'no history',
+        'tip.meanOut': '{t} mean outdoors',
+        'tip.hour': '{a} to {b}: {v}',
+        'tip.noValue': 'no value',
+        'tip.refPeriod': 'reference period {v} kWh',
+        'tip.share': 'share of the reference energy {v} kWh',
+        'tip.event': '{day} {slot}: {c} kWh curtailed (reference energy {t} kWh, consumed {u} kWh{lim})',
+        'tip.limited': ', adjustment limited',
+        'day.total': ': {v} kWh',
+        'day.peakEvent': '{slot} peak event',
+        'day.notEvent': 'not an event',
+        'day.outdoors': 'outdoors {lo} to {hi}',
+        'opt.floor': 'Cut to the floor, {v} kWh',
+        'opt.asConsumed': 'As consumed',
+        'opt.exact40': 'Curtail exactly 40 kWh',
+        'opt.thUse': 'Event consumption',
+        'opt.thCut': 'Energy curtailed (kWh)',
+        'opt.thCredit': 'Credit',
+        'opt.thAbove': 'Energy above the floor',
+        'opt.thNet': 'Credit minus that energy',
+        'opt.thCompare': 'Compared with cutting to {v}&nbsp;kWh',
+        'opt.less': '{v} less',
+        'opt.more': '{v} more',
+        'opt.legend': "Credit at {cc} ¢/kWh. Energy above the floor at Rate D's second tier, {ec} ¢/kWh. A deeper cut is partly consumed later anyway, when the heating brings the house back up after the event; that is not counted, so the energy cost shown is the most it could be.",
+        'cu.ref': 'reference energy {v} kWh',
+        'cu.lim': 'with the limit {v} kWh',
+        'cu.cliff': 'curtails exactly 40 kWh: {v} kWh',
+        'cu.legend': 'Summed through the event: <span style="color:var(--primary)">pale area</span>, each hour\'s share of the reference energy',
+        'cu.used': '<span class="e">dark area</span>, the consumption ({v} kWh{soFar})',
+        'cu.soFar': ', hours so far',
+        'sk.base': 'Reference period, {win}',
+        'sk.adjSub': '{v} kWh, from {anc}',
+        'sk.lost': 'Over the limit',
+        'sk.lostSub': '{v} kWh of adjustment not counted',
+        'sk.over': 'Above the reference energy',
+        'sk.cutTo': 'Cut to {v}',
+        'sk.consumed': 'Consumed',
+        'sk.wouldCut': 'Would be curtailed',
+        'sk.counted': '+{v} kWh counted',
+        'src.app': 'Hilo Manager, {when}',
+        'src.page': 'computed in this page from the history files',
+        'head.atMost': 'The reference energy depends on consumption during {anc}. Consume at most <b>{v}</b> kWh then, and cut to {floor} kWh during {win}, to curtail 40 kWh.',
+        'head.atLeast': 'The reference energy depends on consumption during {anc}. Consuming at least <b>{v}</b> kWh then and cutting deep curtails about <b>{cut}</b> kWh.',
+        'head.curtailed': '<b>{c}</b> kWh curtailed{money}.',
+        'head.limited': 'The limit applied: without it, {v} kWh would have been curtailed, more than 40 kWh.',
+        'head.none': 'No energy curtailed: {used} kWh consumed, above the reference energy of {target} kWh.',
+        'head.plan': 'Reference energy <b>{target}</b> kWh. Cutting to {floor} kWh during {win} curtails <b>{cut}</b> kWh',
+        'head.planKeep': '; consuming {v} kWh instead curtails 40 kWh and pays more.',
+        'head.keepGain': 'Consuming {v} kWh, just enough to curtail exactly 40 kWh, would have paid {gain} more than cutting to {floor} kWh.',
+        'head.notEvent': 'Not a peak event; computed as if it were one.',
+        'calc.why3': '4 event hours over 3 anchor hours',
+        'calc.why2': '4 event hours over 2 anchor hours',
+        'calc.eventHours': '<b>Event hours</b>, reference-period averages: <b>{v}</b> kWh',
+        'calc.anchor': '<b>Anchor period</b> ({anc}), reference-period averages: <b>{v}</b> kWh',
+        'calc.adj': '<b>Temperature adjustment</b> = ({used} kWh consumed {anc} − {ref} kWh) × {k} = <b>{adj}</b> kWh; {k} is {why}',
+        'calc.ref': "<b>Reference energy</b> = {base} kWh + {adj} kWh = <b>{t}</b> kWh (the Hilo app's original consumption limit)",
+        'calc.limit': "If the energy curtailed exceeds 40 kWh, the adjustment is <b>limited</b> to 2 × {ref} kWh × {k} = {adj} kWh: reference energy <b>{t}</b> kWh (the Hilo app's adjusted consumption limit)",
+        'calc.cut': '<b>Energy curtailed</b>, with {used} kWh consumed during the event: {detail}<b>{c}</b> kWh',
+        'calc.cutDetail': '{t} kWh − {used} kWh = {d} kWh exceeds 40 kWh, so {cap} kWh − {used} kWh = ',
+        'calc.floor': 'With the event cut to {floor} kWh: {cut} kWh curtailed',
+        'calc.floorKeep': '; consuming {v} kWh during the event curtails 40 kWh, which pays more.',
+        'th.hour': 'Hour (kWh)',
+        'th.avg': 'Average',
+        'th.event': 'Event',
+        'th.ref': 'Reference energy (kWh)',
+        'th.lim': 'With the limit (kWh)',
+        'th.used': 'Consumed (kWh)',
+        'th.ifCut': 'If cut to {v}&nbsp;kWh',
+        'th.outEvent': 'Outdoors during the event',
+        'th.outRef': 'Reference period, same hours',
+        'ev.limited': '(limited)',
+        'how.weekend': 'weekend days',
+        'how.weekdays': 'weekdays',
+        'how.skipped': 'Skipped: {list}.',
+        'how.summary': 'How Hydro-Québec computes it (Electricity Rates, article 2.59)',
+        'how.note': "Reference period: the 5 {kind} before, without a peak event.{skipped} Struck values: each hour's minimum and maximum, left out of the average. Shaded rows: the anchor period.",
+        'how.missing': '{n} reference hours have no value yet.',
+    },
+    fr: {
+        'page.title': 'Crédit hivernal Hilo',
+        'hdr.title': 'Crédit hivernal Hilo',
+        'hdr.loading': 'Chargement…',
+        'hdr.toHistory': "Historique d'énergie",
+        'hdr.locLabel': 'Emplacement',
+        'hdr.seasonLabel': 'Hiver',
+        'status.listing': "Lecture des fichiers d'historique dans File Manager…",
+        'status.reading': "Lecture des fichiers d'historique…",
+        'err.list': "Impossible de lister File Manager ({why}). Ouvrez cette page à partir de l'adresse du hub.",
+        'err.noFiles': "Aucun fichier d'historique Hilo pour l'instant. Hilo Manager les écrit après sa première lecture horaire.",
+        'err.noDays': "Les fichiers d'historique ne contiennent encore aucun jour.",
+        'err.noWinter': "Aucun hiver (décembre à mars) dans l'historique pour l'instant.",
+        'err.read': "Impossible de lire l'historique : {why}",
+        'loc.option': 'Emplacement {id}',
+        'season.option': 'Hiver {s}–{e}',
+        'range': 'Historique du {from} au {to}',
+        'ev.loading': 'Chargement des événements de pointe…',
+        'ev.unavailable': 'Événements de pointe non disponibles : {why}',
+        'ev.note': "Événements de pointe : données ouvertes d'Hydro-Québec, crédit hivernal ({offer}){plus}.",
+        'ev.notePlus': ', plus les événements connus de Hilo Manager',
+        'ev.none': 'Aucun événement de pointe cet hiver avec un historique enregistré.',
+        'temp.noHubLocation': "le hub n'a pas d'emplacement défini",
+        'temp.note': "Température extérieure : données du modèle Open-Meteo pour l'emplacement du hub ({coords}), pas une mesure de station.",
+        'temp.loading': 'Chargement de la température extérieure…',
+        'temp.unavailable': 'Température extérieure non disponible : {why}',
+        'tile.events': 'événements de pointe, hiver {s}–{e}',
+        'tile.eventsPartial': '({n} avec toutes leurs heures enregistrées)',
+        'tile.curtailed': 'énergie effacée, {n} événements',
+        'tile.limited': "événements où l'ajustement pour la température a été limité",
+        'tile.credit': 'crédit avant taxes, à {rates} ¢/kWh',
+        'note.oldRules': "Cette page applique les règles en vigueur depuis l'hiver 2025–26 : événements de 4 heures et limite de l'ajustement pour la température. À l'hiver 2024–25, les événements du matin duraient 3 heures (06:00–09:00) et la limite n'existait pas encore (elle s'applique depuis l'hiver 2025–26, décision D-2025-091 de la Régie), donc ces chiffres ne sont pas ceux qui ont été crédités cet hiver-là.",
+        'cal.legend': 'Cliquez sur un jour pour voir ses heures et son énergie de référence. <span class="e">AM / PM</span> : événement de pointe. Barré : aucune heure de pointe. Pâle : aucun historique enregistré. Sous chaque date : la température extérieure moyenne du jour.',
+        'cal.dow': 'D L M M J V S',
+        'btn.prev': '◀ événement',
+        'btn.prevTitle': 'Événement de pointe précédent',
+        'btn.next': 'événement ▶',
+        'btn.nextTitle': 'Événement de pointe suivant',
+        'lnk.dayHistory': "Ouvrir dans l'historique →",
+        'hourly.legend': '<span class="a">Vert</span> : la période d\'ancrage, dont la consommation fixe l\'ajustement pour la température; le trait est la moyenne de chaque heure sur la période de référence, et la consommation au-dessus (en vert) augmente l\'énergie de référence · <span class="e">violet</span> : l\'événement (ambre pâle quand ce n\'en est pas un); le <b>trait ambre</b> est la part de l\'énergie de référence de chaque heure, et la boîte pointillée en dessous est l\'énergie effacée · <span class="t">ligne rouge</span> : température extérieure, échelle de droite',
+        'hourly.noHours': 'Aucune heure enregistrée pour ce jour; les traits montrent la période de référence.',
+        'card.evChart': 'Énergie effacée par événement (kWh)',
+        'card.evChartLegend': "Cliquez sur une barre pour l'afficher plus haut. <b>Ambre</b> : ajustement pour la température limité. Pointillé : 40 kWh.",
+        'card.evTable': 'Événements de cet hiver',
+        'card.evTableLegend': "Cliquez sur une ligne pour l'afficher plus haut.",
+        'term.refEnergy': 'Énergie de référence',
+        'term.curtailed': 'Énergie effacée',
+        'term.peakEvent': 'événement de pointe',
+        'term.adjustment': 'Ajustement pour la température',
+        'term.anchor': "Période d'ancrage",
+        'term.eventHours': "Heures de l'événement",
+        'term.outdoors': 'Extérieur',
+        'tip.peakEvent': 'événement de pointe {slots}',
+        'tip.noPeak': 'aucune heure de pointe',
+        'tip.noHistory': 'aucun historique',
+        'tip.meanOut': "{t} en moyenne à l'extérieur",
+        'tip.hour': '{a} à {b} : {v}',
+        'tip.noValue': 'aucune valeur',
+        'tip.refPeriod': 'période de référence {v} kWh',
+        'tip.share': "part de l'énergie de référence {v} kWh",
+        'tip.event': '{day} {slot} : {c} kWh effacés (énergie de référence {t} kWh, consommé {u} kWh{lim})',
+        'tip.limited': ', ajustement limité',
+        'day.total': ' : {v} kWh',
+        'day.peakEvent': 'événement de pointe {slot}',
+        'day.notEvent': 'pas un événement',
+        'day.outdoors': "à l'extérieur, de {lo} à {hi}",
+        'opt.floor': 'Réduire au plancher, {v} kWh',
+        'opt.asConsumed': 'Tel que consommé',
+        'opt.exact40': 'Effacer exactement 40 kWh',
+        'opt.thUse': "Consommation pendant l'événement",
+        'opt.thCut': 'Énergie effacée (kWh)',
+        'opt.thCredit': 'Crédit',
+        'opt.thAbove': 'Énergie au-dessus du plancher',
+        'opt.thNet': 'Crédit moins cette énergie',
+        'opt.thCompare': 'Comparé à une réduction à {v}&nbsp;kWh',
+        'opt.less': '{v} de moins',
+        'opt.more': '{v} de plus',
+        'opt.legend': "Crédit à {cc} ¢/kWh. Énergie au-dessus du plancher au prix de la deuxième tranche du tarif D, {ec} ¢/kWh. Une réduction plus profonde est en partie consommée plus tard de toute façon, quand le chauffage ramène le domicile à température après l'événement; ce n'est pas compté, donc le coût d'énergie affiché est un maximum.",
+        'cu.ref': 'énergie de référence {v} kWh',
+        'cu.lim': 'avec la limite {v} kWh',
+        'cu.cliff': 'efface exactement 40 kWh : {v} kWh',
+        'cu.legend': 'Cumul pendant l\'événement : <span style="color:var(--primary)">zone pâle</span>, la part de l\'énergie de référence de chaque heure',
+        'cu.used': '<span class="e">zone foncée</span>, la consommation ({v} kWh{soFar})',
+        'cu.soFar': ', heures écoulées',
+        'sk.base': 'Période de référence, {win}',
+        'sk.adjSub': '{v} kWh, de {anc}',
+        'sk.lost': 'Au-delà de la limite',
+        'sk.lostSub': "{v} kWh d'ajustement non comptés",
+        'sk.over': "Au-dessus de l'énergie de référence",
+        'sk.cutTo': 'Réduit à {v}',
+        'sk.consumed': 'Consommé',
+        'sk.wouldCut': 'Serait effacé',
+        'sk.counted': '+{v} kWh comptés',
+        'src.app': 'Hilo Manager, {when}',
+        'src.page': "calculé dans cette page à partir des fichiers d'historique",
+        'head.atMost': "L'énergie de référence dépend de la consommation de {anc}. Consommez alors au plus <b>{v}</b> kWh, puis réduisez à {floor} kWh pendant {win}, pour effacer 40 kWh.",
+        'head.atLeast': "L'énergie de référence dépend de la consommation de {anc}. Consommer alors au moins <b>{v}</b> kWh puis réduire au maximum efface environ <b>{cut}</b> kWh.",
+        'head.curtailed': '<b>{c}</b> kWh effacés{money}.',
+        'head.limited': "La limite s'est appliquée : sans elle, {v} kWh auraient été effacés, plus de 40 kWh.",
+        'head.none': "Aucune énergie effacée : {used} kWh consommés, au-dessus de l'énergie de référence de {target} kWh.",
+        'head.plan': 'Énergie de référence <b>{target}</b> kWh. Réduire à {floor} kWh pendant {win} efface <b>{cut}</b> kWh',
+        'head.planKeep': '; consommer plutôt {v} kWh efface 40 kWh et rapporte plus.',
+        'head.keepGain': "Consommer {v} kWh, juste assez pour effacer exactement 40 kWh, aurait rapporté {gain} de plus qu'une réduction à {floor} kWh.",
+        'head.notEvent': "Pas un événement de pointe; calculé comme s'il en était un.",
+        'calc.why3': "4 heures d'événement sur 3 heures d'ancrage",
+        'calc.why2': "4 heures d'événement sur 2 heures d'ancrage",
+        'calc.eventHours': "<b>Heures de l'événement</b>, moyennes de la période de référence : <b>{v}</b> kWh",
+        'calc.anchor': "<b>Période d'ancrage</b> ({anc}), moyennes de la période de référence : <b>{v}</b> kWh",
+        'calc.adj': '<b>Ajustement pour la température</b> = ({used} kWh consommés {anc} − {ref} kWh) × {k} = <b>{adj}</b> kWh; {k}, soit {why}',
+        'calc.ref': "<b>Énergie de référence</b> = {base} kWh + {adj} kWh = <b>{t}</b> kWh (la limite de consommation originale de l'app Hilo)",
+        'calc.limit': "Si l'énergie effacée dépasse 40 kWh, l'ajustement est <b>limité</b> à 2 × {ref} kWh × {k} = {adj} kWh : énergie de référence <b>{t}</b> kWh (la limite de consommation ajustée de l'app Hilo)",
+        'calc.cut': "<b>Énergie effacée</b>, avec {used} kWh consommés pendant l'événement : {detail}<b>{c}</b> kWh",
+        'calc.cutDetail': '{t} kWh − {used} kWh = {d} kWh dépasse 40 kWh, donc {cap} kWh − {used} kWh = ',
+        'calc.floor': "Avec l'événement réduit à {floor} kWh : {cut} kWh effacés",
+        'calc.floorKeep': "; consommer {v} kWh pendant l'événement efface 40 kWh, ce qui rapporte plus.",
+        'th.hour': 'Heure (kWh)',
+        'th.avg': 'Moyenne',
+        'th.event': 'Événement',
+        'th.ref': 'Énergie de référence (kWh)',
+        'th.lim': 'Avec la limite (kWh)',
+        'th.used': 'Consommé (kWh)',
+        'th.ifCut': 'Si réduit à {v}&nbsp;kWh',
+        'th.outEvent': "Extérieur pendant l'événement",
+        'th.outRef': 'Période de référence, mêmes heures',
+        'ev.limited': '(limité)',
+        'how.weekend': 'jours de fin de semaine',
+        'how.weekdays': 'jours de semaine',
+        'how.skipped': 'Exclus : {list}.',
+        'how.summary': "Comment Hydro-Québec la calcule (Tarifs d'électricité, article 2.59)",
+        'how.note': 'Période de référence : les 5 {kind} précédents sans événement de pointe.{skipped} Valeurs barrées : le minimum et le maximum de chaque heure, exclus de la moyenne. Lignes ombrées : la période d\'ancrage.',
+        'how.missing': "{n} heures de référence n'ont pas encore de valeur.",
+    },
+};
+// The page's language: #lang= in the URL, else hilo-<location>-ui.json from Hilo Manager, else French.
+const hashLang = (l => l === 'fr' || l === 'en' ? l : null)(new URLSearchParams(location.hash.slice(1)).get('lang'));
+let LANG = hashLang || 'fr';
+const LOC = () => LANG === 'fr' ? 'fr-CA' : 'en-CA';
+const t = (key, args = {}) => {
+    let s = (I18N[LANG] || {})[key] ?? I18N.en[key] ?? key;
+    for (const [k, v] of Object.entries(args)) s = s.split(`{${k}}`).join(v == null ? '' : String(v));
+    return s;
+};
+// The text that is in the HTML before the script runs.
+function applyStatic() {
+    document.documentElement.lang = LANG;
+    document.title = t('page.title');
+    $('hdrTitle').textContent = t('hdr.title');
+    $('toHistory').textContent = t('hdr.toHistory');
+    if (!wcSel) $('toHistory').href = `hilo-history.html#lang=${LANG}`;
+    $('loc').setAttribute('aria-label', t('hdr.locLabel'));
+    $('season').setAttribute('aria-label', t('hdr.seasonLabel'));
+    // Both run before the history loads, while these still hold their first text.
+    $('range').textContent = t('hdr.loading');
+    if ($('status')) $('status').textContent = t('status.listing');
+}
+
 // Hydro-Québec's winter credit (Rate D, Winter Credit Option), from Hilo Manager's month files
 // (hilo-<location>-energy-YYYY-MM.json) and its last computation (hilo-<location>-peak-target.json).
-// The URL hash picks the day and window: #day=YYYY-MM-DD&start=6|16&loc=<location>.
+// The URL hash picks the day and window: #day=YYYY-MM-DD&start=6|16&loc=<location>, and #lang=fr|en the language.
 const FILE_RE = /^hilo-(.+)-energy-(\d{4}-\d{2})\.json$/;
 // Actual peak events: Hydro-Québec open data, offer CPC-D. The API allows cross-origin reads; times come back in UTC.
 const EVENTS_URL = 'https://donnees.hydroquebec.com/api/explore/v2.1/catalog/datasets/evenements-pointe/records';
@@ -188,14 +481,16 @@ const creditCents = day => (CREDIT_RATES.find(([from]) => day >= from) || [])[1]
 // 40 kWh first block. The 2027 price is not on file.
 const ENERGY_RATES = [['2027-04-01', null], ['2026-04-01', 11.142], ['2025-04-01', 10.652]];
 const energyCents = day => (ENERGY_RATES.find(([from]) => day >= from) || [])[1] ?? null;
-const money = v => (v < 0 ? '−$' : '$') + fmt(Math.abs(v), 2);
-const dollars = (kwh, day) => creditCents(day) == null ? '' : '$' + fmt(kwh * creditCents(day) / 100, 2);
+// Dollars as each language writes them: $12.34 or 12,34 $.
+const cash = (v, d = 2) => LANG === 'fr' ? fmt(v, d) + '\u00a0$' : '$' + fmt(v, d);
+const money = v => (v < 0 ? '−' : '') + cash(Math.abs(v), 2);
+const dollars = (kwh, day) => creditCents(day) == null ? '' : cash(kwh * creditCents(day) / 100, 2);
 const $ = id => document.getElementById(id);
-const fmt = (v, d = 1) => v == null ? '–' : v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
+const fmt = (v, d = 1) => v == null ? '–' : v.toLocaleString(LOC(), { minimumFractionDigits: d, maximumFractionDigits: d });
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const dayName = d => new Date(d + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
-const dayLabel = d => new Date(d + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+const monthShort = i => new Date(2020, i, 15).toLocaleDateString(LOC(), { month: 'short' });
+const dayName = d => new Date(d + 'T12:00:00').toLocaleDateString(LOC(), { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+const dayLabel = d => new Date(d + 'T12:00:00').toLocaleDateString(LOC(), { weekday: 'short', day: 'numeric', month: 'short' });
 const hourOf = start => +start.slice(11, 13);
 // The winter around a day, named by the year it starts: December to March.
 const seasonOf = day => { const m = +day.slice(5, 7); return m === 12 ? +day.slice(0, 4) : m <= 3 ? +day.slice(0, 4) - 1 : null; };
@@ -226,26 +521,34 @@ function readHash() {
 
 function writeHash() {
     if (!wcSel) return;
-    history.replaceState(null, '', `#day=${wcSel.day}&start=${wcSel.start}&loc=${encodeURIComponent(loc)}`);
-    $('toHistory').href = `hilo-history.html#day=${wcSel.day}&loc=${encodeURIComponent(loc)}`;
+    history.replaceState(null, '', `#day=${wcSel.day}&start=${wcSel.start}&loc=${encodeURIComponent(loc)}` + (hashLang ? `&lang=${hashLang}` : ''));
+    $('toHistory').href = `hilo-history.html#day=${wcSel.day}&loc=${encodeURIComponent(loc)}&lang=${LANG}`;
 }
 
 async function init() {
+    applyStatic();
     let list;
     try {
         list = await getJson('/hub/fileManager/json');
     } catch (e) {
-        return fail(`Could not list File Manager (${e.message}). Open this page from the hub's own address.`);
+        return fail(t('err.list', { why: e.message }));
     }
     for (const f of list.files || []) {
         const m = FILE_RE.exec(f.name);
         if (m) (files[m[1]] = files[m[1]] || []).push({ month: m[2], name: f.name, date: f.date });
     }
     const locs = Object.keys(files).sort();
-    if (!locs.length) return fail('No Hilo history files yet. Hilo Manager writes them after its first hourly read.');
+    if (!locs.length) return fail(t('err.noFiles'));
     const h = readHash();
     const sel = $('loc');
-    sel.innerHTML = locs.map(l => `<option value="${esc(l)}">Location ${esc(l)}</option>`).join('');
+    const first = locs.includes(h.loc) ? h.loc : locs[0];
+    // Without #lang=, the language Hilo Manager last set for the location shown first.
+    const ui = !hashLang && (list.files || []).find(f => f.name === `hilo-${first}-ui.json`);
+    if (ui) {
+        const doc = await getJson(`/local/${encodeURIComponent(ui.name)}?v=${encodeURIComponent(ui.date || Date.now())}`, 'force-cache').catch(() => null);
+        if (doc && (doc.lang === 'fr' || doc.lang === 'en') && doc.lang !== LANG) { LANG = doc.lang; applyStatic(); }
+    }
+    sel.innerHTML = locs.map(l => `<option value="${esc(l)}">${esc(t('loc.option', { id: l }))}</option>`).join('');
     sel.hidden = locs.length < 2;
     sel.onchange = () => loadLocation(sel.value, null);
     $('season').onchange = () => { season = +$('season').value; wcSel = null; render(); withTemps(); };
@@ -253,7 +556,6 @@ async function init() {
         const x = readHash();
         if (x.day && (!wcSel || x.day !== wcSel.day || x.start !== wcSel.start)) { wcSel = { day: x.day, start: x.start }; season = seasonOf(x.day) ?? season; render(); }
     });
-    const first = locs.includes(h.loc) ? h.loc : locs[0];
     sel.value = first;
     await loadLocation(first, h.day ? { day: h.day, start: h.start } : null);
 }
@@ -264,7 +566,7 @@ const monthUrl = f => `/local/${encodeURIComponent(f.name)}?v=${encodeURICompone
 
 async function loadLocation(l, want) {
     loc = l;
-    $('status') && ($('status').textContent = 'Reading the history files…');
+    $('status') && ($('status').textContent = t('status.reading'));
     const list = files[l].sort((a, b) => a.month.localeCompare(b.month));
     const docs = await Promise.all(list.map(f => getJson(monthUrl(f), 'force-cache').catch(() => null)));
     const all = {};
@@ -274,15 +576,15 @@ async function loadLocation(l, want) {
         return { date, hours, total: hours.reduce((s, x) => s + (x.kWh || 0), 0) };
     });
     dayMap = Object.fromEntries(days.map(d => [d.date, d]));
-    if (!days.length) return fail('The history files hold no days yet.');
+    if (!days.length) return fail(t('err.noDays'));
     wcFile = await getJson('/local/' + encodeURIComponent(`hilo-${l}-peak-target.json`)).catch(() => null);
     events = null;
-    eventNote = 'Loading peak events…';
+    eventNote = t('ev.loading');
     wcSel = want;
     pickSeason();
     render();
     withTemps();
-    loadEvents().then(() => { pickSeason(); render(); }, e => { eventNote = 'Peak events unavailable: ' + e.message; render(); });
+    loadEvents().then(() => { pickSeason(); render(); }, e => { eventNote = t('ev.unavailable', { why: e.message }); render(); });
 }
 
 // Outdoor temperature from Open-Meteo's historical API at the hub's coordinates, one winter at a time,
@@ -292,7 +594,7 @@ let hubPlace = null;
 async function loadSeasonTemps(s) {
     if (temps && temps.seasons.has(s)) return;
     hubPlace = hubPlace || await getJson('/hub/details/json');
-    if (hubPlace.latitude == null || hubPlace.longitude == null) throw new Error('the hub has no location set');
+    if (hubPlace.latitude == null || hubPlace.longitude == null) throw new Error(t('temp.noHubLocation'));
     const unit = hubPlace.tempScale === 'F' ? 'F' : 'C';
     const today = new Date().toISOString().slice(0, 10), end = `${s + 1}-04-01` < today ? `${s + 1}-04-01` : today;
     const q = new URLSearchParams({ latitude: hubPlace.latitude, longitude: hubPlace.longitude, start_date: `${s}-11-20`, end_date: end,
@@ -304,7 +606,8 @@ async function loadSeasonTemps(s) {
     (h.time || []).forEach((t, i) => { if (h.temperature_2m[i] != null) temps.byHour.set(t, h.temperature_2m[i]); });
     temps.seasons.add(s);
     days.forEach(d => d.hours.forEach(x => { if (temps.byHour.has(x.at)) x.t = temps.byHour.get(x.at); }));
-    tempNote = `Outdoor temperature: Open-Meteo model data for the hub's location (${fmt(+hubPlace.latitude, 2)}, ${fmt(+hubPlace.longitude, 2)}), not a station reading.`;
+    // French writes the decimal comma, so its coordinates are kept apart with a semicolon.
+    tempNote = t('temp.note', { coords: fmt(+hubPlace.latitude, 2) + (LANG === 'fr' ? ' ; ' : ', ') + fmt(+hubPlace.longitude, 2) });
 }
 const deg = (v, d = 1) => v == null ? '–' : fmt(v, d) + ' °' + (temps ? temps.unit : 'C');
 // Mean outdoor temperature of a day's clock hours (all hours when none are given).
@@ -316,8 +619,8 @@ function tempOf(day, hrs) {
 }
 function withTemps() {
     if (season == null) return;
-    tempNote = tempNote || 'Loading outdoor temperature…';
-    loadSeasonTemps(season).then(render, e => { tempNote = 'Outdoor temperature unavailable: ' + e.message; render(); });
+    tempNote = tempNote || t('temp.loading');
+    loadSeasonTemps(season).then(render, e => { tempNote = t('temp.unavailable', { why: e.message }); render(); });
 }
 
 // Every winter with history or an event; the chosen day's winter, else the latest.
@@ -326,12 +629,12 @@ function pickSeason() {
     wcSlots().forEach(x => { const s = seasonOf(x.day); if (s != null) ss.add(s); });
     const list = [...ss].sort((a, b) => b - a);
     const sel = $('season');
-    sel.innerHTML = list.map(s => `<option value="${s}">Winter ${s}–${String(s + 1).slice(2)}</option>`).join('');
+    sel.innerHTML = list.map(s => `<option value="${s}">${esc(t('season.option', { s, e: String(s + 1).slice(2) }))}</option>`).join('');
     const want = wcSel && seasonOf(wcSel.day);
     season = want != null ? want : list.includes(season) ? season : list[0];
     if (season != null) sel.value = String(season);
     const first = days[0].date, last = days[days.length - 1].date;
-    $('range').textContent = `History ${dayName(first)} to ${dayName(last)}`;
+    $('range').textContent = t('range', { from: dayName(first), to: dayName(last) });
 }
 
 async function loadEvents() {
@@ -348,8 +651,7 @@ async function loadEvents() {
         if (page.length < 100) break;
     }
     events = out;
-    eventNote = `Peak events: Hydro-Québec open data, winter credit (${EVENT_OFFER})` +
-        (wcFile && wcFile.events ? ', plus the events Hilo Manager knows of' : '') + '.';
+    eventNote = t('ev.note', { offer: EVENT_OFFER, plus: wcFile && wcFile.events ? t('ev.notePlus') : '' });
 }
 
 function fail(msg) {
@@ -533,7 +835,7 @@ function wcCompute(day, start) {
     const slots = wcSlots();
     const isEvent = slots.some(x => x.day === day && x.start === start);
     const fromApp = wcFile && (wcFile.results || []).find(r => r.day === day && r.startHour === start);
-    if (fromApp) return { ...fromApp, event: fromApp.event ?? isEvent, source: `Hilo Manager, ${wcFile.generated.replace('T', ' ').slice(0, 16)}` };
+    if (fromApp) return { ...fromApp, event: fromApp.event ?? isEvent, source: t('src.app', { when: wcFile.generated.replace('T', ' ').slice(0, 16) }) };
     const hours = wcHours();
     const back = start < 12 ? 5 : 4, alen = start < 12 ? 3 : 2;
     const own = hours[day];
@@ -543,7 +845,7 @@ function wcCompute(day, start) {
     const used = own ? [0, 1, 2, 3].map(i => own[start + i]) : [];
     if (used.length && used.every(v => v != null)) r.used = used.reduce((s, v) => s + v, 0);
     r.event = isEvent;
-    r.source = 'computed in this page from the history files';
+    r.source = t('src.page');
     return r;
 }
 
@@ -559,7 +861,7 @@ function seasonEvents() {
 
 // ── Page ──────────────────────────────────────────────────────────────
 function render() {
-    if (season == null) return fail('No winter (December to March) in the history yet.');
+    if (season == null) return fail(t('err.noWinter'));
     const slots = wcSlots();
     if (!wcSel || seasonOf(wcSel.day) !== season) {
         const next = wcFile && (wcFile.results || []).find(r => r.event && seasonOf(r.day) === season);
@@ -570,26 +872,26 @@ function render() {
     }
     const evs = seasonEvents(), scored = evs.filter(e => e.scored);
     const allInSeason = slots.filter(x => seasonOf(x.day) === season);
-    const kwh = scored.reduce((s, e) => s + e.c, 0);
+    const kwh = scored.reduce((s, e) => s + e.c, 0), yy = String(season + 1).slice(2);
     $('main').innerHTML = `
     <div class="tiles">
-        ${tile(String(allInSeason.length), `peak events, winter ${season}–${String(season + 1).slice(2)}` + (scored.length < allInSeason.length ? ` (${scored.length} with every hour on file)` : ''))}
-        ${tile(scored.length ? fmt(kwh) + ' kWh' : '–', `energy curtailed, ${scored.length} events`)}
-        ${tile(scored.length ? `${scored.filter(e => e.capped).length}` : '–', 'events where the temperature adjustment was limited')}
-        ${tile(scored.length && scored.every(e => creditCents(e.x.day) != null) ? '$' + fmt(scored.reduce((t, e) => t + e.c * creditCents(e.x.day) / 100, 0), 0) : '–', `credit before taxes, at ${[...new Set(scored.map(e => creditCents(e.x.day)).filter(v => v != null))].map(v => fmt(v, 3)).join(' / ') || '–'} ¢/kWh`)}
+        ${tile(String(allInSeason.length), t('tile.events', { s: season, e: yy }) + (scored.length < allInSeason.length ? ' ' + t('tile.eventsPartial', { n: scored.length }) : ''))}
+        ${tile(scored.length ? fmt(kwh) + ' kWh' : '–', t('tile.curtailed', { n: scored.length }))}
+        ${tile(scored.length ? `${scored.filter(e => e.capped).length}` : '–', t('tile.limited'))}
+        ${tile(scored.length && scored.every(e => creditCents(e.x.day) != null) ? cash(scored.reduce((a, e) => a + e.c * creditCents(e.x.day) / 100, 0), 0) : '–', t('tile.credit', { rates: [...new Set(scored.map(e => creditCents(e.x.day)).filter(v => v != null))].map(v => fmt(v, 3)).join(' / ') || '–' }))}
     </div>
-    ${season < 2025 ? `<div class="card legend" style="border-color:var(--peak-text)">This page applies the rules in force from winter 2025–26: 4-hour events and the limit on the temperature adjustment. In winter 2024–25 morning events lasted 3 hours (06:00–09:00) and the limit did not exist yet (it applies from winter 2025–26, Régie decision D-2025-091), so these figures are not what was credited that winter.</div>` : ''}
-    <div class="card"><h2><span>Winter ${season}–${String(season + 1).slice(2)}</span><span class="legend">Click a day for its hours and reference energy. <span class="e">AM / PM</span>: peak event. Struck: no peak hours. Pale: no history on file. Under each date: the day's mean outdoor temperature.</span></h2>
+    ${season < 2025 ? `<div class="card legend" style="border-color:var(--peak-text)">${t('note.oldRules')}</div>` : ''}
+    <div class="card"><h2><span>${t('season.option', { s: season, e: yy })}</span><span class="legend">${t('cal.legend')}</span></h2>
         <div class="cal" id="cal"></div><div class="legend" style="margin-top:6px">${esc(eventNote)}</div><div class="legend">${esc(tempNote)}</div></div>
     <div class="card"><h2><span id="dayTitle"></span><span class="bar-ctl">
         <button id="wcAm">AM 06–10</button><button id="wcPm">PM 16–20</button>
-        <button id="wcPrev" title="Previous peak event">◀ event</button><button id="wcNext" title="Next peak event">event ▶</button>
-        <a id="dayHistory" href="#">Open in history →</a></span></h2>
+        <button id="wcPrev" title="${t('btn.prevTitle')}">${t('btn.prev')}</button><button id="wcNext" title="${t('btn.nextTitle')}">${t('btn.next')}</button>
+        <a id="dayHistory" href="#">${t('lnk.dayHistory')}</a></span></h2>
         <div id="hourly"></div>
-        <div class="legend" style="margin-top:6px"><span class="a">Green</span>: the anchor period, whose consumption sets the temperature adjustment; the tick is each hour's reference-period average, and consumption above it (green) raises the reference energy · <span class="e">purple</span>: the event (pale amber when not an event); the <b>amber tick</b> is each hour's share of the reference energy, and the dashed box under it is the energy curtailed · <span class="t">red line</span>: outdoor temperature, right scale</div></div>
-    <div class="card"><h2><span>Reference energy</span><span class="legend" id="wcSource"></span></h2><div id="wc"></div></div>
-    ${scored.length ? `<div class="card"><h2><span>Energy curtailed by event (kWh)</span><span class="legend">Click a bar to show it above. <b>Amber</b>: temperature adjustment limited. Dashed: 40 kWh.</span></h2><div id="evchart"></div></div>` : ''}
-    <div class="card"><h2><span>Events this winter</span><span class="legend">Click a row to show it above.</span></h2><div class="scroll" id="evtable"></div></div>`;
+        <div class="legend" style="margin-top:6px">${t('hourly.legend')}</div></div>
+    <div class="card"><h2><span>${t('term.refEnergy')}</span><span class="legend" id="wcSource"></span></h2><div id="wc"></div></div>
+    ${scored.length ? `<div class="card"><h2><span>${t('card.evChart')}</span><span class="legend">${t('card.evChartLegend')}</span></h2><div id="evchart"></div></div>` : ''}
+    <div class="card"><h2><span>${t('card.evTable')}</span><span class="legend">${t('card.evTableLegend')}</span></h2><div class="scroll" id="evtable"></div></div>`;
     drawSelection();
 }
 
@@ -618,15 +920,15 @@ function drawCalendar() {
     const months = [[season, 12], [season + 1, 1], [season + 1, 2], [season + 1, 3]];
     el.innerHTML = months.map(([y, m]) => {
         const first = new Date(Date.UTC(y, m - 1, 1)), n = new Date(Date.UTC(y, m, 0)).getUTCDate();
-        let s = `<div><h3>${MONTHS[m - 1]} ${y}</h3><div class="wk">` + ['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(x => `<div class="dn">${x}</div>`).join('');
+        let s = `<div><h3>${esc(monthShort(m - 1))} ${y}</h3><div class="wk">` + t('cal.dow').split(' ').map(x => `<div class="dn">${x}</div>`).join('');
         for (let i = 0; i < first.getUTCDay(); i++) s += '<div></div>';
         for (let d = 1; d <= n; d++) {
             const day = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
             const ev = slots.filter(x => x.day === day);
             const on = !!dayMap[day] || appDays.has(day);
-            const tip = dayName(day) + (ev.length ? ' · ' + ev.map(x => x.start < 12 ? 'AM' : 'PM').join(' + ') + ' peak event' : '') +
-                (np.has(day) ? ' · no peak hours' : '') + (dayMap[day] ? ` · ${fmt(dayMap[day].total)} kWh` : ' · no history') +
-                (tempOf(day) != null ? ` · ${deg(tempOf(day))} mean outdoors` : '');
+            const tip = dayName(day) + (ev.length ? ' · ' + t('tip.peakEvent', { slots: ev.map(x => x.start < 12 ? 'AM' : 'PM').join(' + ') }) : '') +
+                (np.has(day) ? ' · ' + t('tip.noPeak') : '') + (dayMap[day] ? ` · ${fmt(dayMap[day].total)} kWh` : ' · ' + t('tip.noHistory')) +
+                (tempOf(day) != null ? ' · ' + t('tip.meanOut', { t: deg(tempOf(day)) }) : '');
             s += `<div class="d ${on ? 'on' : 'off'}${ev.length ? ' ev' : ''}${np.has(day) ? ' np' : ''}${day === wcSel.day ? ' sel' : ''}" ${on ? `data-d="${day}"` : ''} title="${esc(tip)}">${d}` + (tempOf(day) != null ? `<span class="t">${fmt(tempOf(day), 0)}°</span>` : '') +
                 ev.map(x => `<span class="slot">${x.start < 12 ? 'AM' : 'PM'}</span>`).join('') + '</div>';
         }
@@ -640,8 +942,8 @@ function drawDay() {
     const d = dayMap[wcSel.day];
     const back = wcSel.start < 12 ? 5 : 4, alen = wcSel.start < 12 ? 3 : 2;
     const tk = d ? d.hours.filter(x => x.t != null).map(x => x.t) : [];
-    $('dayTitle').textContent = `${dayName(wcSel.day)}${d ? ': ' + fmt(d.total) + ' kWh' : ''} · ${r.event ? (wcSel.start < 12 ? 'AM' : 'PM') + ' peak event' : 'not an event'}` +
-        (tk.length ? ` · outdoors ${deg(Math.min(...tk))} to ${deg(Math.max(...tk))}` : '');
+    $('dayTitle').textContent = `${dayName(wcSel.day)}${d ? t('day.total', { v: fmt(d.total) }) : ''} · ${r.event ? t('day.peakEvent', { slot: wcSel.start < 12 ? 'AM' : 'PM' }) : t('day.notEvent')}` +
+        (tk.length ? ' · ' + t('day.outdoors', { lo: deg(Math.min(...tk)), hi: deg(Math.max(...tk)) }) : '');
     $('wcAm').className = wcSel.start < 12 ? 'on' : ''; $('wcPm').className = wcSel.start >= 12 ? 'on' : '';
     $('wcAm').onclick = () => select(wcSel.day, 6); $('wcPm').onclick = () => select(wcSel.day, 16);
     const slots = wcSlots(), key = s => s.day + String(s.start).padStart(2, '0');
@@ -649,7 +951,7 @@ function drawDay() {
     $('wcPrev').disabled = !prev; $('wcNext').disabled = !next;
     $('wcPrev').onclick = () => { season = seasonOf(prev.day); $('season').value = String(season); wcSel = { ...prev }; render(); };
     $('wcNext').onclick = () => { season = seasonOf(next.day); $('season').value = String(season); wcSel = { ...next }; render(); };
-    $('dayHistory').href = `hilo-history.html#day=${wcSel.day}&loc=${encodeURIComponent(loc)}`;
+    $('dayHistory').href = `hilo-history.html#day=${wcSel.day}&loc=${encodeURIComponent(loc)}&lang=${LANG}`;
     $('dayHistory').hidden = !d;
     // Hours by their clock hour; a 23- or 25-hour day keeps its own list.
     const hours = d ? d.hours : Array.from({ length: 24 }, (_, h) => ({ h, kWh: null }));
@@ -661,13 +963,13 @@ function drawDay() {
     const span = (h0, n, cls) => { const a = idx(h0), b = idx(h0 + n - 1); return a < 0 || b < 0 ? [] : [{ a, b: b + 1, cls }]; };
     const shade = [...span(wcSel.start - back, alen, 'anchor'), ...span(wcSel.start, 4, r.event ? 'event' : 'peak')];
     const el = $('hourly');
-    el.innerHTML = (d ? '' : '<div class="legend">No hours on file for this day yet; the ticks show the reference period.</div>') +
+    el.innerHTML = (d ? '' : `<div class="legend">${t('hourly.noHours')}</div>`) +
         bars(hours.map((x, i) => ({ key: i, value: x.kWh, label: String(x.h),
             ref: anchorH.has(x.h) ? ref[x.h] : null, over: anchorH.has(x.h),
             goal: eventH.has(x.h) && share != null ? Math.max(ref[x.h] + share, 0) : null })), { height: 200, shade, unitDigits: 2,
             line: hours.map(x => x.t ?? null),
-            fmtTip: v => { const x = hours[v.key]; return `${x.h}:00 to ${x.h + 1}:00: ${x.kWh == null ? 'no value' : fmt(x.kWh, 2) + ' kWh'}` +
-                (anchorH.has(x.h) ? ` · reference period ${fmt(ref[x.h], 2)} kWh` : '') + (eventH.has(x.h) && share != null ? ` · share of the reference energy ${fmt(ref[x.h] + share, 2)} kWh` : '') +
+            fmtTip: v => { const x = hours[v.key]; return t('tip.hour', { a: `${x.h}:00`, b: `${x.h + 1}:00`, v: x.kWh == null ? t('tip.noValue') : fmt(x.kWh, 2) + ' kWh' }) +
+                (anchorH.has(x.h) ? ' · ' + t('tip.refPeriod', { v: fmt(ref[x.h], 2) }) : '') + (eventH.has(x.h) && share != null ? ' · ' + t('tip.share', { v: fmt(ref[x.h] + share, 2) }) : '') +
                 (x.t != null ? ` · ${deg(x.t)}` : ''); } });
     wire(el);
 }
@@ -689,15 +991,15 @@ function eventOptions(r) {
         const credit = cc == null ? null : c * cc / 100, energy = ec == null ? null : extra * ec / 100;
         return { label, used, c, extra, credit, energy, net: credit == null || energy == null ? null : credit - energy };
     };
-    const rows = [row(`Cut to the floor, ${fmt(floor)} kWh`, floor), row('As consumed', r.used)];
+    const rows = [row(t('opt.floor', { v: fmt(floor) }), floor), row(t('opt.asConsumed'), r.used)];
     const keep = r.target - WC_CAP;
-    if (r.target > r.cappedTarget && keep > floor && Math.abs(keep - r.used) > 0.05) rows.push(row('Curtail exactly 40 kWh', keep));
+    if (r.target > r.cappedTarget && keep > floor && Math.abs(keep - r.used) > 0.05) rows.push(row(t('opt.exact40'), keep));
     const [best, actual] = rows;
     const ordered = rows.slice().sort((a, b) => a.used - b.used);
-    const table = `<div class="scroll" style="margin:6px 0 10px"><table><tr><th>Event consumption</th><th>kWh</th><th>Energy curtailed (kWh)</th><th>Credit</th><th>Energy above the floor</th><th>Credit minus that energy</th><th>Compared with cutting to ${fmt(floor)}&nbsp;kWh</th></tr>` +
+    const table = `<div class="scroll" style="margin:6px 0 10px"><table><tr><th>${t('opt.thUse')}</th><th>kWh</th><th>${t('opt.thCut')}</th><th>${t('opt.thCredit')}</th><th>${t('opt.thAbove')}</th><th>${t('opt.thNet')}</th><th>${t('opt.thCompare', { v: fmt(floor) })}</th></tr>` +
         ordered.map(x => `<tr${x === actual ? ' class="selrow"' : ''}><td>${esc(x.label)}</td><td>${fmt(x.used)}</td><td>${fmt(x.c)}</td><td>${x.credit == null ? '–' : money(x.credit)}</td>` +
-            `<td>${fmt(x.extra)} kWh${x.energy == null ? '' : ', ' + money(x.energy)}</td><td>${x.net == null ? '–' : money(x.net)}</td><td>${x === best || x.net == null || best.net == null ? '' : `$${fmt(Math.abs(x.net - best.net), 2)} ${x.net < best.net ? 'less' : 'more'}`}</td></tr>`).join('') +
-        `</table><div class="legend">Credit at ${cc == null ? '–' : fmt(cc, 3)} ¢/kWh. Energy above the floor at Rate D's second tier, ${ec == null ? '–' : fmt(ec, 3)} ¢/kWh. A deeper cut is partly consumed later anyway, when the heating brings the house back up after the event; that is not counted, so the energy cost shown is the most it could be.</div></div>`;
+            `<td>${fmt(x.extra)} kWh${x.energy == null ? '' : ', ' + money(x.energy)}</td><td>${x.net == null ? '–' : money(x.net)}</td><td>${x === best || x.net == null || best.net == null ? '' : t(x.net < best.net ? 'opt.less' : 'opt.more', { v: cash(Math.abs(x.net - best.net), 2) })}</td></tr>`).join('') +
+        `</table><div class="legend">${t('opt.legend', { cc: cc == null ? '–' : fmt(cc, 3), ec: ec == null ? '–' : fmt(ec, 3) })}</div></div>`;
     // Consuming up to the 40 kWh point pays only when the limit keeps a deep cut under 40 kWh.
     const keepRow = rows[2] && rows[2].net != null && best.net != null && rows[2].net > best.net ? rows[2] : null;
     return { table, keep: keepRow && { used: keepRow.used, gain: keepRow.net - best.net } };
@@ -718,9 +1020,9 @@ function cumulative(r) {
         if (usedCum.length === i + 1 && own[h] != null) usedCum.push(usedCum[i] + own[h]);
     });
     const lines = [];
-    if (r.target != null) lines.push({ v: r.target, cls: 'orig', label: `reference energy ${fmt(r.target)} kWh` });
-    lines.push({ v: r.cappedTarget, cls: 'lim', label: `with the limit ${fmt(r.cappedTarget)} kWh` });
-    if (r.target != null && r.target - WC_CAP > 0 && r.target > r.cappedTarget) lines.push({ v: r.target - WC_CAP, cls: 'cliff', label: `curtails exactly 40 kWh: ${fmt(r.target - WC_CAP)} kWh` });
+    if (r.target != null) lines.push({ v: r.target, cls: 'orig', label: t('cu.ref', { v: fmt(r.target) }) });
+    lines.push({ v: r.cappedTarget, cls: 'lim', label: t('cu.lim', { v: fmt(r.cappedTarget) }) });
+    if (r.target != null && r.target - WC_CAP > 0 && r.target > r.cappedTarget) lines.push({ v: r.target - WC_CAP, cls: 'cliff', label: t('cu.cliff', { v: fmt(r.target - WC_CAP) }) });
     const W = 1000, H = 240, L = 44, R = 230, T = 12, B = 26;
     const top = Math.max(...refCum, ...usedCum, ...lines.map(l => l.v)) * 1.08;
     const step = niceStep(top), ytop = Math.ceil(top / step) * step;
@@ -737,8 +1039,8 @@ function cumulative(r) {
         s += `<line class="${l.cls}" x1="${L}" x2="${W - R}" y1="${y(l.v)}" y2="${y(l.v)}"/><text class="${l.cls}" x="${W - R + 8}" y="${ly}">${esc(l.label)}</text>`;
     });
     hrs.concat(r.startHour + 4).forEach((h, i) => s += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${String(h).padStart(2, '0')}:00</text>`);
-    return s + `</svg><div class="legend">Summed through the event: <span style="color:var(--primary)">pale area</span>, each hour's share of the reference energy` +
-        (usedCum.length > 1 ? ` · <span class="e">dark area</span>, the consumption (${fmt(usedCum[usedCum.length - 1])} kWh${usedCum.length < 5 ? ', hours so far' : ''})` : '') + `</div>`;
+    return s + `</svg><div class="legend">${t('cu.legend')}` +
+        (usedCum.length > 1 ? ' · ' + t('cu.used', { v: fmt(usedCum[usedCum.length - 1]), soFar: usedCum.length < 5 ? t('cu.soFar') : '' }) : '') + `</div>`;
 }
 
 // Ribbons: what makes the target (usual use, plus or minus the anchor adjustment) and where it goes
@@ -754,17 +1056,17 @@ function sankey(r) {
     const node = (col, v, cls, label, sub) => (N.push({ col, v, cls, label, sub }), N.length - 1);
     const link = (a, b, v, cls, label) => { if (v > 1e-6) Lk.push({ a, b, v, cls, label }); };
     const k = r.startHour < 12 ? '4/3' : '2';
-    const base = node(0, r.base, 'base', `Reference period, ${win}`, `${fmt(r.base)} kWh`);
-    const up = tgt > r.base ? node(0, tgt - r.base, 'up', 'Temperature adjustment', `+${fmt(tgt - r.base)} kWh, from ${anc}`) : null;
-    const T = node(1, eff, 'tgt', 'Reference energy', `${fmt(eff)} kWh`);
-    const lost = limited ? node(1, tgt - eff, 'lost', 'Over the limit', `${fmt(tgt - eff)} kWh of adjustment not counted`) : null;
-    const down = tgt < r.base ? node(1, r.base - tgt, 'down', 'Temperature adjustment', `−${fmt(r.base - tgt)} kWh, from ${anc}`) : null;
-    const over = used > eff ? node(1, used - eff, 'over', 'Above the reference energy', `${fmt(used - eff)} kWh`) : null;
-    const U = node(2, used, 'used', plan ? `Cut to ${fmt(r.floor)}` : 'Consumed', `${fmt(used)} kWh`);
-    const C = c > 0 ? node(2, c, 'cut', plan ? 'Would be curtailed' : 'Energy curtailed', `${fmt(c)} kWh` + (dollars(c, r.day) ? ` · ${dollars(c, r.day)}` : '')) : null;
+    const base = node(0, r.base, 'base', t('sk.base', { win }), `${fmt(r.base)} kWh`);
+    const up = tgt > r.base ? node(0, tgt - r.base, 'up', t('term.adjustment'), t('sk.adjSub', { v: '+' + fmt(tgt - r.base), anc })) : null;
+    const T = node(1, eff, 'tgt', t('term.refEnergy'), `${fmt(eff)} kWh`);
+    const lost = limited ? node(1, tgt - eff, 'lost', t('sk.lost'), t('sk.lostSub', { v: fmt(tgt - eff) })) : null;
+    const down = tgt < r.base ? node(1, r.base - tgt, 'down', t('term.adjustment'), t('sk.adjSub', { v: '−' + fmt(r.base - tgt), anc })) : null;
+    const over = used > eff ? node(1, used - eff, 'over', t('sk.over'), `${fmt(used - eff)} kWh`) : null;
+    const U = node(2, used, 'used', plan ? t('sk.cutTo', { v: fmt(r.floor) }) : t('sk.consumed'), `${fmt(used)} kWh`);
+    const C = c > 0 ? node(2, c, 'cut', plan ? t('sk.wouldCut') : t('term.curtailed'), `${fmt(c)} kWh` + (dollars(c, r.day) ? ` · ${dollars(c, r.day)}` : '')) : null;
     link(base, T, Math.min(r.base, eff), 'base');
     // When the adjustment splits, its branch into the reference energy says how much of it counts.
-    if (up != null) link(up, T, eff - r.base, 'up', limited ? `+${fmt(eff - r.base)} kWh counted` : null);
+    if (up != null) link(up, T, eff - r.base, 'up', limited ? t('sk.counted', { v: fmt(eff - r.base) }) : null);
     if (lost != null) link(up, lost, tgt - eff, 'lost');
     if (down != null) link(base, down, r.base - tgt, 'down');
     link(T, U, Math.min(used, eff), 'used');
@@ -803,41 +1105,41 @@ function drawWc() {
     let head;
     if (r.target == null) {
         head = r.anchorPlan === 'at most'
-            ? `The reference energy depends on consumption during ${anc}. Consume at most <b>${fmt(r.anchorTarget)}</b> kWh then, and cut to ${fmt(r.floor)} kWh during ${win}, to curtail 40 kWh.`
-            : `The reference energy depends on consumption during ${anc}. Consuming at least <b>${fmt(r.anchorTarget)}</b> kWh then and cutting deep curtails about <b>${fmt(r.expectedCut)}</b> kWh.`;
+            ? t('head.atMost', { anc, v: fmt(r.anchorTarget), floor: fmt(r.floor), win })
+            : t('head.atLeast', { anc, v: fmt(r.anchorTarget), cut: fmt(r.expectedCut) });
     } else if (r.used != null) {
         const c = curtailed(r.target, r.cappedTarget, r.used), capped = r.target - r.used > WC_CAP && r.target > r.cappedTarget;
         // The table, the chart and the ribbons hold the rest; the sentence says the result and why the limit applied.
-        head = c > 0 ? `<b>${fmt(c)}</b> kWh curtailed${dollars(c, r.day) ? ', ' + dollars(c, r.day) : ''}.` +
-                (capped ? ` The limit applied: without it, ${fmt(r.target - r.used)} kWh would have been curtailed, more than 40 kWh.` : '')
-            : `No energy curtailed: ${fmt(r.used)} kWh consumed, above the reference energy of ${fmt(r.target)} kWh.`;
+        head = c > 0 ? t('head.curtailed', { c: fmt(c), money: dollars(c, r.day) ? ', ' + dollars(c, r.day) : '' }) +
+                (capped ? ' ' + t('head.limited', { v: fmt(r.target - r.used) }) : '')
+            : t('head.none', { used: fmt(r.used), target: fmt(r.target) });
     } else {
-        head = `Reference energy <b>${fmt(r.target)}</b> kWh. Cutting to ${fmt(r.floor)} kWh during ${win} curtails <b>${fmt(r.cut)}</b> kWh` +
-            (r.advice === 'keep' ? `; consuming ${fmt(r.keepUse)} kWh instead curtails 40 kWh and pays more.` : '.');
+        head = t('head.plan', { target: fmt(r.target), floor: fmt(r.floor), win, cut: fmt(r.cut) }) +
+            (r.advice === 'keep' ? t('head.planKeep', { v: fmt(r.keepUse) }) : '.');
     }
     const options = eventOptions(r);
-    if (options && options.keep) head += ` Consuming ${fmt(options.keep.used)} kWh, just enough to curtail exactly 40 kWh, would have paid $${fmt(options.keep.gain, 2)} more than cutting to ${fmt(r.floor)} kWh.`;
-    if (!r.event) head = `Not a peak event; computed as if it were one. ` + head;
-    const k = r.startHour < 12 ? '4/3' : '2', kWhy = r.startHour < 12 ? '4 event hours over 3 anchor hours' : '4 event hours over 2 anchor hours';
+    if (options && options.keep) head += ' ' + t('head.keepGain', { v: fmt(options.keep.used), gain: cash(options.keep.gain, 2), floor: fmt(r.floor) });
+    if (!r.event) head = t('head.notEvent') + ' ' + head;
+    const k = r.startHour < 12 ? '4/3' : '2', kWhy = t(r.startHour < 12 ? 'calc.why3' : 'calc.why2');
     const lines = [];
     // Hydro-Québec's terms, Electricity Rates article 2.59.
-    lines.push(`<div><b>Event hours</b>, reference-period averages: <b>${fmt(r.base)}</b> kWh</div>`);
-    lines.push(`<div><b>Anchor period</b> (${anc}), reference-period averages: <b>${fmt(r.anchorRef)}</b> kWh</div>`);
+    lines.push(`<div>${t('calc.eventHours', { v: fmt(r.base) })}</div>`);
+    lines.push(`<div>${t('calc.anchor', { anc, v: fmt(r.anchorRef) })}</div>`);
     if (r.target != null) {
         const aUsed = (r.target - r.base) / r.k + r.anchorRef;
-        lines.push(`<div><b>Temperature adjustment</b> = (${fmt(aUsed)} kWh consumed ${anc} − ${fmt(r.anchorRef)} kWh) × ${k} = <b>${fmt(r.target - r.base)}</b> kWh; ${k} is ${kWhy}</div>`);
-        lines.push(`<div><b>Reference energy</b> = ${fmt(r.base)} kWh + ${fmt(r.target - r.base)} kWh = <b>${fmt(r.target)}</b> kWh (the Hilo app's original consumption limit)</div>`);
+        lines.push(`<div>${t('calc.adj', { used: fmt(aUsed), anc, ref: fmt(r.anchorRef), k, adj: fmt(r.target - r.base), why: kWhy })}</div>`);
+        lines.push(`<div>${t('calc.ref', { base: fmt(r.base), adj: fmt(r.target - r.base), t: fmt(r.target) })}</div>`);
     }
-    lines.push(`<div>If the energy curtailed exceeds 40 kWh, the adjustment is <b>limited</b> to 2 × ${fmt(r.anchorRef)} kWh × ${k} = ${fmt(r.cappedTarget - r.base)} kWh: reference energy <b>${fmt(r.cappedTarget)}</b> kWh (the Hilo app's adjusted consumption limit)</div>`);
+    lines.push(`<div>${t('calc.limit', { ref: fmt(r.anchorRef), k, adj: fmt(r.cappedTarget - r.base), t: fmt(r.cappedTarget) })}</div>`);
     if (r.target != null) {
         if (r.used != null) {
             const c = curtailed(r.target, r.cappedTarget, r.used), capped = r.target - r.used > WC_CAP && r.target > r.cappedTarget;
-            lines.push(`<div><b>Energy curtailed</b>, with ${fmt(r.used)} kWh consumed during the event: ${capped ? `${fmt(r.target)} kWh − ${fmt(r.used)} kWh = ${fmt(r.target - r.used)} kWh exceeds 40 kWh, so ${fmt(r.cappedTarget)} kWh − ${fmt(r.used)} kWh = ` : ''}<b>${fmt(c)}</b> kWh</div>`);
+            lines.push(`<div>${t('calc.cut', { used: fmt(r.used), c: fmt(c), detail: capped ? t('calc.cutDetail', { t: fmt(r.target), used: fmt(r.used), d: fmt(r.target - r.used), cap: fmt(r.cappedTarget) }) : '' })}</div>`);
         }
-        lines.push(`<div>With the event cut to ${fmt(r.floor)} kWh: ${fmt(r.cut)} kWh curtailed` + (r.advice === 'keep' ? `; consuming ${fmt(r.keepUse)} kWh during the event curtails 40 kWh, which pays more.` : '.') + '</div>');
+        lines.push(`<div>${t('calc.floor', { floor: fmt(r.floor), cut: fmt(r.cut) })}` + (r.advice === 'keep' ? t('calc.floorKeep', { v: fmt(r.keepUse) }) : '.') + '</div>');
     }
     const own = wcHours()[r.day] || {};
-    let t = `<table><tr><th>Hour (kWh)</th>${r.refDays.map(d => `<th>${esc(dayLabel(d))}</th>`).join('')}<th>Average</th><th>${esc(dayLabel(r.day))}</th></tr>`;
+    let tbl = `<table><tr><th>${t('th.hour')}</th>${r.refDays.map(d => `<th>${esc(dayLabel(d))}</th>`).join('')}<th>${t('th.avg')}</th><th>${esc(dayLabel(r.day))}</th></tr>`;
     const sumOwn = rows => rows.every(x => own[x.hour] != null) ? fmt(rows.reduce((s, x) => s + own[x.hour], 0), 2) : '–';
     const block = (rows, label, total) => rows.map(x => `<tr class="${x.anchor ? 'anc' : ''}"><td>${x.hour}:00</td>` +
             x.values.map((v, i) => `<td class="${i === x.low || i === x.high ? 'drop' : ''}">${v == null ? '–' : fmt(v, 2)}</td>`).join('') +
@@ -847,16 +1149,17 @@ function drawWc() {
     const tempRow = rows => {
         if (!temps) return '';
         const hrs = rows.map(x => x.hour), ts = r.refDays.map(d => tempOf(d, hrs)), known = ts.filter(v => v != null);
-        return `<tr class="temp"><td>Outdoors</td>${ts.map(v => `<td>${deg(v)}</td>`).join('')}<td>${known.length ? deg(known.reduce((a, b) => a + b, 0) / known.length) : '–'}</td><td>${deg(tempOf(r.day, hrs))}</td></tr>`;
+        return `<tr class="temp"><td>${t('term.outdoors')}</td>${ts.map(v => `<td>${deg(v)}</td>`).join('')}<td>${known.length ? deg(known.reduce((a, b) => a + b, 0) / known.length) : '–'}</td><td>${deg(tempOf(r.day, hrs))}</td></tr>`;
     };
-    t += block(r.rows.filter(x => x.anchor), 'Anchor period', r.anchorRef) + block(r.rows.filter(x => !x.anchor), 'Event hours', r.base) + '</table>';
-    const kind = isWeekend(r.day) ? 'weekend days' : 'weekdays';
-    const skipped = r.skipped.length ? ` Skipped: ${r.skipped.map(([d, why]) => `${dayLabel(d)} (${why === 'event' ? 'peak event' : 'no peak hours'})`).join(', ')}.` : '';
+    tbl += block(r.rows.filter(x => x.anchor), t('term.anchor'), r.anchorRef) + block(r.rows.filter(x => !x.anchor), t('term.eventHours'), r.base) + '</table>';
+    const kind = t(isWeekend(r.day) ? 'how.weekend' : 'how.weekdays');
+    // r.skipped holds peakTarget's own reasons, 'event' or 'no peak hours'.
+    const skipped = r.skipped.length ? ' ' + t('how.skipped', { list: r.skipped.map(([d, why]) => `${dayLabel(d)} (${why === 'event' ? t('term.peakEvent') : t('tip.noPeak')})`).join(', ') }) : '';
     el.innerHTML = `<div class="headline">${head}</div>${options ? options.table : ''}${cumulative(r)}${sankey(r)}` +
-        `<details class="how"${wcHowOpen ? ' open' : ''}><summary>How Hydro-Québec computes it (Electricity Rates, article 2.59)</summary>` +
-        `<div class="calc">${lines.join('')}</div><div class="scroll">${t}</div>` +
-        `<div class="legend wcnote">Reference period: the 5 ${kind} before, without a peak event.${esc(skipped)} Struck values: each hour's minimum and maximum, left out of the average. Shaded rows: the anchor period.` +
-        (r.missing.length ? ` ${r.missing.length} reference hours have no value yet.` : '') + `</div></details>`;
+        `<details class="how"${wcHowOpen ? ' open' : ''}><summary>${t('how.summary')}</summary>` +
+        `<div class="calc">${lines.join('')}</div><div class="scroll">${tbl}</div>` +
+        `<div class="legend wcnote">${t('how.note', { kind, skipped: esc(skipped) })}` +
+        (r.missing.length ? ' ' + t('how.missing', { n: r.missing.length }) : '') + `</div></details>`;
     el.querySelector('details').ontoggle = e => wcHowOpen = e.target.open;
 }
 
@@ -871,23 +1174,23 @@ function drawEvents() {
     const selKey = `${wcSel.day}|${wcSel.start}`;
     const ch = $('evchart');
     if (ch) {
-        ch.innerHTML = bars(scored.map(e => ({ key: `${e.x.day}|${e.x.start}`, value: e.c, label: `${+e.x.day.slice(8)} ${MONTHS[+e.x.day.slice(5, 7) - 1]} ${e.x.start < 12 ? 'AM' : 'PM'}`,
+        ch.innerHTML = bars(scored.map(e => ({ key: `${e.x.day}|${e.x.start}`, value: e.c, label: `${+e.x.day.slice(8)} ${monthShort(+e.x.day.slice(5, 7) - 1)} ${e.x.start < 12 ? 'AM' : 'PM'}`,
             cls: `${e.x.day}|${e.x.start}` === selKey ? 'sel' : e.capped ? 'capped' : '' })),
             { height: 200, labelEvery: Math.max(1, Math.ceil(scored.length / 14)), hline: [WC_CAP],
-              fmtTip: v => { const e = scored.find(x => `${x.x.day}|${x.x.start}` === v.key); return `${dayName(e.x.day)} ${e.x.start < 12 ? 'AM' : 'PM'}: ${fmt(e.c)} kWh curtailed (reference energy ${fmt(e.r.target)} kWh, consumed ${fmt(e.r.used)} kWh${e.capped ? ', adjustment limited' : ''})`; } });
+              fmtTip: v => { const e = scored.find(x => `${x.x.day}|${x.x.start}` === v.key); return t('tip.event', { day: dayName(e.x.day), slot: e.x.start < 12 ? 'AM' : 'PM', c: fmt(e.c), t: fmt(e.r.target), u: fmt(e.r.used), lim: e.capped ? t('tip.limited') : '' }); } });
         wire(ch, k => { const [d, h] = k.split('|'); select(d, +h); });
     }
     const el = $('evtable');
-    if (!evs.length) { el.innerHTML = `<div class="legend">${events ? 'No peak event this winter with history on file.' : esc(eventNote)}</div>`; return; }
+    if (!evs.length) { el.innerHTML = `<div class="legend">${events ? t('ev.none') : esc(eventNote)}</div>`; return; }
     const floor = evs[0].r.floor;
-    el.innerHTML = `<table><tr><th>Event</th><th>Reference energy (kWh)</th><th>With the limit (kWh)</th><th>Consumed (kWh)</th><th>Energy curtailed (kWh)</th><th>If cut to ${fmt(floor)}&nbsp;kWh</th>${temps ? '<th>Outdoors during the event</th><th>Reference period, same hours</th>' : ''}</tr>` +
+    el.innerHTML = `<table><tr><th>${t('th.event')}</th><th>${t('th.ref')}</th><th>${t('th.lim')}</th><th>${t('th.used')}</th><th>${t('opt.thCut')}</th><th>${t('th.ifCut', { v: fmt(floor) })}</th>${temps ? `<th>${t('th.outEvent')}</th><th>${t('th.outRef')}</th>` : ''}</tr>` +
         evs.slice().reverse().map(({ x, r, c, capped }) =>
             `<tr class="click${`${x.day}|${x.start}` === selKey ? ' selrow' : ''}" data-d="${x.day}" data-h="${x.start}"><td>${esc(dayName(x.day))} ${x.start < 12 ? 'AM' : 'PM'}</td><td>${fmt(r.target)}</td><td>${fmt(r.cappedTarget)}</td>` +
-            `<td>${fmt(r.used)}</td><td>${fmt(c)}${capped ? ' (limited)' : ''}</td><td>${fmt(r.cut)}</td>` + (temps ? eventTemps(x.day, x.start, r) : '') + `</tr>`).join('') + '</table>';
+            `<td>${fmt(r.used)}</td><td>${fmt(c)}${capped ? ' ' + t('ev.limited') : ''}</td><td>${fmt(r.cut)}</td>` + (temps ? eventTemps(x.day, x.start, r) : '') + `</tr>`).join('') + '</table>';
     el.querySelectorAll('tr.click').forEach(row => row.onclick = () => { select(row.dataset.d, +row.dataset.h); $('dayTitle').scrollIntoView({ behavior: 'smooth', block: 'center' }); });
 }
 
-init().catch(e => fail('Could not read the history: ' + e.message));
+init().catch(e => fail(t('err.read', { why: e.message })));
 </script>
 </body>
 </html>

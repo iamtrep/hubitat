@@ -41,12 +41,24 @@ metadata {
     }
 
     preferences {
-        input name: "txtEnable",   type: "bool", title: "Enable info logging", defaultValue: true
-        input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false
+        input name: "txtEnable",   type: "bool", title: tr("log.info"), defaultValue: true
+        input name: "debugEnable", type: "bool", title: tr("log.debug"), defaultValue: false
     }
 }
 
 @Field static final String CODE_VERSION = "0.1.0"
+
+// Preference titles, in the language the parent app sets. Logs stay in English.
+@Field static final Map<String, Map<String, String>> I18N = [
+    en: [
+        "log.info" : "Enable info logging",
+        "log.debug": "Enable debug logging",
+    ],
+    fr: [
+        "log.info" : "Activer les journaux d'information",
+        "log.debug": "Activer les journaux de débogage",
+    ],
+] // end I18N
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final List<String> KWH_ATTRS = ["base", "anchorReference", "cappedTarget", "anchorTarget", "anchorUsed",
                                               "expectedCurtailment", "target", "keepUse"]
@@ -60,18 +72,28 @@ void updated() {
 
 void refresh() { parent?.peakRefresh() }
 
+// Called by the parent with its page's language.
+void setLanguage(String lang) { state.uiLang = lang }
+
+// state is empty while preferences are saved; the titles then don't show.
+private String tr(String key) {
+    return I18N[(state?.uiLang ?: "fr") as String]?.get(key) ?: I18N.en.get(key) ?: key
+}
+
 // ── Parent interface ──────────────────────────────────────────────────
 
 // Only the keys present are sent; a key present with a null value clears that attribute.
+// summaryLog, not an attribute, is the summary in English for the log.
 void updatePeak(Map m) {
     state.version = CODE_VERSION
     String before = device.currentValue("summary") as String
-    m.each { String k, v ->
+    String summaryLog = m.summaryLog as String
+    m.findAll { k, v -> k != "summaryLog" }.each { String k, v ->
         if (v == null) { device.deleteCurrentState(k); return }
         if (KWH_ATTRS.contains(k)) sendEvent(name: k, value: v, unit: "kWh")
         else sendEvent(name: k, value: v)
     }
-    if (m.summary && m.summary != before) logInfo m.summary as String
+    if (m.summary && m.summary != before) logInfo((summaryLog ?: m.summary) as String)
 }
 
 void logsOff() {

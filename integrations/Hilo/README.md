@@ -5,6 +5,8 @@ SPDX-License-Identifier: MIT
 
 # Hilo Integration
 
+*[Version française](README.fr.md)*
+
 Unofficial parent/child integration for [Hilo](https://www.hiloenergie.com/), Hydro-Québec's home energy service. The manager app logs in to a Hilo account, reads one location's hourly consumption, and keeps the full history in File Manager. A child device shows the day's energy and, pushed by Hilo about once a minute, the whole home's power from the utility meter.
 
 > **Note:** This integration is not affiliated with or endorsed by Hilo or Hydro-Québec. Report problems with it here, not to Hilo or Hydro-Québec.
@@ -70,6 +72,10 @@ The address works once. If the app reports a login error, click **Log in to Hilo
 The app is renamed "Hilo Manager - <location>"; change the name under **Name** on the app page. The device is named "Hilo <location>". It then reads the account's history into File Manager in the background (see [History files](#history-files)).
 
 One instance serves one Hilo location. For a second account or location, add another instance. A location already served by another instance is refused.
+
+## Language
+
+The app page, the devices' event descriptions and settings, the notifications and both HTML pages are in French or English. **Langue / Language** at the top of the app page picks one; it starts in French. The devices follow it at once; the pages follow it when opened from the app page's buttons, or, opened directly, from `hilo-<location>-ui.json` in File Manager. Logs are always in English. Hubitat's own screens and buttons (**Done**, **File Manager**) stay in English.
 
 ## Login
 
