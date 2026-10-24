@@ -333,6 +333,8 @@ Map deleteFilterPage(Map params) {
             }
         }
         state.filters = filters
+        Set<String> urls = filters.findAll { it.outputHttp && it.httpUrlEnc }.collect { it.httpUrlEnc as String } as Set
+        state.httpBackoff = ((state.httpBackoff ?: [:]) as Map).findAll { k, v -> k in urls }
     }
 
     state.remove("editingFilterIndex")
@@ -475,6 +477,8 @@ void uninstalled() {
 
 private void savePendingBridge() {
     if (!settings.containsKey("bLabel") || !settings.bLabel) {
+        // A page left without a name must not leave its index behind: the next edit link would open a new form.
+        state.remove("editingBridgeIndex")
         clearBridgeSettings()
         return
     }
@@ -556,6 +560,8 @@ private void populateSettingsFromFilter(Map filter) {
 
 private void savePendingFilter() {
     if (!settings.containsKey("fLabel") || !settings.fLabel) {
+        // A page left without a name must not leave its index behind: the next edit link would open a new form.
+        state.remove("editingFilterIndex")
         clearFilterSettings()
         return
     }
