@@ -334,9 +334,17 @@ preferences {
 Map mainPage() {
     syncLanguage()
     if (settings.pastedUrl) {
-        redeemPastedUrl(settings.pastedUrl as String)
+        // Cleared before the redeem, so a paste that makes it throw doesn't leave its code in settings.
+        String pasted = settings.pastedUrl as String
         app.removeSetting("pastedUrl")
+        try {
+            redeemPastedUrl(pasted)
+        } catch (Exception e) {
+            state.loginError = [key: "err.loginFailed", args: [why: exceptionText(e)]]
+        }
     }
+    // The PKCE pair is only needed until a login; the login page makes a new one when it shows.
+    if (isLoggedIn()) { state.remove("codeVerifier"); state.remove("oauthState") }
     if (settings.locationId && settings.locationId != state.locationId) selectLocation(settings.locationId as String)
 
     // Redraw while the device from selectLocation() is on its way, so it shows without a reload.
