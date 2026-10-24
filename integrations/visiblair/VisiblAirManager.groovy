@@ -29,7 +29,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "2.1.8"
+@Field static final String CODE_VERSION = "2.1.9"
 @Field static final String VISIBLAIR_API = "https://api.visiblair.com/api/v1"
 @Field static final int HTTP_TIMEOUT = 15
 // Decrypted password, kept in memory only: decrypt() costs ~350 ms on a C-8 Pro, ~830 ms on a C-7.
@@ -563,8 +563,10 @@ void refreshSensor(String dni) {
 
 // API fields that are credentials: kept out of state, child devices and logs. The MQTT ones
 // live in memory only, keyed by app id and sensor uuid; every poll refreshes them, and a
-// config update before the first poll after a reboot fetches them first.
-@Field static final List<String> SENSOR_SECRET_FIELDS = ["viewToken", "MQTTUsername", "MQTTPassword", "MQTTCert"]
+// config update before the first poll after a reboot fetches them first. The MQTT username is
+// an identifier and stays in state. The certificate stays in memory: the API doesn't say
+// whether it is a CA certificate or a client certificate with its key.
+@Field static final List<String> SENSOR_SECRET_FIELDS = ["viewToken", "MQTTPassword", "MQTTCert"]
 @Field static final ConcurrentHashMap<String, Map> SENSOR_SECRETS = new ConcurrentHashMap<>()
 
 private String sensorSecretKey(String uuid) { "${app.id}:${uuid}" }

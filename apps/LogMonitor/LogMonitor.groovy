@@ -15,7 +15,7 @@ import groovy.transform.Field
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "1.1.9"
+@Field static final String CODE_VERSION = "1.1.10"
 @Field static final int MAX_BRIDGES = 5
 @Field static final int MAX_FILTERS = 10
 @Field static final int MAX_DEDUPE_HISTORY = 100
@@ -291,7 +291,7 @@ Map filterPage(Map params) {
                 List<Map> saved = state.filters ?: []
                 boolean stored = idx >= 0 && idx < saved.size() && saved[idx].httpUrlEnc
                 input name: "fHttpUrl", type: "text",
-                    title: stored ? "URL (stored, enter only to change it)" : "URL", required: !stored,
+                    title: stored ? "URL (stored: ${saved[idx].httpUrlShown ?: 'encrypted'}; enter only to change it)" : "URL", required: !stored,
                     description: "e.g., https://example.com/webhook"
             }
         }
@@ -411,6 +411,11 @@ private void migrateFilters() {
             plainUrls = true
         }
         f.remove("httpUrl")
+        // 1.1.10 shows the URL masked; filters saved before have no masked copy yet.
+        if (f.httpUrlEnc && !f.httpUrlShown) {
+            String plain = filterHttpUrl(f)
+            if (plain) f.httpUrlShown = maskUrl(plain)
+        }
     }
     state.filters = filters
     // Its keys were the plain URLs.
@@ -562,8 +567,10 @@ private void savePendingFilter() {
     Map filter = buildFilterFromSettings(actualIdx)
     if (settings.fHttpUrl) {
         filter.httpUrlEnc = encrypt(settings.fHttpUrl as String)
+        filter.httpUrlShown = maskUrl(settings.fHttpUrl as String)
     } else if (idx >= 0 && idx < filters.size() && filters[idx].httpUrlEnc) {
         filter.httpUrlEnc = filters[idx].httpUrlEnc
+        filter.httpUrlShown = filters[idx].httpUrlShown
     }
 
     if (idx >= 0 && idx < filters.size()) {
@@ -804,7 +811,7 @@ private Map executeOutputs(Map logEntry, Map filter, String bridgeDni) {
                 ],
                 timeout: 5
             ]
-            asynchttpPost("httpPostCallback", postParams, [url: filter.httpUrlEnc, shown: redactUrl(httpUrl)])
+            asynchttpPost("httpPostCallback", postParams, [url: filter.httpUrlEnc, shown: filter.httpUrlShown ?: maskUrl(httpUrl)])
         } catch (Exception e) {
             logNet "HTTP POST error for ${filter.label}: ${e.message}"
         }
@@ -865,11 +872,39 @@ private Long retryAfterSeconds(resp) {
     }
 }
 
-// Scheme and host only: a webhook URL can carry its key in the path, the query or user info.
+// The URL as pages and logs show it, per ARCHITECTURE.md "Secrets: storage and display": a
+// token keeps its last 4 characters after bullets, a password is bullets only, and the rest
+// stays readable. Secret parts: the password in user:pass@, a query value whose name reads as
+// a credential, and a path segment that looks generated (16+ characters mixing letters and
+// digits), which is where Slack, IFTTT and Home Assistant webhooks keep their key.
 @CompileStatic
-private static String redactUrl(String url) {
-    java.util.regex.Matcher m = (url ?: "") =~ /^([A-Za-z][A-Za-z0-9+.-]*:\/\/)(?:[^\/?#@]*@)?([^\/?#]*)/
-    return m.find() ? "${m.group(1)}${m.group(2)}/…".toString() : "(URL)"
+static String maskUrl(String url) {
+    String bullets = "\u2022" * 8
+    String rest = url ?: ""
+    String fragment = ""
+    int hash = rest.indexOf('#')
+    if (hash >= 0) { fragment = rest.substring(hash); rest = rest.substring(0, hash) }
+    String query = null
+    int q = rest.indexOf('?')
+    if (q >= 0) { query = rest.substring(q + 1); rest = rest.substring(0, q) }
+    java.util.regex.Matcher m = rest =~ /^([A-Za-z][A-Za-z0-9+.-]*:\/\/)(?:([^\/@:]*):[^\/@]*@)?([^\/]*)(.*)$/
+    if (!m.find()) return "(URL)"
+    String path = m.group(4).split("/", -1).collect { String seg ->
+        (seg.length() >= 16 && seg ==~ /.*[A-Za-z].*/ && seg ==~ /.*[0-9].*/) ? bullets + seg.substring(seg.length() - 4) : seg
+    }.join("/")
+    String out = m.group(1) + (m.group(2) != null ? m.group(2) + ":" + bullets + "@" : "") + m.group(3) + path
+    if (query != null) {
+        out += "?" + query.tokenize('&').collect { String pair ->
+            int eq = pair.indexOf('=')
+            String name = eq >= 0 ? pair.substring(0, eq) : pair
+            String value = eq >= 0 ? pair.substring(eq + 1) : ""
+            boolean secretName = name ==~ /^(?i:(?:.*[_-])?(?:access_?token|token|api_?key|key|secret|password|passwd|pwd|pin|sig|signature|auth|credentials?))$|^.*(?:Token|Key|Secret|Password|Signature)$/
+            if (!value || !secretName || value ==~ /(?i)true|false|yes|no|on|off|\d{1,3}/) return pair
+            boolean passwordLike = name ==~ /(?i).*(passw|pwd|pin).*/
+            return name + "=" + ((passwordLike || value.length() < 16) ? bullets : bullets + value.substring(value.length() - 4))
+        }.join("&")
+    }
+    return out + fragment
 }
 
 // The filter's POST URL, decrypted once per stored ciphertext.
@@ -936,7 +971,7 @@ private static String buildOutputsSummary(Map filter) {
     List<String> outputs = []
     if (filter.outputNotify) outputs.add("notify")
     if (filter.outputLog) outputs.add("file: " + (filter.logFile as String))
-    if (filter.outputHttp) outputs.add("POST")
+    if (filter.outputHttp) outputs.add("POST" + (filter.httpUrlShown ? " " + (filter.httpUrlShown as String) : ""))
     return outputs.size() > 0 ? "-> " + outputs.join(", ") : "-> (no outputs)"
 }
 

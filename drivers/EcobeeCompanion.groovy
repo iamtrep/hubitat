@@ -86,7 +86,7 @@ metadata {
     }
 
     preferences {
-        input name: "apiKey", type: "password", title: state.apiKeyEnc ? "Ecobee API Key (stored, enter only to change it)" : "Ecobee API Key",
+        input name: "apiKey", type: "password", title: state.apiKeyEnc ? "Ecobee API Key (stored ${state.apiKeyHint ?: ""}, enter only to change it)" : "Ecobee API Key",
               required: !state.apiKeyEnc
         if (state.thermostats && !state.thermostats.isEmpty()) {
             input name: "thermostatId", type: "enum", title: "Thermostat",
@@ -102,7 +102,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.1.6"
+@Field static final String CODE_VERSION = "0.1.7"
 
 // Decrypted tokens, kept in memory only: decrypt() costs ~350 ms on a C-8 Pro, ~830 ms on a C-7.
 // Keyed by device id + token name; the stored ciphertext rides along so a refreshed token misses.
@@ -234,11 +234,24 @@ private void storeTokens(String access, String refresh) {
 
 // The API key is typed into a preference, then kept only encrypted (0.1.5 and earlier left it
 // in the preference). Runs on every save, so a newly entered key replaces the stored one.
+// The page shows it masked with its last 4 characters (state.apiKeyHint), as WordPress shows
+// API keys, so you can tell which key is stored; 0.1.6 stored no hint, so one is added once.
 private void encryptApiKey() {
-    if (!settings.apiKey) return
-    state.apiKeyEnc = encrypt(settings.apiKey as String)
-    TOKEN_CACHE.remove("${device.id}:apiKey".toString())
-    device.removeSetting("apiKey")
+    if (settings.apiKey) {
+        String key = settings.apiKey as String
+        state.apiKeyEnc = encrypt(key)
+        state.apiKeyHint = maskKey(key)
+        TOKEN_CACHE.remove("${device.id}:apiKey".toString())
+        device.removeSetting("apiKey")
+    } else if (state.apiKeyEnc && !state.apiKeyHint) {
+        String key = token("apiKey")
+        if (key) state.apiKeyHint = maskKey(key)
+    }
+}
+
+private static String maskKey(String key) {
+    String bullets = "•" * 8
+    return key.length() < 16 ? bullets : bullets + key.substring(key.length() - 4)
 }
 
 private String apiKeyValue() {
