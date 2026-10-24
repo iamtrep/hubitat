@@ -151,7 +151,7 @@ Map mainPage() {
         if (isLoggedIn()) {
             section("Account", hideable: true, hidden: true) {
                 if (state.locationName) paragraph "Logged in to Hilo, location <b>${htmlEsc(state.locationName)}</b>."
-                input "btnLogout", "button", title: "Log out of Hilo", inputClass: "p-button p-button-outlined p-button-danger"
+                input "btnLogout", "button", title: "Log out of Hilo", inputClass: "p-button p-button-outlined"
             }
         }
     }
