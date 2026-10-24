@@ -34,11 +34,8 @@ metadata {
 
     preferences {
         input "deviceIP", "string", title: "Device IP Address (Optional)", description: "Enter the IP address of the device to monitor (leave blank to use HTTP GET only)", required: false
-        input "httpURL", "string", title: state.httpUrlEnc ? "HTTP URL (stored: ${state.httpUrlShown}; enter only to change it)" : "HTTP URL (Optional)",
-              description: "Enter a full URL for HTTP GET (leave blank to use ICMP ping only). It is stored encrypted, as it may carry a token", required: false
-        if (state.httpUrlEnc) {
-            input "clearHttpUrl", "bool", title: "Remove the stored HTTP URL", defaultValue: false
-        }
+        input "httpURL", "string", title: "HTTP URL (Optional)",
+              description: "Enter a full URL for HTTP GET (leave blank to use ICMP ping only). Secret values (a password in user:pass@, or a query parameter such as access_token) are stored encrypted and shown as ${STORED}; leave ${STORED} in place to keep one", required: false
         input "pingInterval", "number", title: "Ping Interval (minutes)", description: "How often to check if device is online", defaultValue: 5, range: "1..*", required: true
         input "retryInterval", "number", title: "Initial Retry Interval (seconds)", description: "How long to wait before first retry after a failed ping", defaultValue: 30, range: "1..*", required: true
         input "maxRetries", "number", title: "Maximum Retry Count", description: "Maximum number of retry attempts before backing off to regular schedule", defaultValue: 5, range: "0..*", required: true
@@ -60,7 +57,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.1.5"
+@Field static final String CODE_VERSION = "0.1.6"
 @Field static final int RESPONSE_HISTORY_SIZE = 21
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int INITIAL_PING_DELAY = 2
@@ -68,9 +65,20 @@ import java.util.concurrent.ConcurrentHashMap
 @Field static final int DEFAULT_RETRY_THRESHOLD = 3
 // Statuses a retry can't fix: the HTTP check stops until preferences are saved or Initialize runs.
 @Field static final List<Integer> HTTP_STOP_STATUSES = [401, 403, 404, 410]
-// Decrypted HTTP URL (it may carry an access token), kept in memory only: decrypt() costs
-// ~350 ms on a C-8 Pro, ~830 ms on a C-7. Keyed by device id; value [ciphertext, plaintext].
+// The URL stays readable in its preference except its secret values, which are kept encrypted
+// in state.httpUrlSecretsEnc and shown as STORED: the user-info part of the authority and the
+// value of any query parameter whose name matches SECRET_PARAM.
+@Field static final String STORED = "<stored>"
+@Field static final String USERINFO = "@userinfo"
+// A whole word, alone or after _ or -, in any case (access_token, X-Amz-Signature, apikey), or a
+// camelCase suffix (accessToken, apiKey); "monkey" or "keyword" don't match.
+@Field static final String SECRET_PARAM = /^(?i:(?:.*[_-])?(?:access_?token|token|api_?key|key|secret|password|passwd|pwd|sig|signature|auth|credentials?))$|^.*(?:Token|Key|Secret|Password|Signature)$/
+// Decrypted secret values as JSON, kept in memory only: decrypt() costs ~350 ms on a C-8 Pro,
+// ~830 ms on a C-7. Keyed by device id; value [ciphertext, plaintext].
 @Field static final ConcurrentHashMap<String, List<String>> URL_CACHE = new ConcurrentHashMap<>()
+// The preference value storeHttpUrl() last wrote, by device id: the execution that writes a
+// setting may still read the old one, and an upgrade runs inside ping().
+@Field static final ConcurrentHashMap<String, String> SAVED_URL = new ConcurrentHashMap<>()
 
 void installed() {
     logDebug "Installed with settings: ${redactSettings()}"
@@ -86,41 +94,103 @@ void updated() {
 
 void uninstalled() {
     URL_CACHE.remove(device.id.toString())
+    SAVED_URL.remove(device.id.toString())
 }
 
-// The URL is typed into a preference, then kept only encrypted (0.1.4 and earlier left it in
-// the preference, readable on the device page). Runs on every save and once after an upgrade.
+// Moves the secret values of the typed URL into encrypted state and writes the rest back to the
+// preference. Runs on every save and once after an upgrade, and takes each earlier layout:
+// 0.1.4 and earlier kept the whole URL in the preference, 0.1.5 kept it only encrypted
+// (state.httpUrlEnc) with the preference removed.
 private void storeHttpUrl() {
-    if (settings.clearHttpUrl) {
-        state.remove("httpUrlEnc")
-        state.remove("httpUrlShown")
-        device.removeSetting("clearHttpUrl")
-    }
-    if (settings.httpURL) {
-        state.httpUrlEnc = encrypt(settings.httpURL as String)
-        state.httpUrlShown = redactUrl(settings.httpURL as String)
-        device.removeSetting("httpURL")
-    }
+    String typed = settings.httpURL as String
+    if (!typed && state.httpUrlEnc) typed = decryptOrNull(state.httpUrlEnc as String, "0.1.5 URL")
+    Map kept = typed?.contains(STORED) ? urlSecrets() : [:]
+    Map split = typed ? splitSecrets(typed) : null
+    Map secrets = [:]
+    (split?.secrets as Map ?: [:]).each { String k, String v -> secrets[k] = (v == STORED) ? kept[k] : v }
+    List missing = secrets.findAll { k, v -> v == null }.collect { it.key }
+    if (missing) logWarn "No stored value for ${missing.join(', ')}; enter the full value in the HTTP URL"
+    secrets = secrets.findAll { k, v -> v != null }
+    if (secrets) state.httpUrlSecretsEnc = encrypt(groovy.json.JsonOutput.toJson(secrets))
+    else state.remove("httpUrlSecretsEnc")
+    if (split && split.masked != settings.httpURL) device.updateSetting("httpURL", [value: split.masked, type: "string"])
+    ["httpUrlEnc", "httpUrlShown"].each { state.remove(it) }
+    device.removeSetting("clearHttpUrl")    // a 0.1.5 preference
     URL_CACHE.remove(device.id.toString())
+    if (split) SAVED_URL.put(device.id.toString(), split.masked as String)
+    else SAVED_URL.remove(device.id.toString())
 }
 
+// The URL to request: the preference with its stored values put back. Null when none is set.
 private String checkUrl() {
-    if (settings.httpURL) return settings.httpURL as String
-    String enc = state.httpUrlEnc as String
-    if (!enc) return null
+    String shown = (settings.httpURL as String) ?: SAVED_URL.get(device.id.toString())
+    if (!shown) return null
+    return shown.contains(STORED) ? joinSecrets(shown, urlSecrets()) : shown
+}
+
+private Map urlSecrets() {
+    String enc = state.httpUrlSecretsEnc as String
+    if (!enc) return [:]
     String key = device.id.toString()
     List<String> hit = URL_CACHE.get(key)
-    if (hit && hit[0] == enc) return hit[1]
+    String json = (hit && hit[0] == enc) ? hit[1] : decryptOrNull(enc, "stored URL values")
+    if (json == null) return [:]
+    URL_CACHE.put(key, [enc, json])
+    return new groovy.json.JsonSlurper().parseText(json) as Map
+}
+
+private String decryptOrNull(String enc, String what) {
     try {
-        String plain = decrypt(enc)
-        URL_CACHE.put(key, [enc, plain])
-        return plain
+        return decrypt(enc)
     } catch (Exception e) {
-        logError "The stored HTTP URL can't be read (${e.message}), as after a hub restore; enter it again"
-        state.remove("httpUrlEnc")
-        URL_CACHE.remove(key)
+        logError "The ${what} can't be read (${e.message}), as after a hub restore; enter the HTTP URL again"
         return null
     }
+}
+
+// [masked: the URL with each secret value replaced by STORED, secrets: [name: value]]. A value
+// already STORED is reported as STORED so the caller can keep the one it has.
+@CompileStatic
+static Map splitSecrets(String url) {
+    String stored = STORED, secretParam = SECRET_PARAM    // closures can't reach the fields here
+    Map<String, String> secrets = [:]
+    String rest = url
+    String fragment = ""
+    int hash = rest.indexOf('#')
+    if (hash >= 0) { fragment = rest.substring(hash); rest = rest.substring(0, hash) }
+    java.util.regex.Matcher m = rest =~ /^([A-Za-z][A-Za-z0-9+.-]*:\/\/)([^\/?#@]*)@/
+    if (m.find()) {
+        secrets[USERINFO] = m.group(2)
+        rest = m.group(1) + STORED + "@" + rest.substring(m.end())
+    }
+    int q = rest.indexOf('?')
+    if (q >= 0) {
+        List<String> pairs = []
+        rest.substring(q + 1).tokenize('&').each { String pair ->
+            int eq = pair.indexOf('=')
+            String name = eq >= 0 ? pair.substring(0, eq) : pair
+            String value = eq >= 0 ? pair.substring(eq + 1) : ""
+            if (value && name ==~ secretParam) {
+                secrets[name] = value
+                pairs << (name + "=" + stored)
+            } else {
+                pairs << pair
+            }
+        }
+        rest = rest.substring(0, q + 1) + pairs.join('&')
+    }
+    return [masked: rest + fragment, secrets: secrets]
+}
+
+@CompileStatic
+static String joinSecrets(String masked, Map secrets) {
+    String stored = STORED, userinfo = USERINFO
+    String url = masked
+    if (secrets[USERINFO] != null) url = url.replaceFirst(/^([A-Za-z][A-Za-z0-9+.-]*:\/\/)<stored>@/, '$1' + java.util.regex.Matcher.quoteReplacement(secrets[USERINFO] as String) + '@')
+    secrets.each { k, v ->
+        if (k != userinfo) url = url.replace("${k}=${stored}".toString(), "${k}=${v}".toString())
+    }
+    return url
 }
 
 void deviceTypeUpdated() {
@@ -219,7 +289,7 @@ void ping() {
 private void finishCheck(long pingRT, long httpRT) {
     try {
         if (checkUrl()) {
-            sendEvent(name: "httpStatus", value: httpRT >= 0 ? "success" : "failed", descriptionText: "HTTP GET ${redactUrl(checkUrl())} ${httpRT >= 0}")
+            sendEvent(name: "httpStatus", value: httpRT >= 0 ? "success" : "failed", descriptionText: "HTTP GET ${shownUrl()} ${httpRT >= 0}")
         }
         updateDeviceStatus((deviceIP ? pingRT >= 0 : true) && (checkUrl() ? httpRT >= 0 : true))
         updateLastResponseTime(pingRT, httpRT)
@@ -301,18 +371,18 @@ void httpResponse(resp, Map data) {
             int status = resp.getStatus()
             if (status in HTTP_STOP_STATUSES) {
                 state.httpStopped = status
-                logError "HTTP GET ${redactUrl(checkUrl())} returned HTTP ${status}; HTTP checks stopped until preferences are saved or Initialize runs"
+                logError "HTTP GET ${shownUrl()} returned HTTP ${status}; HTTP checks stopped until preferences are saved or Initialize runs"
             } else {
                 Long retryAfter = retryAfterSeconds(resp)
                 if (retryAfter) state.httpRetryAfter = retryAfter
-                logWarn "HTTP GET ${redactUrl(checkUrl())} failed with HTTP ${status}: ${resp.getErrorMessage()}${retryAfter ? " (Retry-After ${retryAfter} s)" : ''}"
+                logWarn "HTTP GET ${shownUrl()} failed with HTTP ${status}: ${resp.getErrorMessage()}${retryAfter ? " (Retry-After ${retryAfter} s)" : ''}"
             }
         } else if (resp.getStatus() >= 200 && resp.getStatus() < 300) {
-            logNet "HTTP GET ${redactUrl(checkUrl())} successful in ${elapsed} ms"
+            logNet "HTTP GET ${shownUrl()} successful in ${elapsed} ms"
             recordResponseTime("http", elapsed)
             httpRT = elapsed
         } else {
-            logWarn "HTTP GET ${redactUrl(checkUrl())} failed with status ${resp.getStatus()}"
+            logWarn "HTTP GET ${shownUrl()} failed with status ${resp.getStatus()}"
         }
     } catch (Exception e) {
         logWarn "Error handling HTTP response: ${e}"
@@ -330,14 +400,14 @@ private Long retryAfterSeconds(resp) {
 }
 
 private Map redactSettings() {
-    return settings.collectEntries { k, v -> [(k): k == 'httpURL' ? redactUrl(v as String) : v] }
+    return settings.collectEntries { k, v -> [(k): k == 'httpURL' && v ? splitSecrets(v as String).masked : v] }
 }
 
-// Scheme and host only: a URL can carry a token in the path, the query or user info.
-@CompileStatic
-private static String redactUrl(String url) {
-    java.util.regex.Matcher m = (url ?: "") =~ /^([A-Za-z][A-Za-z0-9+.-]*:\/\/)(?:[^\/?#@]*@)?([^\/?#]*)/
-    return m.find() ? "${m.group(1)}${m.group(2)}/…".toString() : "(URL)"
+// The URL as logs and events show it: secret values stay masked even if the preference still
+// holds one (a save not yet processed by storeHttpUrl).
+private String shownUrl() {
+    String u = (settings.httpURL as String) ?: SAVED_URL.get(device.id.toString())
+    return u ? splitSecrets(u).masked as String : "(none)"
 }
 
 // Firmware 2.5.1.x (Apache HttpClient 5.x) drops a query string embedded in the
