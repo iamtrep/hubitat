@@ -38,7 +38,7 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final String PKG_FILE_PREFIX = "cm_pkg_"
 @Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/CodeManager/CodeManager.groovy"
 @Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/CodeManager/code_manager_ui.html"
-@Field static final String UPDATE_AVAILABLE_BADGE = ' <span style="color:green; font-weight:bold;">update available</span>'
+@Field static final String UPDATE_AVAILABLE_BADGE = ' <span style="color:var(--hubitat-success-color, #356700); font-weight:bold;">update available</span>'
 @Field static final java.util.regex.Pattern UPDATE_BADGE_RE = ~/(?i)(?:\s*(?:<span\b[^>]*>)?\s*update available\s*(?:<\/span>)?)+\s*$/
 
 // Session caches (Tier 2). Wiped on push/reboot; cleared wholesale in updated().
@@ -140,10 +140,10 @@ Map mainPage() {
         String remote = checkGithubVersion()
         section("Versions") {
             if (remote && isNewer(remote, CODE_VERSION)) {
-                paragraph "<span style='color:orange; font-weight:bold;'>⚠ New version available:</span> v${remote} (you have v${CODE_VERSION})."
+                paragraph "<span style='color:var(--hubitat-warning-color, #8a5a00); font-weight:bold;'>⚠ New version available:</span> v${remote} (you have v${CODE_VERSION})."
             }
             if (isNewer(uiVer, CODE_VERSION)) {
-                paragraph "<span style='color:red; font-weight:bold;'>⚠ Update Recommended:</span> UI v${uiVer} is newer than this app (v${CODE_VERSION}). Update the Groovy code."
+                paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f); font-weight:bold;'>⚠ Update Recommended:</span> UI v${uiVer} is newer than this app (v${CODE_VERSION}). Update the Groovy code."
             }
             paragraph "<b>App Version:</b> ${CODE_VERSION}\n<b>UI Version:</b> ${uiVer}"
         }

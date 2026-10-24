@@ -107,7 +107,7 @@ Map mainPage() {
         now() - ((state.childRequestedAt ?: 0L) as long) < CHILD_WAIT_MS
     dynamicPage(name: "mainPage", install: true, uninstall: true, refreshInterval: childPending ? 2 : 0) {
         if (state.loginError) {
-            section { paragraph "<span style='color:red;'><b>Error:</b> ${state.loginError}</span>" }
+            section { paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f);'><b>Error:</b> ${state.loginError}</span>" }
         }
         if (!isLoggedIn()) {
             if (!state.codeVerifier) newPkce()
@@ -129,7 +129,7 @@ Map mainPage() {
         } else {
             section("Status") {
                 paragraph "Location: <b>${state.locationName}</b>"
-                if (state.childError) paragraph "<span style='color:red;'><b>Error:</b> ${state.childError}</span>"
+                if (state.childError) paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f);'><b>Error:</b> ${state.childError}</span>"
                 ChildDeviceWrapper meter = meterChild()
                 if (meter) paragraph "Device: <a href='/device/edit/${meter.id}' target='_blank'>${meter.displayName}</a>"
                 else if (childPending) paragraph "Creating the device…"

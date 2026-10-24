@@ -3262,7 +3262,7 @@ Map devicePage(Map params = null) {
         section("") {
             String line = "IEEE <b>${esc(ieee)}</b> · address <b>${esc(r?.nwk ?: 'not on the network')}</b> · endpoint <b>${esc(tgt.ep)}</b>"
             if (pend) line += "<br><i>Waiting for ${pend.size()} repl${pend.size() == 1 ? 'y' : 'ies'}…</i>"
-            if (state.inputError) line += "<br><span class='text-red-700'>${esc(state.inputError)}</span>"
+            if (state.inputError) line += "<br><span style='color:var(--hubitat-validation-color, #d32f2f)'>${esc(state.inputError)}</span>"
             paragraph line
         }
         section("Health and monitor device") {
@@ -3318,7 +3318,7 @@ Map devicePage(Map params = null) {
                 sb.append("<textarea id='zbwReport' readonly style='width:100%;height:24em;font-family:monospace;font-size:85%'>${esc(forum)}</textarea>".toString())
                 sb.append("<button type='button' class='btn btn-default' onclick='var t=document.getElementById(\"zbwReport\");if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(t.value)}else{t.select();document.execCommand(\"copy\")}'>Copy</button>")
                 if (rp.data.file) sb.append(" <small>Full report: <a href='/local/${esc(rp.data.file)}' target='_blank'>${esc(rp.data.file)}</a> (saved with aliases ${rp.data.aliases ? 'on' : 'off'})</small>".toString())
-                if (rp.data.fileError) sb.append("<br><span class='text-red-700'>${esc(rp.data.fileError)}</span>".toString())
+                if (rp.data.fileError) sb.append("<br><span style='color:var(--hubitat-validation-color, #d32f2f)'>${esc(rp.data.fileError)}</span>".toString())
                 paragraph rawHtml: true, sb.append("</div>").toString()
             }
         }
