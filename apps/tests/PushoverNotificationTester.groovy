@@ -44,10 +44,14 @@
  */
 
 import groovy.transform.Field
+import java.util.concurrent.ConcurrentHashMap
 
 // ========================================
 // CONSTANTS
 // ========================================
+// The decrypted session secret by app id, value [ciphertext, plaintext]: decrypt() costs
+// ~350 ms on a C-8 Pro and ~830 ms on a C-7, and the main page reads the secret three times.
+@Field static final ConcurrentHashMap<String, List<String>> SECRET_CACHE = new ConcurrentHashMap<>()
 @Field static final String TEST_URL = "https://hubitat.com"
 @Field static final String PUSHOVER_API = "https://api.pushover.net"
 @Field static final String TEST_URL_TITLE = "Hubitat Website"
@@ -107,6 +111,9 @@ Map mainPage() {
         if (pushoverDevice) {
             section("Automated Test Run") {
                 boolean runStale = isRunStale()
+                // An interrupted run can leave a test's preferences on the device, including a
+                // callback URL that carries this app's access token; put them back.
+                if (state.savedPrefs && (!state.testRunInProgress || runStale)) restorePrefs()
                 if (state.testRunInProgress && !runStale) {
                     int total = state.testTotal ?: 0
                     int current = state.currentTestIndex ?: 0
@@ -1064,6 +1071,10 @@ def handlePushoverCallback() {
 // ========================================
 // PUSHOVER OPEN CLIENT
 // ========================================
+void uninstalled() {
+    SECRET_CACHE.remove(app.id.toString())
+}
+
 // The session secret, decrypted; null when not logged in or unreadable (e.g. after a hub migration,
 // since the encryption key stays with the hub). A plain-text secret from v1.2.0 is encrypted here.
 private String openClientSecret() {
@@ -1071,10 +1082,16 @@ private String openClientSecret() {
         state.openClientSecretEnc = encrypt(state.openClientSecret.toString())
         state.remove("openClientSecret")
     }
-    if (!state.openClientSecretEnc) return null
+    String enc = state.openClientSecretEnc?.toString()
+    if (!enc) return null
+    List<String> hit = SECRET_CACHE.get(app.id.toString())
+    if (hit && hit[0] == enc) return hit[1]
     try {
-        return decrypt(state.openClientSecretEnc.toString()) ?: null
+        String plain = decrypt(enc) ?: null
+        if (plain) SECRET_CACHE.put(app.id.toString(), [enc, plain])
+        return plain
     } catch (e) {
+        SECRET_CACHE.remove(app.id.toString())
         log.warn "openClientSecret(): could not decrypt the stored secret, log in again (${e.message})"
         state.remove("openClientSecretEnc")
         return null

@@ -153,6 +153,9 @@ import java.util.concurrent.ConcurrentHashMap
 @Field static final Map<Long, Map> RUNTIME = new ConcurrentHashMap<Long, Map>()
 // supported: false once rawSocket.getPeerCertificate() is found missing (firmware before 2.5.3).
 @Field static final Map<String, Boolean> PEER_CERT = new ConcurrentHashMap<String, Boolean>()
+// Decrypted client key by device id, value [ciphertext, plaintext]: decrypt() costs ~350 ms on a
+// C-8 Pro and ~830 ms on a C-7, and every connect and reconnect needs the key.
+@Field static final Map<Long, List<String>> KEY_CACHE = new ConcurrentHashMap<Long, List<String>>()
 
 Map rt() {
     Map r = RUNTIME.get(device.idAsLong)
@@ -167,6 +170,10 @@ Map rt() {
 
 
 // ── Lifecycle ─────────────────────────────────────────────────────────
+
+void uninstalled() {
+    KEY_CACHE.remove(device.idAsLong)
+}
 
 void installed() {
     logDebug "Installed"
@@ -489,13 +496,14 @@ void submitPairingCode(String code) {
     byte[] secret = md.digest()
     logTrace "pairing hash: client modulus ${client.modulus.bitLength()} bits ${client.modulus.toString(16).take(16)}…, exponent ${client.publicExponent}; " +
              "TV modulus ${server.modulus.bitLength()} bits ${server.modulus.toString(16).take(16)}…, exponent ${server.publicExponent}; " +
-             "digest[0]=${String.format('%02X', secret[0] & 0xFF)} code[0..1]=${code.substring(0, 2)}"
+             "digest[0] ${(secret[0] & 0xFF) == Integer.parseInt(code.substring(0, 2), 16) ? 'matches' : 'does not match'} the code"
     if ((secret[0] & 0xFF) != Integer.parseInt(code.substring(0, 2), 16)) {
-        logWarn "Code ${code} doesn't match; check it and try again"
+        logWarn "The code doesn't match; check it and try again"
         return
     }
     logCmd "Sending pairing secret"
-    sendFrame(outer(pMsg(40, pBytes(1, hexOf(secret)))))
+    // Not traced: this frame is the pairing secret.
+    sendFrame(outer(pMsg(40, pBytes(1, hexOf(secret)))), false)
 }
 
 void forgetPairing() {
@@ -980,10 +988,16 @@ private String clientKey() {
         state.keyEnc = encrypt(state.key as String)
         state.remove("key")
     }
-    if (!state.keyEnc) return null
+    String enc = state.keyEnc as String
+    if (!enc) return null
+    List<String> hit = KEY_CACHE.get(device.idAsLong)
+    if (hit && hit[0] == enc) return hit[1]
     try {
-        return decrypt(state.keyEnc as String)
+        String plain = decrypt(enc)
+        KEY_CACHE.put(device.idAsLong, [enc, plain])
+        return plain
     } catch (e) {
+        KEY_CACHE.remove(device.idAsLong)
         logError "The client key can't be read (${e.message}), as after a hub restore or migration; pair again with Start Pairing"
         ["keyEnc", "cert", "tvCert", "paired"].each { state.remove(it) }
         sendEvent(name: "pairing", value: "unpaired")

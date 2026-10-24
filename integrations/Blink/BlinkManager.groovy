@@ -458,8 +458,7 @@ void startOAuthFlow() {
             state.needs2fa = true
             try { captureCookies(e.response) } catch (Exception ignored) {}
         } else {
-            String errBody = readResponseBody(e.response)
-            logError "step 3 failed: HTTP ${e.statusCode}, body: ${errBody?.take(500)}"
+            logError "step 3 failed: HTTP ${e.statusCode}"
             state.authError = "Login failed (HTTP ${e.statusCode})"
             cleanupEphemeralState()
             return
@@ -504,7 +503,7 @@ void verifyPin() {
             captureCookies(resp)
             logNet "step 4 status: ${resp.status}"
             String body = readResponseBody(resp)
-            logTrace "step 4 response: ${body?.take(500)}"
+            logTrace "step 4 response: ${body?.length() ?: 0} chars"
             if (resp.status == 200 || resp.status == 201 || body?.contains("auth-completed")) {
                 pinAccepted = true
             }
@@ -551,7 +550,7 @@ void runStep5() {
         ]) { resp ->
             captureCookies(resp)
             String location = getRedirectLocation(resp)
-            logNet "step 5 Location: ${location?.take(200)}"
+            logNet "step 5 Location: ${location?.replaceAll(/code=[^&]+/, "code=…")?.take(200)}"
             if (location) authCode = extractCodeFromUrl(location)
         }
     } catch (groovyx.net.http.HttpResponseException e) {

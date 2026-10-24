@@ -245,6 +245,14 @@ private String apiKeyValue() {
     return (settings.apiKey as String) ?: token("apiKey")
 }
 
+// The error fields of an Ecobee reply, never the whole body: a token reply carries tokens.
+private static String errorSummary(data) {
+    if (!(data instanceof Map)) return "(no JSON body)"
+    if (data.error) return "${data.error}${data.error_description ? ': ' + data.error_description : ''}"
+    if (data.status instanceof Map) return "${data.status.code}: ${data.status.message}"
+    return "(no error field)"
+}
+
 private void dropCachedTokens() {
     ['accessToken', 'refreshToken'].each { TOKEN_CACHE.remove("${device.id}:${it}".toString()) }
 }
@@ -302,7 +310,7 @@ void connect() {
         httpGet(params) { response ->
             int status = response.status
             if (status < 200 || status >= 300) {
-                logWarn "connect() non-success status=${status} body=${response.data}"
+                logWarn "connect() non-success status=${status} error=${errorSummary(response.data)}"
                 return
             }
             Map data = response.data
@@ -353,7 +361,7 @@ void authorize() {
         httpPost(params) { response ->
             int status = response.status
             if (status < 200 || status >= 300) {
-                logWarn "authorize() non-success status=${status} body=${response.data}"
+                logWarn "authorize() non-success status=${status} error=${errorSummary(response.data)}"
                 return
             }
             Map data = response.data
@@ -422,7 +430,7 @@ Boolean refreshToken(boolean quiet = false) {
             int status = response.status
             if (status < 200 || status >= 300) {
                 state.lastTokenError = "status=${status}"
-                if (!quiet) logWarn "Token refresh non-success status=${status} body=${response.data}"
+                if (!quiet) logWarn "Token refresh non-success status=${status} error=${errorSummary(response.data)}"
                 return
             }
             Map data = response.data
@@ -548,7 +556,7 @@ private Map callEcobeeApi(String method, String path, Map queryParams = null, Ma
         Closure handler = { response ->
             int status = response.status
             if (status < 200 || status >= 300) {
-                String m = "Ecobee API non-success [${method} ${path}] status=${status} body=${response.data}"
+                String m = "Ecobee API non-success [${method} ${path}] status=${status} error=${errorSummary(response.data)}"
                 if (quiet) err.msg = m
                 else logWarn m
                 return

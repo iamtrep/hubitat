@@ -31,6 +31,9 @@ preferences {
 
 @Field static final String LOOPBACK = "http://127.0.0.1:8080"
 @Field static final ConcurrentHashMap<String, Long> ISSUED = new ConcurrentHashMap<String, Long>()
+// Each scheduled fire()'s arguments, by rep and tag. They carry other apps' access tokens,
+// which a job's data map would show on the app's status page.
+@Field static final ConcurrentHashMap<String, Map> FIRE_ARGS = new ConcurrentHashMap<String, Map>()
 
 mappings {
     path("/setup")  { action: [GET: "apiSetup"] }
@@ -93,7 +96,9 @@ private void prepare(Map t, String kind, String tag, int ms, long at, String rep
     // The second call of a pair uses the second source device and the second child app.
     if (tag.startsWith("a")) { d.childDev = t.childDev2; d.childApp = t.childApp2; d.childAppTok = t.childAppTok2 }
     if (t.domain == "app" && kind == "updated") d.form = settingsForm(t)
-    runInMillis(Math.max(1L, at - now()), "fire", [data: d, overwrite: false])
+    String key = "${rep}:${tag}".toString()
+    FIRE_ARGS.put(key, d)
+    runInMillis(Math.max(1L, at - now()), "fire", [data: [key: key], overwrite: false])
 }
 
 // The main page's Done, as the settings page posts it; runs updated().
@@ -105,7 +110,9 @@ private String settingsForm(Map t) {
     return f.collect { k, v -> "${URLEncoder.encode(k as String, 'UTF-8')}=${URLEncoder.encode(v as String, 'UTF-8')}" }.join("&")
 }
 
-void fire(Map d) {
+void fire(Map job) {
+    Map d = FIRE_ARGS.remove(job.key as String)
+    if (d == null) return     // lost to a code update or reboot since it was scheduled
     String tag = d.tag as String
     int ms = d.ms as int
     ISSUED.put("${d.rep}:${tag}".toString(), now())
