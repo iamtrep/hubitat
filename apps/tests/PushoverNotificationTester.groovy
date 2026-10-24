@@ -1086,6 +1086,9 @@ private void pushoverLogin() {
     state.remove("loginError")
     if (!settings.poEmail || !settings.poPassword) {
         state.loginError = "enter the email and password"
+        // A password typed without an email must not stay in settings either.
+        app.removeSetting("poPassword")
+        app.removeSetting("poTwofa")
         return
     }
     Map body = [email: settings.poEmail, password: settings.poPassword]

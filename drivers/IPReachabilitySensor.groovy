@@ -34,7 +34,11 @@ metadata {
 
     preferences {
         input "deviceIP", "string", title: "Device IP Address (Optional)", description: "Enter the IP address of the device to monitor (leave blank to use HTTP GET only)", required: false
-        input "httpURL", "string", title: "HTTP URL (Optional)", description: "Enter a full URL for HTTP GET (leave blank to use ICMP ping only)", required: false
+        input "httpURL", "string", title: state.httpUrlEnc ? "HTTP URL (stored: ${state.httpUrlShown}; enter only to change it)" : "HTTP URL (Optional)",
+              description: "Enter a full URL for HTTP GET (leave blank to use ICMP ping only). It is stored encrypted, as it may carry a token", required: false
+        if (state.httpUrlEnc) {
+            input "clearHttpUrl", "bool", title: "Remove the stored HTTP URL", defaultValue: false
+        }
         input "pingInterval", "number", title: "Ping Interval (minutes)", description: "How often to check if device is online", defaultValue: 5, range: "1..*", required: true
         input "retryInterval", "number", title: "Initial Retry Interval (seconds)", description: "How long to wait before first retry after a failed ping", defaultValue: 30, range: "1..*", required: true
         input "maxRetries", "number", title: "Maximum Retry Count", description: "Maximum number of retry attempts before backing off to regular schedule", defaultValue: 5, range: "0..*", required: true
@@ -54,8 +58,9 @@ metadata {
 import hubitat.helper.NetworkUtils
 import groovy.transform.Field
 import groovy.transform.CompileStatic
+import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.1.4"
+@Field static final String CODE_VERSION = "0.1.5"
 @Field static final int RESPONSE_HISTORY_SIZE = 21
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int INITIAL_PING_DELAY = 2
@@ -63,6 +68,9 @@ import groovy.transform.CompileStatic
 @Field static final int DEFAULT_RETRY_THRESHOLD = 3
 // Statuses a retry can't fix: the HTTP check stops until preferences are saved or Initialize runs.
 @Field static final List<Integer> HTTP_STOP_STATUSES = [401, 403, 404, 410]
+// Decrypted HTTP URL (it may carry an access token), kept in memory only: decrypt() costs
+// ~350 ms on a C-8 Pro, ~830 ms on a C-7. Keyed by device id; value [ciphertext, plaintext].
+@Field static final ConcurrentHashMap<String, List<String>> URL_CACHE = new ConcurrentHashMap<>()
 
 void installed() {
     logDebug "Installed with settings: ${redactSettings()}"
@@ -71,8 +79,48 @@ void installed() {
 }
 
 void updated() {
+    storeHttpUrl()
     logDebug "Updated with settings: ${redactSettings()}"
     initialize()
+}
+
+void uninstalled() {
+    URL_CACHE.remove(device.id.toString())
+}
+
+// The URL is typed into a preference, then kept only encrypted (0.1.4 and earlier left it in
+// the preference, readable on the device page). Runs on every save and once after an upgrade.
+private void storeHttpUrl() {
+    if (settings.clearHttpUrl) {
+        state.remove("httpUrlEnc")
+        state.remove("httpUrlShown")
+        device.removeSetting("clearHttpUrl")
+    }
+    if (settings.httpURL) {
+        state.httpUrlEnc = encrypt(settings.httpURL as String)
+        state.httpUrlShown = redactUrl(settings.httpURL as String)
+        device.removeSetting("httpURL")
+    }
+    URL_CACHE.remove(device.id.toString())
+}
+
+private String checkUrl() {
+    if (settings.httpURL) return settings.httpURL as String
+    String enc = state.httpUrlEnc as String
+    if (!enc) return null
+    String key = device.id.toString()
+    List<String> hit = URL_CACHE.get(key)
+    if (hit && hit[0] == enc) return hit[1]
+    try {
+        String plain = decrypt(enc)
+        URL_CACHE.put(key, [enc, plain])
+        return plain
+    } catch (Exception e) {
+        logError "The stored HTTP URL can't be read (${e.message}), as after a hub restore; enter it again"
+        state.remove("httpUrlEnc")
+        URL_CACHE.remove(key)
+        return null
+    }
 }
 
 void deviceTypeUpdated() {
@@ -102,6 +150,7 @@ private void initState() {
         logVer "New driver version detected: ${CODE_VERSION} (previous: ${state.version})"
         unschedule("ping")
         state.version = CODE_VERSION
+        storeHttpUrl()
     }
     if (state.currentRetryCount == null) state.currentRetryCount = 0
     if (state.retryThreshold == null) state.retryThreshold = settings.retryThreshold ?: DEFAULT_RETRY_THRESHOLD
@@ -117,7 +166,7 @@ void refresh() {
 void reschedulePing() {
     unschedule("ping")
 
-    if (deviceIP || httpURL) {
+    if (deviceIP || checkUrl()) {
         runIn(INITIAL_PING_DELAY, "ping")
     } else {
         logWarn "No device IP or HTTP URL specified. Pings will not be scheduled."
@@ -136,8 +185,8 @@ void parse(String description) {
 
 void ping() {
     initState()
-    // Ensure at least one of deviceIP or httpURL is set before attempting a ping
-    if (!deviceIP && !httpURL) {
+    // Ensure at least one of deviceIP or an HTTP URL is set before attempting a ping
+    if (!deviceIP && !checkUrl()) {
         logWarn "No device IP or HTTP URL specified. Ping aborted."
         return
     }
@@ -152,7 +201,7 @@ void ping() {
             pingRT = sendPingRequest()
             sendEvent(name: "pingStatus", value: pingRT >= 0 ? "success" : "failed", descriptionText: "Ping ${deviceIP} ${pingRT >= 0}")
         }
-        if (httpURL) {
+        if (checkUrl()) {
             if (state.httpStopped) {
                 logDebug "HTTP check stopped after HTTP ${state.httpStopped}; save preferences or run Initialize to resume"
             } else if (sendHttpRequest(seq, pingRT)) {
@@ -169,10 +218,10 @@ void ping() {
 
 private void finishCheck(long pingRT, long httpRT) {
     try {
-        if (httpURL) {
-            sendEvent(name: "httpStatus", value: httpRT >= 0 ? "success" : "failed", descriptionText: "HTTP GET ${redactUrl(httpURL)} ${httpRT >= 0}")
+        if (checkUrl()) {
+            sendEvent(name: "httpStatus", value: httpRT >= 0 ? "success" : "failed", descriptionText: "HTTP GET ${redactUrl(checkUrl())} ${httpRT >= 0}")
         }
-        updateDeviceStatus((deviceIP ? pingRT >= 0 : true) && (httpURL ? httpRT >= 0 : true))
+        updateDeviceStatus((deviceIP ? pingRT >= 0 : true) && (checkUrl() ? httpRT >= 0 : true))
         updateLastResponseTime(pingRT, httpRT)
         clearCheckError("check")
     } catch (Exception e) {
@@ -226,7 +275,7 @@ private boolean sendHttpRequest(int seq, long pingRT) {
         Map params = [
             timeout: timeout,
             ignoreSSLIssues: true
-        ] + splitQuery(httpURL)
+        ] + splitQuery(checkUrl())
         // A lost callback would end the ping chain; scheduleNextPing() replaces this runIn.
         runIn(timeout + 30, "ping")
         asynchttpGet("httpResponse", params, [seq: seq, pingRT: pingRT, start: now()])
@@ -252,18 +301,18 @@ void httpResponse(resp, Map data) {
             int status = resp.getStatus()
             if (status in HTTP_STOP_STATUSES) {
                 state.httpStopped = status
-                logError "HTTP GET ${redactUrl(httpURL)} returned HTTP ${status}; HTTP checks stopped until preferences are saved or Initialize runs"
+                logError "HTTP GET ${redactUrl(checkUrl())} returned HTTP ${status}; HTTP checks stopped until preferences are saved or Initialize runs"
             } else {
                 Long retryAfter = retryAfterSeconds(resp)
                 if (retryAfter) state.httpRetryAfter = retryAfter
-                logWarn "HTTP GET ${redactUrl(httpURL)} failed with HTTP ${status}: ${resp.getErrorMessage()}${retryAfter ? " (Retry-After ${retryAfter} s)" : ''}"
+                logWarn "HTTP GET ${redactUrl(checkUrl())} failed with HTTP ${status}: ${resp.getErrorMessage()}${retryAfter ? " (Retry-After ${retryAfter} s)" : ''}"
             }
         } else if (resp.getStatus() >= 200 && resp.getStatus() < 300) {
-            logNet "HTTP GET ${redactUrl(httpURL)} successful in ${elapsed} ms"
+            logNet "HTTP GET ${redactUrl(checkUrl())} successful in ${elapsed} ms"
             recordResponseTime("http", elapsed)
             httpRT = elapsed
         } else {
-            logWarn "HTTP GET ${redactUrl(httpURL)} failed with status ${resp.getStatus()}"
+            logWarn "HTTP GET ${redactUrl(checkUrl())} failed with status ${resp.getStatus()}"
         }
     } catch (Exception e) {
         logWarn "Error handling HTTP response: ${e}"
@@ -284,9 +333,11 @@ private Map redactSettings() {
     return settings.collectEntries { k, v -> [(k): k == 'httpURL' ? redactUrl(v as String) : v] }
 }
 
+// Scheme and host only: a URL can carry a token in the path, the query or user info.
 @CompileStatic
 private static String redactUrl(String url) {
-    return url?.replaceAll(/access_token=[^&]+/, 'access_token=REDACTED')
+    java.util.regex.Matcher m = (url ?: "") =~ /^([A-Za-z][A-Za-z0-9+.-]*:\/\/)(?:[^\/?#@]*@)?([^\/?#]*)/
+    return m.find() ? "${m.group(1)}${m.group(2)}/…".toString() : "(URL)"
 }
 
 // Firmware 2.5.1.x (Apache HttpClient 5.x) drops a query string embedded in the

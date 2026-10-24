@@ -56,6 +56,7 @@ mappings {
 // ===== CONFIG PAGE =====
 Map mainPage() {
     if (state.peerIds == null) state.peerIds = [1]
+    capturePeerTokens()
     reprobeIfNoResults()
     dynamicPage(name: "mainPage", title: "Multi-Hub Inventory v${CODE_VERSION}", install: true, uninstall: true) {
         section("Hubs") {
@@ -126,6 +127,26 @@ private Map parsePeerUrl(String raw) {
     return null
 }
 
+// The URL field submits on change, so a pasted token is moved into encrypted storage on the
+// next page render instead of waiting in the setting until Done.
+private void capturePeerTokens() {
+    Map tokens = (state.peerTokens ?: [:]) as Map
+    boolean changed = false
+    (state.peerIds ?: []).each { Integer p ->
+        String raw = settings["peer_${p}_url"] as String
+        Map parsed = raw ? parsePeerUrl(raw) : null
+        if (parsed?.token) {
+            tokens["${p}".toString()] = encrypt(parsed.token as String)
+            app.updateSetting("peer_${p}_url", [type: "text", value: "${parsed.baseUrl}/".toString()])
+            changed = true
+        }
+    }
+    if (!changed) return
+    state.peerTokens = tokens
+    String keyPrefix = "${app.id}:"
+    TOKEN_CACHE.keySet().removeIf { String k -> k.startsWith(keyPrefix) }
+}
+
 // Peer tokens are kept encrypted with the hub's key, so the app's settings and state pages
 // don't show them. A hub migration loses the key: paste each peer's full URL again after one.
 private String peerToken(Map peer) {
@@ -183,7 +204,13 @@ void initialize() {
         String raw = settings["peer_${p}_url"] as String
         if (!raw) return
         Map parsed = parsePeerUrl(raw)
-        if (!parsed) { logWarn "peer ${p}: could not parse URL"; return }
+        if (!parsed) {
+            // Drop the query so a token pasted with an unparseable URL doesn't stay in the setting.
+            int q = raw.indexOf('?')
+            if (q >= 0) app.updateSetting("peer_${p}_url", [type: "text", value: raw.substring(0, q)])
+            logWarn "peer ${p}: could not parse URL; paste the Hub Inspector API URL again"
+            return
+        }
         if (parsed.token) {
             tokens["${p}".toString()] = encrypt(parsed.token as String)
             app.updateSetting("peer_${p}_url", [type: "text", value: "${parsed.baseUrl}/".toString()])

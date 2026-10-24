@@ -15,7 +15,7 @@ import groovy.transform.Field
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "1.1.8"
+@Field static final String CODE_VERSION = "1.1.9"
 @Field static final int MAX_BRIDGES = 5
 @Field static final int MAX_FILTERS = 10
 @Field static final int MAX_DEDUPE_HISTORY = 100
@@ -27,6 +27,9 @@ import java.util.concurrent.atomic.AtomicInteger
 // costs nothing, and keeping them in state.filters rewrote it on every matching log line.
 @Field static final ConcurrentHashMap<String, ConcurrentHashMap<String, Long>> RECENT_EVENTS = new ConcurrentHashMap<>()
 @Field static final ConcurrentHashMap<String, AtomicInteger> EVENTS_THIS_MINUTE = new ConcurrentHashMap<>()
+// Decrypted POST URLs, kept in memory only: a webhook URL usually embeds its key, and decrypt()
+// costs ~350 ms on a C-8 Pro, ~830 ms on a C-7. Keyed by app id + the stored ciphertext.
+@Field static final ConcurrentHashMap<String, String> URL_CACHE = new ConcurrentHashMap<>()
 
 definition(
     name: "Log Monitor",
@@ -285,8 +288,10 @@ Map filterPage(Map params) {
                 title: "POST to URL", defaultValue: false,
                 submitOnChange: true
             if (settings.fOutputHttp) {
+                List<Map> saved = state.filters ?: []
+                boolean stored = idx >= 0 && idx < saved.size() && saved[idx].httpUrlEnc
                 input name: "fHttpUrl", type: "text",
-                    title: "URL", required: true,
+                    title: stored ? "URL (stored, enter only to change it)" : "URL", required: !stored,
                     description: "e.g., https://example.com/webhook"
             }
         }
@@ -393,15 +398,23 @@ private void checkVersion(boolean reinit = true) {
 
 // Filters get a stable id because their in-memory dedupe and rate data must not follow a
 // list index that shifts when a filter is deleted. processedEvents and eventsThisMinute
-// moved out of state.filters in 1.1.6.
+// moved out of state.filters in 1.1.6. The POST URL is kept encrypted from 1.1.9.
 private void migrateFilters() {
     List<Map> filters = state.filters ?: []
+    boolean plainUrls = false
     filters.each { Map f ->
         if (f.id == null) f.id = nextFilterId(filters)
         f.remove("processedEvents")
         f.remove("eventsThisMinute")
+        if (f.httpUrl) {
+            f.httpUrlEnc = encrypt(f.httpUrl as String)
+            plainUrls = true
+        }
+        f.remove("httpUrl")
     }
     state.filters = filters
+    // Its keys were the plain URLs.
+    if (plainUrls) state.remove("httpBackoff")
 }
 
 private int nextFilterId(List<Map> filters) {
@@ -448,6 +461,7 @@ void uninstalled() {
     (state.bridges ?: []).each { Map br ->
         try { deleteChildDevice(br.dni) } catch (Exception e) {}
     }
+    URL_CACHE.keySet().removeIf { it.startsWith("${app.id}:") }
 }
 
 // ============================================================================
@@ -531,7 +545,8 @@ private void populateSettingsFromFilter(Map filter) {
     app.updateSetting("fOutputLog", [type: "bool", value: filter.outputLog ?: false])
     app.updateSetting("fLogFile", [type: "text", value: filter.logFile ?: ""])
     app.updateSetting("fOutputHttp", [type: "bool", value: filter.outputHttp ?: false])
-    app.updateSetting("fHttpUrl", [type: "text", value: filter.httpUrl ?: ""])
+    // The stored URL stays encrypted; an empty field on save keeps it.
+    app.removeSetting("fHttpUrl")
 }
 
 private void savePendingFilter() {
@@ -545,6 +560,11 @@ private void savePendingFilter() {
 
     int actualIdx = (idx >= 0) ? idx : filters.size()
     Map filter = buildFilterFromSettings(actualIdx)
+    if (settings.fHttpUrl) {
+        filter.httpUrlEnc = encrypt(settings.fHttpUrl as String)
+    } else if (idx >= 0 && idx < filters.size() && filters[idx].httpUrlEnc) {
+        filter.httpUrlEnc = filters[idx].httpUrlEnc
+    }
 
     if (idx >= 0 && idx < filters.size()) {
         filter.id = filters[idx].id != null ? filters[idx].id : nextFilterId(filters)
@@ -558,8 +578,9 @@ private void savePendingFilter() {
 
     state.filters = filters
     // Saving a filter retries its URL now; drop backoff for URLs no filter uses any more.
-    Set<String> urls = filters.findAll { it.outputHttp && it.httpUrl }.collect { it.httpUrl as String } as Set
-    state.httpBackoff = ((state.httpBackoff ?: [:]) as Map).findAll { k, v -> k in urls && k != filter.httpUrl }
+    // Backoff is keyed by the ciphertext: encrypt() is deterministic, so equal URLs share a key.
+    Set<String> urls = filters.findAll { it.outputHttp && it.httpUrlEnc }.collect { it.httpUrlEnc as String } as Set
+    state.httpBackoff = ((state.httpBackoff ?: [:]) as Map).findAll { k, v -> k in urls && k != filter.httpUrlEnc }
     state.remove("editingFilterIndex")
     clearFilterSettings()
 }
@@ -582,8 +603,7 @@ private Map buildFilterFromSettings(int filterIdx) {
         notifySettingsKey:  "notifyDevices_${filterIdx}",
         outputLog:          settings.fOutputLog ?: false,
         logFile:            settings.fLogFile ?: "",
-        outputHttp:         settings.fOutputHttp ?: false,
-        httpUrl:            settings.fHttpUrl ?: ""
+        outputHttp:         settings.fOutputHttp ?: false
     ]
 }
 
@@ -764,12 +784,13 @@ private Map executeOutputs(Map logEntry, Map filter, String bridgeDni) {
     }
 
     // HTTP POST
-    if (filter.outputHttp && filter.httpUrl && httpPaused(filter.httpUrl as String)) {
+    String httpUrl = filter.outputHttp ? filterHttpUrl(filter) : null
+    if (httpUrl && httpPaused(filter.httpUrlEnc as String)) {
         logNet "HTTP POST for ${filter.label} skipped: URL paused after failures"
-    } else if (filter.outputHttp && filter.httpUrl) {
+    } else if (httpUrl) {
         try {
             Map postParams = [
-                uri: filter.httpUrl,
+                uri: httpUrl,
                 contentType: "application/json",
                 body: [
                     filter: filter.label,
@@ -783,7 +804,7 @@ private Map executeOutputs(Map logEntry, Map filter, String bridgeDni) {
                 ],
                 timeout: 5
             ]
-            asynchttpPost("httpPostCallback", postParams, [url: filter.httpUrl])
+            asynchttpPost("httpPostCallback", postParams, [url: filter.httpUrlEnc, shown: redactUrl(httpUrl)])
         } catch (Exception e) {
             logNet "HTTP POST error for ${filter.label}: ${e.message}"
         }
@@ -796,7 +817,8 @@ private Map executeOutputs(Map logEntry, Map filter, String bridgeDni) {
 // relay URL) isn't hit at the full per-filter rate. 401/403/404/410 won't fix
 // themselves: POSTs stop until a filter using the URL is saved again.
 void httpPostCallback(resp, data) {
-    String url = data?.url as String
+    String url = data?.url as String    // the ciphertext, which keys state.httpBackoff
+    String shown = data?.shown as String
     int status = resp.getStatus()
     if (!resp.hasError() && status >= 200 && status < 300) {
         if (url && state.httpBackoff?.containsKey(url)) {
@@ -816,13 +838,13 @@ void httpPostCallback(resp, data) {
     b.failures = (b.failures as int) + 1
     if (status in HTTP_STOP_STATUSES) {
         b.stopped = true
-        logWarn "HTTP POST to ${redactUrl(url)} failed (${reason}); POSTs to this URL stopped until a filter using it is saved again"
+        logWarn "HTTP POST to ${shown} failed (${reason}); POSTs to this URL stopped until a filter using it is saved again"
     } else {
         long delayMs = Math.min(1L << Math.min((b.failures as int) - 1, 6), (long) HTTP_MAX_BACKOFF_MIN) * 60000L
         Long retryAfter = retryAfterSeconds(resp)
         if (retryAfter) delayMs = Math.max(delayMs, retryAfter * 1000L)
         b.until = now() + delayMs
-        logWarn "HTTP POST to ${redactUrl(url)} failed (${reason}); pausing POSTs to this URL for ${delayMs.intdiv(1000L)} s (failure ${b.failures})"
+        logWarn "HTTP POST to ${shown} failed (${reason}); pausing POSTs to this URL for ${delayMs.intdiv(1000L)} s (failure ${b.failures})"
     }
     all[url] = b
     state.httpBackoff = all
@@ -843,9 +865,28 @@ private Long retryAfterSeconds(resp) {
     }
 }
 
+// Scheme and host only: a webhook URL can carry its key in the path, the query or user info.
 @CompileStatic
 private static String redactUrl(String url) {
-    return url.replaceAll(/access_token=[^&]+/, 'access_token=REDACTED')
+    java.util.regex.Matcher m = (url ?: "") =~ /^([A-Za-z][A-Za-z0-9+.-]*:\/\/)(?:[^\/?#@]*@)?([^\/?#]*)/
+    return m.find() ? "${m.group(1)}${m.group(2)}/…".toString() : "(URL)"
+}
+
+// The filter's POST URL, decrypted once per stored ciphertext.
+private String filterHttpUrl(Map filter) {
+    String enc = filter.httpUrlEnc as String
+    if (!enc) return null
+    String key = "${app.id}:${enc}"
+    String hit = URL_CACHE.get(key)
+    if (hit != null) return hit
+    try {
+        String plain = decrypt(enc)
+        URL_CACHE.put(key, plain)
+        return plain
+    } catch (Exception e) {
+        logWarn "${filter.label}: the stored POST URL can't be read (${e.message}), as after a hub restore; enter it again"
+        return null
+    }
 }
 
 private void appendToFile(String fileName, String data) {

@@ -39,7 +39,7 @@ definition(
 
 // --- Constants ---
 
-@Field static final String CODE_VERSION = "1.1.6"
+@Field static final String CODE_VERSION = "1.1.7"
 
 @Field static final String OAUTH_BASE_URL = "https://api.oauth.blink.com"
 @Field static final String CLIENT_ID = "ios"
@@ -72,6 +72,14 @@ definition(
 // Decrypted tokens, kept in memory only: decrypt() costs ~350 ms on a C-8 Pro, ~830 ms on a C-7.
 // Keyed by app id + token name; the stored ciphertext rides along so a refreshed token misses.
 @Field static final ConcurrentHashMap<String, List<String>> TOKEN_CACHE = new ConcurrentHashMap<>()
+// Login handshake (PKCE verifier, CSRF token, session cookies), kept in memory only from the
+// credential POST to the token exchange, so state never holds a live login session. A reboot
+// or code update while waiting for the PIN means starting the login again.
+@Field static final ConcurrentHashMap<String, Map> LOGIN_SESSION = new ConcurrentHashMap<>()
+
+private Map loginSession() {
+    return LOGIN_SESSION.computeIfAbsent(app.id.toString()) { [:] }
+}
 
 // /media/changed initial-window lookback on first fetch — picks up clips that
 // happened in the hour before the integration started, so a new install with
@@ -267,6 +275,7 @@ void uninstalled() {
     logCfg "uninstalled"
     unschedule()
     clearTokenCache()
+    LOGIN_SESSION.remove(app.id.toString())
     getChildDevices()?.each { ChildDeviceWrapper c ->
         try { deleteChildDevice(c.deviceNetworkId) } catch (Exception ignored) {}
     }
@@ -378,14 +387,13 @@ void startOAuthFlow() {
     }
 
     Map pkce = generatePkce()
-    state.codeVerifier = pkce.verifier
+    LOGIN_SESSION.put(app.id.toString(), [codeVerifier: pkce.verifier, cookieJar: [:]])
     state.hardwareId = UUID.randomUUID().toString().toUpperCase()
-    state.cookieJar = [:]
 
     String authorizeUrl = buildAuthorizeUrl((String) pkce.challenge)
     logNet "step 1: GET authorize"
     httpGetNoRedirect(authorizeUrl, headersHtmlGet())
-    logNet "step 1 cookies: ${state.cookieJar?.keySet()}"
+    logNet "step 1 cookies: ${loginSession().cookieJar?.keySet()}"
 
     logNet "step 2: GET signin"
     String csrfToken = null
@@ -394,8 +402,8 @@ void startOAuthFlow() {
         csrfToken = extractCsrfFromHtml(step2Html)
         logNet "step 2 CSRF from HTML: ${csrfToken ? 'found' : 'not found'}"
     }
-    if (!csrfToken && state.cookieJar?.containsKey("csrf-protection")) {
-        csrfToken = ((Map) state.cookieJar)["csrf-protection"] as String
+    if (!csrfToken && loginSession().cookieJar?.containsKey("csrf-protection")) {
+        csrfToken = ((Map) loginSession().cookieJar)["csrf-protection"] as String
         logNet "using csrf-protection cookie as CSRF token"
     }
     if (!csrfToken) {
@@ -403,7 +411,7 @@ void startOAuthFlow() {
         cleanupEphemeralState()
         return
     }
-    state.csrfToken = csrfToken
+    loginSession().csrfToken = csrfToken
 
     logNet "step 3: POST credentials"
     String postBody = toQueryString([
@@ -432,7 +440,7 @@ void startOAuthFlow() {
                     String body = readResponseBody(resp)
                     code = extractCodeFromUrl(body)
                     String newCsrf = extractCsrfFromHtml(body)
-                    if (newCsrf) state.csrfToken = newCsrf
+                    if (newCsrf) loginSession().csrfToken = newCsrf
                 }
                 if (code) {
                     logInfo "auth code received without 2FA"
@@ -475,12 +483,14 @@ void verifyPin() {
         return
     }
 
-    String csrfToken = state.csrfToken ?: ""
+    String csrfToken = loginSession().csrfToken ?: ""
     String postBody = toQueryString([
         "2fa_code"   : blinkPin,
         "csrf-token" : csrfToken,
         "remember_me": "false"
     ])
+    // Removed before the request so a rejected or failed PIN doesn't stay in settings.
+    app.removeSetting("blinkPin")
 
     boolean pinAccepted = false
     try {
@@ -586,7 +596,7 @@ void exchangeCodeForTokens(String code) {
         app_brand    : APP_BRAND,
         client_id    : CLIENT_ID,
         code         : code,
-        code_verifier: state.codeVerifier,
+        code_verifier: loginSession().codeVerifier,
         grant_type   : "authorization_code",
         hardware_id  : state.hardwareId,
         redirect_uri : REDIRECT_URI,
@@ -1746,6 +1756,8 @@ private void clearTokensOnly() {
 }
 
 private void cleanupEphemeralState() {
+    LOGIN_SESSION.remove(app.id.toString())
+    // Versions before 1.1.7 kept the handshake in state.
     state.remove("codeVerifier")
     state.remove("cookieJar")
     state.remove("csrfToken")
@@ -1876,7 +1888,7 @@ private String readResponseBody(resp) {
 
 private void captureCookies(response) {
     if (!response) return
-    if (!state.cookieJar) state.cookieJar = [:]
+    if (!loginSession().cookieJar) loginSession().cookieJar = [:]
 
     try {
         response.headers?.each { header ->
@@ -1922,14 +1934,14 @@ private void storeCookie(String setCookieValue) {
     String mainPart = setCookieValue.split(";")[0].trim()
     String[] parts = mainPart.split("=", 2)
     if (parts.length == 2) {
-        Map jar = (state.cookieJar ?: [:]) as Map
+        Map jar = (loginSession().cookieJar ?: [:]) as Map
         jar[parts[0].trim()] = parts[1].trim()
-        state.cookieJar = jar
+        loginSession().cookieJar = jar
     }
 }
 
 private String cookieHeader() {
-    Map jar = (state.cookieJar ?: [:]) as Map
+    Map jar = (loginSession().cookieJar ?: [:]) as Map
     if (jar.isEmpty()) return ""
     return jar.collect { k, v -> "${k}=${v}" }.join("; ")
 }

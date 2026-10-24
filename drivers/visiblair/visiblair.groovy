@@ -43,8 +43,12 @@ metadata {
 
 import groovy.transform.CompileStatic
 import groovy.transform.Field
+import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.1.8"
+@Field static final String CODE_VERSION = "0.1.9"
+// Decrypted access token, kept in memory only: decrypt() costs ~350 ms on a C-8 Pro, ~830 ms
+// on a C-7. Keyed by device id; value [ciphertext, plaintext].
+@Field static final ConcurrentHashMap<String, List<String>> TOKEN_CACHE = new ConcurrentHashMap<>()
 @Field static final String constCO2ClickURL = 'https://environment-monitor-01.co2.click:11000/api/v1'
 @Field static final String constVisiblairURL = 'https://api.visiblair.com:11000/api/v1'
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
@@ -57,7 +61,8 @@ import groovy.transform.Field
 preferences {
     section("API parameters") {
         input "userid", "text", title: "CO2.Click User ID", required: true
-        input "token", "text", title: "Access Token", required: true
+        input "token", "password", title: state.tokenEnc ? "Access Token (stored, enter only to change it)" : "Access Token",
+              required: !state.tokenEnc
         /* TODO: enumerate sensors and add child devices */
         input "uuid", "text", title: "Sensor UUID", required: true
         input("pollRate", "number", title: "Sensor Polling Rate (minutes)\nZero for no polling:", defaultValue:0, range: "0..*")
@@ -95,10 +100,40 @@ void installed() {
 
 void uninstalled() {
     unschedule()
+    TOKEN_CACHE.remove(device.id.toString())
 }
 
 void updated() {
+    storeToken()
     initialize()
+}
+
+// The token is typed into a preference, then kept only encrypted (0.1.8 and earlier left it
+// in the preference). Runs on every save and once after an upgrade.
+private void storeToken() {
+    if (!settings.token) return
+    state.tokenEnc = encrypt(settings.token as String)
+    TOKEN_CACHE.remove(device.id.toString())
+    device.removeSetting("token")
+}
+
+private String tokenValue() {
+    if (settings.token) return settings.token as String
+    String enc = state.tokenEnc as String
+    if (!enc) return null
+    String key = device.id.toString()
+    List<String> hit = TOKEN_CACHE.get(key)
+    if (hit && hit[0] == enc) return hit[1]
+    try {
+        String plain = decrypt(enc)
+        TOKEN_CACHE.put(key, [enc, plain])
+        return plain
+    } catch (Exception e) {
+        logError "The stored access token can't be read (${e.message}), as after a hub restore; enter it again"
+        state.remove("tokenEnc")
+        TOKEN_CACHE.remove(key)
+        return null
+    }
 }
 
 // Convergence point: install, preference save and hub start all land here.
@@ -128,16 +163,17 @@ private void checkVersion() {
     if (state.version == CODE_VERSION) return
     logVer "New driver version detected: ${CODE_VERSION} (previous: ${state.version})"
     state.version = CODE_VERSION
+    storeToken()
 }
 
 void refresh() {
     checkVersion()
-    if (!uuid || !token) {
+    if (!uuid || !tokenValue()) {
         logWarn "Sensor UUID and Access Token must be configured before polling"
         return
     }
 
-    getDeviceValuesFromAPI("sensor?uuid=${uuid}&viewToken=${token}")
+    getDeviceValuesFromAPI("sensor?uuid=${uuid}&viewToken=${tokenValue()}")
 
     scheduleNextRefresh()
 }
@@ -238,7 +274,7 @@ void getDeviceValuesFromAPI(String command) {
     ]
     if (query) requestParams.put('query', query)
 
-    asynchttpGet("getDeviceValuesFromAPI_async", requestParams, [cmd: command])
+    asynchttpGet("getDeviceValuesFromAPI_async", requestParams, [cmd: path])
 }
 
 void getDeviceValuesFromAPI_async(resp, data) {

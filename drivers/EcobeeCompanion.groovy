@@ -86,7 +86,8 @@ metadata {
     }
 
     preferences {
-        input name: "apiKey", type: "text", title: "Ecobee API Key", required: true
+        input name: "apiKey", type: "password", title: state.apiKeyEnc ? "Ecobee API Key (stored, enter only to change it)" : "Ecobee API Key",
+              required: !state.apiKeyEnc
         if (state.thermostats && !state.thermostats.isEmpty()) {
             input name: "thermostatId", type: "enum", title: "Thermostat",
                   options: state.thermostats.collectEntries { id, info -> [(id): info.name] },
@@ -101,11 +102,14 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.1.5"
+@Field static final String CODE_VERSION = "0.1.6"
 
 // Decrypted tokens, kept in memory only: decrypt() costs ~350 ms on a C-8 Pro, ~830 ms on a C-7.
 // Keyed by device id + token name; the stored ciphertext rides along so a refreshed token misses.
 @Field static final ConcurrentHashMap<String, List<String>> TOKEN_CACHE = new ConcurrentHashMap<>()
+// The PIN flow's authorization code, by device id, from connect() to authorize(); memory only.
+// The PIN expires in minutes, and a reboot in between means running connect() again.
+@Field static final ConcurrentHashMap<String, String> PIN_CODES = new ConcurrentHashMap<>()
 
 // OAuth and API endpoints
 @Field static final String ECOBEE_API_BASE= "https://api.ecobee.com"
@@ -168,12 +172,15 @@ void updated() {
 
 void uninstalled() {
     dropCachedTokens()
+    TOKEN_CACHE.remove("${device.id}:apiKey".toString())
+    PIN_CODES.remove(device.id.toString())
 }
 
 // Convergence point for install and save. The poll is a cron schedule, which survives a
 // reboot, so hub start needs nothing here.
 void initialize() {
     checkVersion(false)
+    encryptApiKey()
     configure()
     if (debugEnable || traceEnable) runIn(DEBUG_LOG_TIMEOUT_SECONDS, "logsOff")
     // Without a thermostat every poll would only log an error.
@@ -207,6 +214,8 @@ private void checkVersion(boolean reinit = true) {
         // 0.1.3 and earlier copied the full API payloads into state on every poll.
         state.remove("thermostatRuntime")
         state.remove("thermostatWeather")
+        // 0.1.5 and earlier kept the PIN flow's code in state.
+        state.remove("ecobeeAuthToken")
         if (reinit) runIn(1, "updated")
     }
     // 0.1.1 and earlier stored the tokens in plain text.
@@ -221,6 +230,19 @@ private void storeTokens(String access, String refresh) {
     state.refreshTokenEnc = refresh ? encrypt(refresh) : null
     state.remove("accessToken")
     state.remove("refreshToken")
+}
+
+// The API key is typed into a preference, then kept only encrypted (0.1.5 and earlier left it
+// in the preference). Runs on every save, so a newly entered key replaces the stored one.
+private void encryptApiKey() {
+    if (!settings.apiKey) return
+    state.apiKeyEnc = encrypt(settings.apiKey as String)
+    TOKEN_CACHE.remove("${device.id}:apiKey".toString())
+    device.removeSetting("apiKey")
+}
+
+private String apiKeyValue() {
+    return (settings.apiKey as String) ?: token("apiKey")
 }
 
 private void dropCachedTokens() {
@@ -242,7 +264,7 @@ private String token(String name) {
         TOKEN_CACHE.put(key, [enc, plain])
         return plain
     } catch (Exception e) {
-        logWarn "could not decrypt ${name} (${e.message}); run connect() again"
+        logWarn "could not decrypt ${name} (${e.message}); ${name == 'apiKey' ? 'enter the API key again' : 'run connect() again'}"
         TOKEN_CACHE.remove(key)
         state.remove("${name}Enc")
         return null
@@ -254,7 +276,7 @@ private String token(String name) {
 // ========================================
 
 void connect() {
-    if (!apiKey) {
+    if (!apiKeyValue()) {
         logError "API Key not configured"
         sendEvent(name: "connectionStatus", value: "error", descriptionText: "${device.displayName} Error: No API Key")
         return
@@ -269,7 +291,7 @@ void connect() {
         uri: "${ECOBEE_API_BASE}/authorize",
         query: [
             response_type: "ecobeePin",
-            client_id: apiKey,
+            client_id: apiKeyValue(),
             scope: "smartWrite"
         ],
         contentType: "application/json",
@@ -284,7 +306,7 @@ void connect() {
                 return
             }
             Map data = response.data
-            state.ecobeeAuthToken = data.code
+            PIN_CODES.put(device.id.toString(), data.code as String)
             state.pinExpires = now() + (data.expires_in * 1000)
 
             logInfo "PIN: ${data.ecobeePin} (expires in ${data.expires_in / 60} min)"
@@ -305,7 +327,7 @@ void connect() {
 }
 
 void authorize() {
-    if (!state.ecobeeAuthToken) {
+    if (!PIN_CODES.get(device.id.toString())) {
         logError "No authorization token. Call connect() first"
         return
     }
@@ -320,8 +342,8 @@ void authorize() {
         uri: "${ECOBEE_API_BASE}/token",
         query: [
             grant_type: "ecobeePin",
-            code: state.ecobeeAuthToken,
-            client_id: apiKey
+            code: PIN_CODES.get(device.id.toString()),
+            client_id: apiKeyValue()
         ],
         contentType: "application/json",
         timeout: 15
@@ -338,7 +360,7 @@ void authorize() {
             storeTokens(data.access_token as String, data.refresh_token as String)
             state.tokenExpiry = now() + (data.expires_in * 1000)
 
-            state.remove('ecobeeAuthToken')
+            PIN_CODES.remove(device.id.toString())
             state.remove('interval')
             state.remove('pinExpires')
 
@@ -388,7 +410,7 @@ Boolean refreshToken(boolean quiet = false) {
         query: [
             grant_type: "refresh_token",
             refresh_token: refresh,
-            client_id: apiKey
+            client_id: apiKeyValue()
         ],
         contentType: "application/json",
         timeout: 15

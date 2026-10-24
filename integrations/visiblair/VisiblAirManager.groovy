@@ -29,7 +29,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "2.1.7"
+@Field static final String CODE_VERSION = "2.1.8"
 @Field static final String VISIBLAIR_API = "https://api.visiblair.com/api/v1"
 @Field static final int HTTP_TIMEOUT = 15
 // Decrypted password, kept in memory only: decrypt() costs ~350 ms on a C-8 Pro, ~830 ms on a C-7.
@@ -136,6 +136,7 @@ private void checkVersion(boolean reinit = true) {
 void uninstalled() {
     unschedule()
     SECRET_CACHE.remove(app.id.toString())
+    SENSOR_SECRETS.keySet().removeIf { it.startsWith("${app.id}:") }
 }
 
 void appButtonHandler(String buttonName) {
@@ -304,8 +305,7 @@ private void handlePollData(data) {
                 model: sensor.model,
                 modelVariant: sensor.modelVariant,
                 modelVersion: sensor.modelVersion,
-                description: sensor.description,
-                viewToken: sensor.viewToken
+                description: sensor.description
             ]
         }
         state.discoveredSensors = discovered
@@ -426,7 +426,6 @@ private void syncChildDevices(List<Map> sensors) {
         String variant = (sensor.modelVariant ?: "") as String
         String driverName = resolveDriverName(model, variant)
         String description = (sensor.description ?: uuid) as String
-        String viewToken = (sensor.viewToken ?: "") as String
 
         ChildDeviceWrapper child = getChildDevice(dni)
         if (!child) {
@@ -443,7 +442,8 @@ private void syncChildDevices(List<Map> sensors) {
         }
 
         child.updateDataValue("uuid", uuid)
-        child.updateDataValue("viewToken", viewToken)
+        // Versions before 2.1.8 stored the sensor's view token here in plain text.
+        if (child.getDataValue("viewToken") != null) child.removeDataValue("viewToken")
         child.updateDataValue("model", model)
         child.updateDataValue("modelVariant", variant)
     }
@@ -466,7 +466,7 @@ private void dispatchSensorData(List sensorList) {
         ChildDeviceWrapper child = getChildDevice(dni)
         if (child) {
             logTrace "dispatching data to ${dni}"
-            child.updateSensorData(sensorData)
+            child.updateSensorData(sensorData.findAll { k, v -> !SENSOR_SECRET_FIELDS.contains(k) })
         }
     }
 }
@@ -561,16 +561,29 @@ void refreshSensor(String dni) {
 
 @Field static final Map PORTAL_VIEW_DEFAULT = [CO2: "on", T: "on", H: "on", AQI_METHOD: "us"]
 
+// API fields that are credentials: kept out of state, child devices and logs. The MQTT ones
+// live in memory only, keyed by app id and sensor uuid; every poll refreshes them, and a
+// config update before the first poll after a reboot fetches them first.
+@Field static final List<String> SENSOR_SECRET_FIELDS = ["viewToken", "MQTTUsername", "MQTTPassword", "MQTTCert"]
+@Field static final ConcurrentHashMap<String, Map> SENSOR_SECRETS = new ConcurrentHashMap<>()
+
+private String sensorSecretKey(String uuid) { "${app.id}:${uuid}" }
+
+// Rebuilt from scratch on each poll, so copies older versions kept (MQTT credentials
+// included) and entries of removed sensors drop out.
 private void storeSensorConfigs(List sensorList) {
-    Map<String, Map> configs = (state.sensorConfigs ?: [:]) as Map
+    Map<String, Map> configs = [:]
     sensorList.each { Map sensor ->
         String uuid = sensor.uuid as String
         Map config = [:]
+        Map secrets = [:]
         CONFIG_FIELD_MAP.each { String apiField, String putParam ->
             if (sensor.containsKey(apiField)) {
-                config[putParam] = sensor[apiField]
+                if (SENSOR_SECRET_FIELDS.contains(apiField)) secrets[putParam] = sensor[apiField]
+                else config[putParam] = sensor[apiField]
             }
         }
+        SENSOR_SECRETS.put(sensorSecretKey(uuid), secrets)
         if (!config.containsKey("portalView")) {
             config.portalView = PORTAL_VIEW_DEFAULT
         }
@@ -590,7 +603,7 @@ void updateSensorConfig(String uuid, Map overrides) {
     configs[uuid] = config
     state.sensorConfigs = configs
 
-    if (!config.containsKey("mqttenpoint")) {
+    if (!config.containsKey("mqttenpoint") || !SENSOR_SECRETS.containsKey(sensorSecretKey(uuid))) {
         logNet "stored config incomplete for ${uuid}, fetching full config first"
         fetchAndUpdateConfig(uuid, overrides)
         return
@@ -641,7 +654,7 @@ private void sendConfigUpdate(String uuid, Map config, Map overrides) {
 
 private void requestConfigUpdate(String token, String uuid, Map config, Map overrides) {
     Map<String, String> query = [uuid: uuid]
-    config.each { String key, value ->
+    (config + (SENSOR_SECRETS.get(sensorSecretKey(uuid)) ?: [:])).each { String key, value ->
         query[key] = (value instanceof Map || value instanceof List) ? JsonOutput.toJson(value) : (value?.toString() ?: "")
     }
 
