@@ -357,9 +357,9 @@ function render() {
     <div class="card"><h2><span>Daily use (kWh)${label ? ', ' + esc(label) : ''} ${zoomStack.length ? '<button id="zoomOut" title="Back to the previous period (Esc)">Zoom out</button>' : ''}</span><span class="legend">Click a day for its hours; drag across days to zoom in. Pale bars: hours missing.${temps ? ' <span class="t">Line</span>: mean outdoor temperature.' : ''}${events ? ' <span class="e">Mark</span>: peak event.' : ''}</span></h2><div id="daily"></div>
         <div class="legend" style="margin-top:6px">${esc(tempNote)}</div><div class="legend">${esc(eventNote)}</div></div>
     <div class="card"><h2><span id="dayTitle"></span><span class="legend" id="dayNote"></span></h2><div id="hourly"></div>
-        <div class="legend" style="margin-top:6px"><b>Shaded</b>: peak windows 6–9 and 16–20, December 1 to March 31${events ? ' · <span class="e">purple</span>: an actual peak event' : ''}</div></div>
+        <div class="legend" style="margin-top:6px"><b>Shaded</b>: peak windows 06:00–09:00 and 16:00–20:00, December 1 to March 31${events ? ' · <span class="e">purple</span>: an actual peak event' : ''}</div></div>
     ${temps ? `<div class="card"><h2><span>Daily use against mean outdoor temperature</span><span class="legend">Full days only. Click a point for its hours.${events ? ' <span class="e">Coloured</span>: peak-event days.' : ''}</span></h2><div id="scatter"></div></div>` : ''}
-    <div class="card"><h2><span>Average day by hour (kWh)${label ? ', ' + esc(label) : ''}</span><span class="legend"><b>Shaded</b>: peak-event windows, 6–9 and 16–20</span></h2><div id="profile"></div><div class="legend" id="profileNote" style="margin-top:6px"></div><div class="legend" id="peakShare"></div></div>
+    <div class="card"><h2><span>Average day by hour (kWh)${label ? ', ' + esc(label) : ''}</span><span class="legend"><b>Shaded</b>: peak-event windows, 06:00–09:00 and 16:00–20:00</span></h2><div id="profile"></div><div class="legend" id="profileNote" style="margin-top:6px"></div><div class="legend" id="peakShare"></div></div>
     <div class="card"><h2><span>${dayRows ? 'Days' : 'Months'}</span></h2><div class="scroll" id="table"></div></div>`;
     if ($('zoomOut')) $('zoomOut').onclick = zoomOut;
     drawDaily(set);
@@ -525,7 +525,7 @@ function drawProfile(fulls) {
     $('profileNote').innerHTML = evAvg ? `Bars: ${ords.length} days without an event · <span class="e">line</span>: ${evs.length} peak-event days` : '';
     const shares = a => {
         const tot = a.reduce((s, v) => s + (v || 0), 0);
-        return tot ? PEAKS.map(([x, y]) => `${x}–${y} ${fmt(a.slice(x, y).reduce((s, v) => s + (v || 0), 0) / tot * 100, 0)} %`).join(', ') : '';
+        return tot ? PEAKS.map(([x, y]) => `${String(x).padStart(2, '0')}:00–${y}:00 ${fmt(a.slice(x, y).reduce((s, v) => s + (v || 0), 0) / tot * 100, 0)} %`).join(', ') : '';
     };
     const base = shares(avg);
     $('peakShare').textContent = base ? `Share of the day's energy${evAvg ? ', days without an event' : ''}: ${base} (${fmt(300 / 24, 0)} % and ${fmt(400 / 24, 0)} % of the hours)` +
@@ -556,7 +556,7 @@ function drawTable(dayRows, set) {
     const el = $('table');
     const peakOf = d => d.hours.filter(x => inPeak(x.h) && x.kWh != null).reduce((s, x) => s + x.kWh, 0);
     if (dayRows) {
-        el.innerHTML = `<table><tr><th>Day</th><th>kWh</th><th>Peak windows</th><th>Lowest hour</th><th>Highest hour</th>${temps ? '<th>Outdoors, mean</th><th>min to max</th>' : ''}${events ? '<th>Peak event</th>' : ''}</tr>` +
+        el.innerHTML = `<table><tr><th>Day</th><th>kWh</th><th>Peak windows</th><th>Lowest hour (kWh)</th><th>Highest hour (kWh)</th>${temps ? '<th>Outdoors, mean</th><th>min to max</th>' : ''}${events ? '<th>Peak event</th>' : ''}</tr>` +
             set.slice().reverse().map(d => {
                 const known = d.hours.filter(x => x.kWh != null).map(x => x.kWh);
                 return `<tr class="click" data-d="${d.date}"><td>${dayName(d.date)}</td><td>${fmt(d.total)}${d.nulls ? ' *' : ''}</td>` +
@@ -568,7 +568,7 @@ function drawTable(dayRows, set) {
     }
     const by = {};
     set.forEach(d => (by[d.date.slice(0, 7)] = by[d.date.slice(0, 7)] || []).push(d));
-    el.innerHTML = `<table><tr><th>Month</th><th>Days</th><th>kWh</th><th>kWh a day</th><th>Heaviest day</th><th>Peak windows</th>${temps ? '<th>Outdoors, mean</th>' : ''}${events ? '<th>Event days</th>' : ''}</tr>` +
+    el.innerHTML = `<table><tr><th>Month</th><th>Days</th><th>kWh</th><th>kWh a day</th><th>Heaviest day (kWh)</th><th>Peak windows</th>${temps ? '<th>Outdoors, mean</th>' : ''}${events ? '<th>Event days</th>' : ''}</tr>` +
         Object.keys(by).sort().reverse().map(k => {
             const ds = by[k], f = ds.filter(full), t = ds.reduce((s, d) => s + d.total, 0);
             const mx = f.reduce((a, d) => !a || d.total > a.total ? d : a, null), p = ds.reduce((s, d) => s + peakOf(d), 0);

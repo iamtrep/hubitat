@@ -106,19 +106,20 @@ Map mainPage() {
     boolean childPending = state.locationId && !state.childError && !meterChild() &&
         now() - ((state.childRequestedAt ?: 0L) as long) < CHILD_WAIT_MS
     dynamicPage(name: "mainPage", install: true, uninstall: true, refreshInterval: childPending ? 2 : 0) {
-        if (state.loginError) {
-            section { paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f);'><b>Error:</b> ${state.loginError}</span>" }
-        }
+        // The style and any error ride in the page's first section, so no empty section opens it.
+        String head = uiStyle() + uiErrors()
         if (!isLoggedIn()) {
             if (!state.codeVerifier) newPkce()
-            section("Log in") {
+            section("Log in", sectionClass: "hilo-sec") {
+                paragraph rawHtml: true, head
                 paragraph "1. Log in to Hilo. After the login you land on a my.home-assistant.io page. Don't click anything on it."
                 href url: authorizeUrl(), style: "external", title: "Log in to Hilo", description: "Opens Hilo's login page in a new tab"
                 input "pastedUrl", "text", title: "2. Copy the address of that page from the browser's address bar and paste it here",
                       submitOnChange: true, required: false
             }
         } else if (!state.locationId) {
-            section("Location") {
+            section("Location", sectionClass: "hilo-sec") {
+                paragraph rawHtml: true, head
                 Map<String, String> opts = ((state.locations ?: []) as List<Map>).collectEntries { [(it.id as String): it.name as String] }
                 if (opts) {
                     input "locationId", "enum", title: "Hilo location", options: opts, submitOnChange: true, required: true
@@ -127,44 +128,144 @@ Map mainPage() {
                 }
             }
         } else {
-            section("Status") {
-                paragraph "Location: <b>${state.locationName}</b>"
-                if (state.childError) paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f);'><b>Error:</b> ${state.childError}</span>"
-                ChildDeviceWrapper meter = meterChild()
-                if (meter) paragraph "Device: <a href='/device/edit/${meter.id}' target='_blank'>${meter.displayName}</a>"
-                else if (childPending) paragraph "Creating the device…"
-                else if (!state.childError) paragraph "The device is created when you press Done."
-                if (state.lastPoll) paragraph "Last history read: ${formatClock(state.lastPoll as long)}"
-                paragraph historySummary()
-                if (state.pollStreak) paragraph "History reads failing since ${formatClock((state.pollStreak as Map).since as long)}"
-            }
-            section("Winter credit") {
-                input "wcEnable", "bool", title: "Winter credit targets", defaultValue: false, submitOnChange: true,
-                      description: "Each evening, the target of a peak event the next morning and evening, whether or not one is announced"
+            section { paragraph rawHtml: true, head + "<div class='flex flex-wrap gap-3'>${energyCard(childPending)}${winterCreditCard()}</div>" }
+            // Open while the feature is off, so its switch is in view.
+            section("Winter credit settings", hideable: true, hidden: settings.wcEnable as boolean) {
+                input "wcEnable", "bool", title: "Compute the reference energy of each peak event the evening before", defaultValue: false, submitOnChange: true
                 if (settings.wcEnable) {
-                    input "wcFloor", "decimal", title: "kWh the home uses during a 4-hour event with the heating cut", defaultValue: 3.0, range: "0..40"
-                    input "wcNotify", "capability.notification", title: "Notify", multiple: true, required: false
-                    input "wcNotifyTime", "time", title: "Evening notification at", defaultValue: "22:00", required: false
+                    input "wcFloor", "decimal", title: "kWh the home uses during a 4-hour event with the heating cut", defaultValue: 3.0, range: "0..40", width: 6
+                    input "wcExtraEvents", "text", title: "Events missing from Hydro-Québec's open data (e.g. 2025-12-07 PM, 2026-01-05 AM)", required: false, width: 6
+                    input "wcNotify", "capability.notification", title: "Notify", multiple: true, required: false, width: 6
+                    input "wcNotifyTime", "time", title: "Evening notification at", defaultValue: "22:00", required: false, width: 6
                     input "wcNotifyDaily", "bool", title: "Notify every winter evening, even without an event", defaultValue: false
-                    input "wcExtraEvents", "text", title: "Events missing from Hydro-Québec's open data (e.g. 2025-12-07 PM, 2026-01-05 AM)", required: false
-                    paragraph peakSummary()
-                    if (viewerInstalled(WC_VIEWER_FILE)) paragraph "<a href='/local/${WC_VIEWER_FILE}' target='_blank'>Winter credit analysis</a>"
-                    input "btnPeakNow", "button", title: "Compute now"
+                    input "btnPeakNow", "button", title: "Compute now", inputClass: "p-button p-button-outlined"
                 }
             }
-            section("Account") {
-                input "btnLogout", "button", title: "Log out of Hilo"
-            }
         }
-        section("Name") {
+        section("Name and logging", hideable: true, hidden: true) {
             label title: "Name of this instance", required: false
-        }
-        section("Logging") {
             input "txtEnable", "bool", title: "Enable info logging", defaultValue: true
             input "debugEnable", "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
             if (settings.debugEnable) input "traceEnable", "bool", title: "Enable trace logging", defaultValue: false
         }
+        if (isLoggedIn()) {
+            section("Account", hideable: true, hidden: true) {
+                if (state.locationName) paragraph "Logged in to Hilo, location <b>${htmlEsc(state.locationName)}</b>."
+                input "btnLogout", "button", title: "Log out of Hilo", inputClass: "p-button p-button-outlined p-button-danger"
+            }
+        }
     }
+}
+
+// ── Main page parts ───────────────────────────────────────────────────
+
+private static String htmlEsc(v) {
+    return v == null ? "" : v.toString().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("'", "&#39;").replace('"', "&quot;")
+}
+
+private static String kwh(v, int digits = 1) { return v == null ? "–" : String.format("%.${digits}f", (v as BigDecimal).doubleValue()) }
+
+private static String uiStyle() {
+    return """<style>
+.hilo-sec > :first-child { font-size: 1.05rem; font-weight: 600; padding-bottom: 4px; margin-bottom: 6px; border-bottom: 1px solid var(--surface-border, rgba(128,128,128,.3)); }
+.hilo-kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; }
+.hilo-kv .k { color: var(--text-color-secondary); }
+.hilo-kv small, .hilo-card .note { display: block; color: var(--text-color-secondary); font-size: .8rem; }
+.hilo-card { flex: 1 1 280px; min-width: 260px; }
+.hilo-card h4 { margin: 0 0 8px; font-size: 1rem; font-weight: 600; }
+.hilo-big { font-size: 1.6rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.hilo-btn { display: inline-block; padding: 4px 12px; margin: 8px 8px 0 0; border: 1px solid var(--surface-border, rgba(128,128,128,.4)); border-radius: 6px; text-decoration: none; }
+</style>"""
+}
+
+private String uiErrors() {
+    List errs = [state.loginError, state.childError].findAll { it }
+    if (state.pollStreak) errs << "History reads failing since ${formatClock((state.pollStreak as Map).since as long)}"
+    return errs ? "<div class='p-message p-message-error p-3 border-round'>${errs.collect { htmlEsc(it) }.join('<br>')}</div>" : ""
+}
+
+// rows: [label, value, optional note under the value]
+private static String kvRows(List<List> rows) {
+    return "<div class='hilo-kv'>" + rows.collect { "<span class='k'>${it[0]}</span><span>${it[1]}${it.size() > 2 && it[2] ? "<small>${it[2]}</small>" : ''}</span>" }.join("") + "</div>"
+}
+
+private static String linkButton(String href, String text) { return "<a class='hilo-btn' href='${href}' target='_blank'>${text}</a>" }
+
+private static String card(String title, String body) {
+    return "<div class='hilo-card border-1 surface-border border-round p-3'><h4>${title}</h4>${body}</div>"
+}
+
+private String historyLine() {
+    if (!state.historyStart) return historyBusy() ? "looking for where it starts" : "not read yet"
+    long left = localToday().minusDays(1).toEpochDay() - LocalDate.parse(state.lastCompleteDay as String).toEpochDay() - 1
+    return left > 0 ? "from ${state.historyStart}, ${left} days still to read" : "complete from ${state.historyStart}"
+}
+
+private String energyCard(boolean childPending) {
+    ChildDeviceWrapper m = meterChild()
+    String title = "Energy · ${htmlEsc(state.locationName)}"
+    if (!m) return card(title, childPending ? "Creating the device…" : (state.childError ? "No device." : "The device is created when you press Done."))
+    String body = "<div class='hilo-big'>${kwh(m.currentValue('power'), 0)} W</div><div class='note mb-2'>now</div>" +
+        kvRows([["Today", "${kwh(m.currentValue('energy'))} kWh"], ["Yesterday", "${kwh(m.currentValue('energyYesterday'))} kWh"],
+                ["History", historyLine(), "File Manager, ${historyFile('YYYY-MM')}"],
+                ["Last read", state.lastPoll ? formatClock(state.lastPoll as long) : "–"]])
+    body += linkButton("/device/edit/${m.id}", "Device") + (viewerInstalled(VIEWER_FILE) ? linkButton("/local/${VIEWER_FILE}", "Browse the history") : "") +
+        linkButton("/hub/fileManager", "File Manager")
+    return card(title, body)
+}
+
+private String winterCreditCard() {
+    if (!settings.wcEnable) return card("Winter credit", "<div class='note'>Off. Turn it on under Winter credit settings to compute each peak event's reference energy the evening before.</div>")
+    ChildDeviceWrapper w = peakChild()
+    if (!w || !w.currentValue("eventDate")) return card("Winter credit", "<div class='note'>Nothing computed yet. Reference energies are computed from December to March after each hourly read, or now with Compute now.</div>")
+    String day = w.currentValue("eventDate"), win = w.currentValue("window")
+    boolean am = win == "AM", announced = w.currentValue("announced") == "true"
+    String anchor = am ? "01:00–04:00" : "12:00–14:00"
+    String tag = announced ? "<span class='p-tag p-tag-warning mr-2'>Peak event</span>" : "<span class='p-tag p-tag-secondary mr-2'>Not announced</span>"
+    boolean live = w.currentValue("anchorWindow") == "${day} ${am ? '01:00-04:00' : '12:00-14:00'}"
+    String body = "<div class='mb-2'>${tag}${htmlEsc(day)} ${am ? '06:00–10:00' : '16:00–20:00'}</div>" + adviceBox(w, am) +
+        kvRows([referenceEnergyRow(w, am, live, anchor),
+                ["Reference energy with the limit<small>Hilo: adjusted consumption limit</small>", "${kwh(w.currentValue('cappedTarget'))} kWh", "applies when more than 40 kWh is curtailed"],
+                ["Anchor period plan", "${htmlEsc(w.currentValue('anchorPlan'))} ${kwh(w.currentValue('anchorTarget'))} kWh", anchor],
+                ["Anchor period so far", live ? "${kwh(w.currentValue('anchorUsed'))} kWh" : "–"],
+                ["Energy curtailed", "${kwh(w.currentValue('expectedCurtailment'))} kWh", "cutting to ${kwh(settings.wcFloor ?: 3.0)} kWh"]])
+    body += linkButton("/device/edit/${w.id}", "Device") + (viewerInstalled(WC_VIEWER_FILE) ? linkButton("/local/${WC_VIEWER_FILE}", "Winter credit analysis") : "")
+    Map last = state.peakLast as Map
+    if (last?.at) body += "<div class='note mt-2'>Computed ${formatClock(last.at as long)} · ${((state.peakEvents ?: []) as List).size()} Hydro-Québec events on file from the last ${PEAK_LOOKBACK_DAYS} days</div>"
+    return card("Winter credit", body)
+}
+
+// Once the anchor period is over the device knows what pays during the event: cutting deep, or consuming
+// just enough to curtail exactly 40 kWh when the limit would otherwise cut a deep curtailment below 40.
+private String adviceBox(ChildDeviceWrapper w, boolean am) {
+    String advice = w.currentValue("advice")
+    BigDecimal target = w.currentValue("target") as BigDecimal, capped = w.currentValue("cappedTarget") as BigDecimal
+    if (target == null || capped == null || !(advice in ["keep", "cut"])) return ""
+    BigDecimal floorKWh = (settings.wcFloor ?: 3.0) as BigDecimal
+    String during = am ? "06:00–10:00" : "16:00–20:00"
+    if (advice == "keep") {
+        BigDecimal deep = target - floorKWh > 40 && target > capped ? capped - floorKWh : target - floorKWh
+        return "<div class='p-message p-message-warn p-2 mb-2 border-round'><b>Consume ${kwh(w.currentValue('keepUse'))} kWh during ${during}.</b> " +
+            "That curtails exactly 40 kWh. Cutting to ${kwh(floorKWh)} kWh would curtail more than 40 kWh, so the limit applies and only ${kwh(deep)} kWh counts.</div>"
+    }
+    BigDecimal c = target - floorKWh > 40 && target > capped ? capped - floorKWh : target - floorKWh
+    return "<div class='p-message p-message-info p-2 mb-2 border-round'><b>Cut as deep as you can during ${during}.</b> " +
+        "Cutting to ${kwh(floorKWh)} kWh curtails ${kwh(c)} kWh${target - floorKWh > 40 && target > capped ? ', with the limit' : ''}.</div>"
+}
+
+// The reference energy without the limit, the Hilo app's "original consumption limit". It needs the anchor
+// period's consumption: final once the period is over, a running value during it, unknown before.
+private static List referenceEnergyRow(ChildDeviceWrapper w, boolean am, boolean live, String anchor) {
+    String label = "Reference energy<small>Hilo: original consumption limit</small>"
+    BigDecimal base = w.currentValue("base") as BigDecimal, target = w.currentValue("target") as BigDecimal
+    if (target != null) return [label, "<b>${kwh(target)}</b> kWh", "${kwh(base)} kWh + ${kwh(target - base)} kWh temperature adjustment"]
+    String end = am ? "04:00" : "14:00"
+    BigDecimal used = w.currentValue("anchorUsed") as BigDecimal, ref = w.currentValue("anchorReference") as BigDecimal
+    if (live && used != null && base != null && ref != null) {
+        BigDecimal soFar = base + (am ? 4.0 / 3.0 : 2.0) * (used - ref)
+        return [label, "${kwh(soFar)} kWh so far", "rises with the consumption until ${end}"]
+    }
+    return [label, "known at ${end}", "${kwh(base)} kWh + the temperature adjustment from ${anchor}"]
 }
 
 void installed() { logDebug "installed"; state.version = CODE_VERSION; initialize() }
@@ -646,16 +747,6 @@ private Map readHistoryFile(String name) {
     }
 }
 
-private String historySummary() {
-    if (!state.historyStart) return historyBusy() ? "History: looking for where it starts" : "History: not read yet"
-    long left = localToday().minusDays(1).toEpochDay() - LocalDate.parse(state.lastCompleteDay as String).toEpochDay() - 1
-    String files = "<a href='/hub/fileManager' target='_blank'>File Manager</a>, ${historyFile('YYYY-MM')}"
-    String text = left > 0 ? "History: from ${state.historyStart}, ${left} days still to read (${files})" :
-                             "History: complete from ${state.historyStart} (${files})"
-    if (viewerInstalled(VIEWER_FILE)) text += "<br><a href='/local/${VIEWER_FILE}' target='_blank'>Browse the history</a>"
-    return text
-}
-
 // The viewer pages are uploaded to File Manager by hand; see the README.
 private boolean viewerInstalled(String name) {
     try { return downloadHubFile(name) != null } catch (Exception e) { return false }
@@ -1059,14 +1150,6 @@ private void writePeakFile(List<Map> results, BigDecimal floorKWh) {
 }
 
 private String peakFile() { return "hilo-${state.locationId}-peak-target.json" }
-
-private String peakSummary() {
-    Map last = state.peakLast as Map
-    if (!last) return "No target computed yet. Targets are computed from December to March after each hourly read, or now with the button."
-    String text = "${(last.next as Map)?.message ?: 'No window ahead.'}<br><span style='font-size:smaller'>Computed ${formatClock(last.at as long)}"
-    int n = ((state.peakEvents ?: []) as List).size()
-    return text + " · ${n} Hydro-Québec events on file from the last ${PEAK_LOOKBACK_DAYS} days on</span>"
-}
 
 // ── Outages ───────────────────────────────────────────────────────────
 

@@ -138,8 +138,8 @@ From Hydro-Québec's Electricity Rates, chapter 2, article 2.59:
 
 - **Base:** for each of the event's 4 hours, the mean of that hour on the 5 previous days of the same kind (weekdays, or weekend days) without a peak event, leaving out the lowest and the highest value. These days are the *reference period*. Days without peak hours (December 24, 25, 26 and 31, January 1 and 2, Good Friday, Easter Monday) are not reference days.
 - **Anchor window** (Hydro-Québec's *période d'ancrage*): 01:00–04:00 before a morning event, 12:00–14:00 before an evening one. Its reference is computed the same way.
-- **Target** (*reference energy*) = base + (anchor-window use − anchor reference) × 4/3 for a morning event, × 2 for an evening one. The second term is the *temperature adjustment*.
-- **Cap:** when the *energy curtailed* exceeds 40 kWh, the temperature adjustment is *limited* to 2 × the anchor reference × the same factor. The target then becomes the **capped target**, base + 2 × anchor reference × the factor, when that is lower.
+- **Target** (*reference energy*; the Hilo app's "original consumption limit") = base + (anchor-window use − anchor reference) × 4/3 for a morning event, × 2 for an evening one. The second term is the *temperature adjustment*.
+- **Cap:** when the *energy curtailed* exceeds 40 kWh, the temperature adjustment is *limited* to 2 × the anchor reference × the same factor. The target then becomes the **capped target** (the Hilo app's "adjusted consumption limit"), base + 2 × anchor reference × the factor, when that is lower. It is known the evening before; the uncapped target only once the anchor window is over.
 
 This reproduces Hydro-Québec's targets for winter 2025–26 to 0.1 kWh, the event's own anchor-window use aside, where Hilo's hourly values and Hydro-Québec's can differ by about a kWh.
 
@@ -178,12 +178,14 @@ The last computation, inputs included, is in File Manager as `hilo-<location id>
 
 ### Winter credit page
 
-`hilo-winter-credit.html` shows one winter (December to March) at a time, in the terms of Hydro-Québec's Electricity Rates (article 2.59). Upload it to File Manager next to `hilo-history.html`; the app page then shows a **Winter credit analysis** link under **Winter credit**, or open `http://<hub>/local/hilo-winter-credit.html`. It needs internet access for Hydro-Québec's event list, and adds the events entered under **Events missing from Hydro-Québec's open data**.
+`hilo-winter-credit.html` shows one winter (December to March) at a time, in the terms of Hydro-Québec's Electricity Rates (article 2.59). With internet access it adds the hourly outdoor temperature at the hub's location from Open-Meteo, as the history page does: under each date of the calendar, as a line on the day's chart, and as the mean of the anchor and event hours on each reference day and on the event day, so a temperature adjustment can be checked against the weather. Upload it to File Manager next to `hilo-history.html`; the app page then shows a **Winter credit analysis** link under **Winter credit**, or open `http://<hub>/local/hilo-winter-credit.html`. It needs internet access for Hydro-Québec's event list, and adds the events entered under **Events missing from Hydro-Québec's open data**.
 
-- Tiles: the winter's peak events, the energy curtailed, the events where the temperature adjustment was limited, and the credit at 58.49 ¢/kWh before taxes. Only events with every hour on file count.
+- Tiles: the winter's peak events, the energy curtailed, the events where the temperature adjustment was limited, and the credit before taxes, at the rate in effect on each event's date (none shown before April 2025). Only events with every hour on file count.
 - A calendar of the winter with the events marked. Click a day for:
   - its hours: the anchor period (01:00–04:00 or 12:00–14:00) with each hour's reference-period average and the consumption above it, which raises the reference energy; the event hours with each hour's share of the reference energy and the energy curtailed under it;
-  - a sentence with the reference energy, the consumption and the energy curtailed, and, when the energy curtailed would exceed 40 kWh, how the limit on the temperature adjustment changed it;
+  - the energy curtailed and the credit, and whether the limit on the temperature adjustment applied;
+  - a table of three choices for the event's consumption (cut to the floor, as consumed, just enough to curtail exactly 40 kWh), each with its energy curtailed, credit, the cost of the energy consumed above the floor, the credit minus that cost, and how much less or more that is than cutting to the floor;
+  - the event hour by hour, summed: consumption against the reference energy, with and without the limit;
   - a flow chart: the reference period and the temperature adjustment make the reference energy, which splits into consumption and energy curtailed; the part of the adjustment over the limit is shown apart;
   - under **How Hydro-Québec computes it**, the arithmetic and the reference period: each hour's values with the minimum and maximum struck out.
 
