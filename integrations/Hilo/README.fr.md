@@ -168,19 +168,23 @@ Sous **Réglages du crédit hivernal** dans la page de l'application :
 - **Événements absents des données ouvertes d'Hydro-Québec** : les données ouvertes ont manqué un événement; ajoutez-le sous la forme `AAAA-MM-JJ AM` ou `PM`, séparés par des virgules. Un événement passé manquant change les jours de référence.
 - **Calculer maintenant** calcule tout de suite, en toute saison.
 
-Les événements de pointe viennent des [données ouvertes](https://donnees.hydroquebec.com/explore/dataset/evenements-pointe/) d'Hydro-Québec (offre CPC-D), lues deux fois par jour à la même minute, entre 15:15 et 15:29 et entre 21:15 et 21:29. De décembre à mars, les énergies de référence sont recalculées après chaque lecture horaire. Une minute après la fin de chaque période d'ancrage un jour d'événement, l'application recalcule avec la consommation de cette période et envoie une notification avec l'énergie de référence et ce qui paie : réduire jusqu'au plancher, ou consommer juste assez pour effacer exactement 40 kWh quand la limite ramènerait autrement sous 40 kWh une réduction profonde. La carte Crédit hivernal de la page de l'application affiche le même conseil jusqu'au début de l'événement.
+Les événements de pointe viennent des [données ouvertes](https://donnees.hydroquebec.com/explore/dataset/evenements-pointe/) d'Hydro-Québec (offre CPC-D), lues deux fois par jour à la même minute, entre 15:15 et 15:29 et entre 21:15 et 21:29. Les fenêtres d'hier matin à demain soir sont recalculées après chaque lecture horaire, toute l'année, et une minute après la fin de chaque événement. Une minute après la fin de chaque période d'ancrage un jour d'événement, l'application recalcule avec la consommation de cette période et envoie une notification avec l'énergie de référence et ce qui paie : réduire jusqu'au plancher, ou consommer juste assez pour effacer exactement 40 kWh quand la limite ramènerait autrement sous 40 kWh une réduction profonde. 
+
+La carte **Crédit hivernal** de la page de l'application liste les fenêtres terminées d'hier et d'aujourd'hui avec leur résultat (énergie consommée contre l'énergie de référence, énergie effacée, crédit), puis la fenêtre en cours et la suivante. Celle en cours dit quoi faire maintenant : le plan, le compte de la période d'ancrage contre ce plan, le conseil jusqu'au début de l'événement, puis le compte de l'événement avec une projection à la puissance actuelle. Une fenêtre sans événement annoncé est une simulation, en gris; le jour d'un événement annoncé, un bandeau orange affiche un compte à rebours. Les résultats restent provisoires tant que Hilo n'a pas publié les heures de l'événement. Hors saison (d'avril à novembre), la carte l'indique. La puissance, les comptes et les comptes à rebours se mettent à jour en direct tant que la page est ouverte, par le flux d'événements du hub.
 
 ### Appareil Hilo Winter Credit
 
-Affiche le prochain événement annoncé, ou le lendemain matin comme s'il en était un :
+Affiche le prochain événement annoncé, ou la fenêtre en cours ou suivante comme si c'en était un, et le résultat de la dernière fenêtre terminée :
 
 - `eventDate`, `window` (`AM` / `PM`), `announced` (`true` / `false`)
 - `base`, `anchorReference`, `cappedTarget` — kWh
 - `anchorPlan` (`at most` / `at least`) et `anchorTarget` — kWh à consommer pendant la période d'ancrage
 - `expectedCurtailment` — kWh effacés si le plan est suivi et l'événement réduit jusqu'au plancher
 - `anchorUsed` / `anchorWindow` — l'énergie de la période d'ancrage jusqu'ici, comptée d'après la puissance en direct, pendant 1 h–4 h et 12 h–14 h
+- `eventUsed` — l'énergie de l'événement jusqu'ici, comptée de la même façon, pendant 6 h–10 h et 16 h–20 h
 - `target`, `advice` (`pending` / `cut` / `keep`), `keepUse` — à la fin de la période d'ancrage. `keep` signifie que consommer `keepUse` kWh pendant l'événement garde 40 kWh effacés et paie plus que réduire jusqu'au plancher.
 - `referenceDays`, `summary` (ce dernier dans la langue choisie)
+- `lastWindow` (`AAAA-MM-JJ AM` / `PM`), `lastAnnounced` (`true` / `false`), `lastConsumed`, `lastCurtailed` — kWh, `lastCredit` — $, `lastFinal` (`false` tant qu'il repose sur le compte en direct plutôt que sur les heures de Hilo)
 
 Une règle peut arrêter le préchauffage quand `anchorPlan` vaut `at most` et que `anchorUsed` atteint `anchorTarget`. **Refresh** recalcule.
 

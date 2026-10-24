@@ -5,9 +5,10 @@
  * Hilo Winter Credit — Child Driver
  *
  * One device per Hilo location, created by Hilo Manager when its winter credit targets are on.
- * Shows the target of the next Hydro-Québec peak event (or, without one, of tomorrow morning as
- * if it were one), the plan for the anchor window before it, and the anchor window's energy so
- * far, so rules can act on them. The parent computes everything; the device holds no logic.
+ * Shows the target of the next Hydro-Québec peak event (or, without one, of the current or next
+ * window as if it were one), the plan for the anchor window before it, the energy so far of the
+ * anchor window and the event, and the last finished window's result, so rules can act on them.
+ * The parent computes everything; the device holds no logic.
  */
 
 import groovy.transform.Field
@@ -32,12 +33,21 @@ metadata {
         attribute "anchorTarget",        "number"
         attribute "anchorUsed",          "number"
         attribute "anchorWindow",        "string"
+        attribute "eventUsed",           "number"
         attribute "expectedCurtailment", "number"
         attribute "target",              "number"
         attribute "advice",              "enum", ["pending", "cut", "keep"]
         attribute "keepUse",             "number"
         attribute "referenceDays",       "string"
         attribute "summary",             "string"
+        // The last finished window: "YYYY-MM-DD AM" or PM, whether it was announced, its result in
+        // kWh and $, and whether Hilo's hourly values are all in (else the live count).
+        attribute "lastWindow",          "string"
+        attribute "lastAnnounced",       "enum", ["true", "false"]
+        attribute "lastConsumed",        "number"
+        attribute "lastCurtailed",       "number"
+        attribute "lastCredit",          "number"
+        attribute "lastFinal",           "enum", ["true", "false"]
     }
 
     preferences {
@@ -61,7 +71,7 @@ metadata {
 ] // end I18N
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final List<String> KWH_ATTRS = ["base", "anchorReference", "cappedTarget", "anchorTarget", "anchorUsed",
-                                              "expectedCurtailment", "target", "keepUse"]
+                                              "eventUsed", "expectedCurtailment", "target", "keepUse", "lastConsumed", "lastCurtailed"]
 
 void installed() { logDebug "installed"; state.version = CODE_VERSION }
 
@@ -91,6 +101,7 @@ void updatePeak(Map m) {
     m.findAll { k, v -> k != "summaryLog" }.each { String k, v ->
         if (v == null) { device.deleteCurrentState(k); return }
         if (KWH_ATTRS.contains(k)) sendEvent(name: k, value: v, unit: "kWh")
+        else if (k == "lastCredit") sendEvent(name: k, value: v, unit: "\$")
         else sendEvent(name: k, value: v)
     }
     if (m.summary && m.summary != before) logInfo((summaryLog ?: m.summary) as String)

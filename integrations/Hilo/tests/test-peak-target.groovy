@@ -3,8 +3,9 @@
 //
 // Mode 4 (extraction variant) unit test for the winter-credit target in HiloManager.groovy:
 // reference-day choice, the trimmed means, the prorated adjustment, the 40 kWh cap and the
-// anchor plan. Brace-extracts easterSunday, noPeakDays and peakTarget from the shipped source and
-// runs them on synthetic hourly data; no hub needed.
+// anchor plan, then the curtailment of a window's consumption and the card's window phases and
+// rows. Brace-extracts those methods from the shipped source and runs them on synthetic data; no
+// hub needed.
 //
 // Run: groovy integrations/Hilo/tests/test-peak-target.groovy
 
@@ -31,7 +32,8 @@ String extract(String src, String signature) {
 String fields = src.readLines().findAll { it.startsWith('@Field static final') && (it =~ /CAP_KWH|EVENT_HOURS|_CENTS/) }
     .collect { it.replace('@Field static final', 'static final') }.join('\n')
 String code = 'import java.time.LocalDate\nimport groovy.transform.CompileStatic\nclass PeakTarget {\n' + fields + '\n' +
-    ['static LocalDate easterSunday(int year) {', 'static Set<String> noPeakDays(LocalDate day) {', 'static Map peakTarget(']
+    ['static LocalDate easterSunday(int year) {', 'static Set<String> noPeakDays(LocalDate day) {', 'static Map peakTarget(',
+     'static BigDecimal curtailedKWh(', 'static String windowPhase(', 'static List<Map> timelineWindows(']
         .collect { '@CompileStatic\n' + extract(src, it) }.join('\n') + '\n}\nPeakTarget'
 Class PT = new GroovyShell().evaluate(code)
 
@@ -112,6 +114,30 @@ Map gap = fill([1, 2, 3, 4, 100], [5, 6, 7, 8, 50])
 gap['2026-01-06'].remove(7)
 Map r6 = PT.peakTarget(gap, '2026-01-07', 6, [] as Set, 3.0, null)
 check('the hour without a value is listed', r6.missing == ['2026-01-06 7:00'])
+
+println 'curtailment of a consumption'
+check('below 40 kWh: target - used', near(PT.curtailedKWh(30.0, 20.0, 5.0), 25))
+check('above 40 kWh with a lower limit: limit - used', near(PT.curtailedKWh(64.0, 36.0, 4.0), 32))
+check('above 40 kWh, limit higher: target - used', near(PT.curtailedKWh(64.0, 77.0, 4.0), 60))
+check('over the target: 0', near(PT.curtailedKWh(10.0, 20.0, 12.0), 0))
+
+println 'window phases and card rows'
+long H = 3_600_000L
+// Six windows 12 hours apart, times in plain hours: anchor at s-5h, s-2h; event at s, s+4h.
+List<Map> ws = (0..<6).collect { int i -> long s0 = (10 + 12 * i) * H; [i: i, anchorStart: s0 - 5 * H, anchorEnd: s0 - 2 * H, start: s0, end: s0 + 4 * H, event: false] }
+Map w0 = ws[0]
+check('plan before the anchor period', PT.windowPhase(w0, 4 * H) == 'plan')
+check('anchor during it', PT.windowPhase(w0, 6 * H) == 'anchor')
+check('advice between anchor and event', PT.windowPhase(w0, 9 * H) == 'advice')
+check('event during it', PT.windowPhase(w0, 11 * H) == 'event')
+check('done at its end', PT.windowPhase(w0, 14 * H) == 'done')
+// At t = 40 h: windows 0-2 have ended (14, 26, 38 h), 3 is current (ends 50 h).
+check('finished, current and one more', PT.timelineWindows(ws, 40 * H)*.i == [0, 1, 2, 3, 4])
+ws[5].event = true
+check('a later announced event is added', PT.timelineWindows(ws, 40 * H)*.i == [0, 1, 2, 3, 4, 5])
+ws[5].event = false
+check('first hours: the first window and the next', PT.timelineWindows(ws, 0L)*.i == [0, 1])
+check('all finished but the last', PT.timelineWindows(ws, 70 * H)*.i == [0, 1, 2, 3, 4, 5])
 
 println "\n=== ${pass}/${pass + fail} passed ==="
 System.exit(fail == 0 ? 0 : 1)

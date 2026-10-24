@@ -134,7 +134,7 @@ definition(
         "energy.creating"   : "Creating the device…",
         "energy.noDevice"   : "No device.",
         "energy.onDone"     : "The device is created when you press Done.",
-        "energy.now"        : "now",
+        "energy.now"        : "now, read at {time}",
         "energy.today"      : "Today",
         "energy.yesterday"  : "Yesterday",
         "energy.history"    : "History",
@@ -150,29 +150,52 @@ definition(
         "btn.wcAnalysis"    : "Winter credit analysis",
         "wc.title"          : "Winter credit",
         "wc.off"            : "Off. Turn it on under Winter credit settings to compute each peak event's reference energy the evening before.",
-        "wc.none"           : "Nothing computed yet. Reference energies are computed from December to March after each hourly read, or now with Compute now.",
-        "wc.tagEvent"       : "Peak event",
-        "wc.tagNotAnnounced": "Not announced",
-        "wc.capped"         : "Reference energy with the limit",
-        "wc.cappedHilo"     : "Hilo: adjusted consumption limit",
-        "wc.cappedNote"     : "applies when more than 40 kWh is curtailed",
-        "wc.anchorPlan"     : "Anchor period plan",
+        "wc.none"           : "Nothing computed yet. Reference energies are computed after each hourly read, or now with Compute now.",
         "wc.planAtMost"     : "at most",
         "wc.planAtLeast"    : "at least",
-        "wc.anchorSoFar"    : "Anchor period so far",
-        "wc.curtailed"      : "Energy curtailed",
-        "wc.curtailedNote"  : "cutting to {floor} kWh",
         "wc.computed"       : "Computed {time} · {n} Hydro-Québec events on file from the last {days} days",
+        "wc.offSeason"      : "Off season",
+        "wc.offSeasonNote"  : "No peak events from April to November: simulations only.",
+        "tl.yAM"            : "yesterday AM",
+        "tl.yPM"            : "yesterday PM",
+        "tl.tAM"            : "this morning",
+        "tl.tPM"            : "this evening",
+        "tl.nAM"            : "tomorrow AM",
+        "tl.nPM"            : "tomorrow PM",
+        "tl.today"          : "today",
+        "tl.tomorrow"       : "tomorrow",
+        "tl.event"          : "Event",
+        "tl.sim"            : "Simulation",
+        "tl.usedFor"        : "used {used} kWh, reference {target}",
+        "tl.curtailed"      : "curtailed",
+        "tl.noData"         : "no data yet",
+        "tl.provisional"    : "provisional",
+        "tl.anchorAt"       : "anchor {anchor}",
+        "tl.limit"          : "limit {v}",
+        "tl.ref"            : "reference energy",
+        "tl.readAt"         : "at {time}",
+        "tl.consumed"       : "used · at {time}",
+        "tl.since"          : "since {time}",
+        "tl.ifEvent"        : "If this were an event:",
+        "tl.anchorLeast"    : "{left} kWh more by {end}: each kWh up to {target} raises the reference energy.",
+        "tl.anchorLeastDone": "Minimum reached: using more before {end} adds nothing.",
+        "tl.anchorMost"     : "At most {left} kWh more by {end}, then cut to {floor} kWh.",
+        "tl.anchorOver"     : "{over} kWh over the plan: the advice at {end} says what pays.",
+        "tl.projection"     : "At {w} W until {end}: {proj} kWh used, {cut} kWh curtailed, {credit}.",
+        "tl.stayUnder"      : "To end at {floor} kWh, stay under {w} W.",
+        "ph.plan"           : "Plan",
+        "ph.anchor"         : "Anchor period",
+        "ph.advice"         : "Advice",
+        "ph.event"          : "In progress",
+        "ban.event"         : "Peak event {when} {window}",
+        "ban.now"           : "Peak event in progress",
+        "ban.anchorIn"      : "anchor period in {d}",
+        "ban.anchorLeft"    : "anchor period: {d} left",
+        "ban.startsIn"      : "starts in {d}",
+        "ban.endsIn"        : "ends in {d}",
         "advice.keep"       : "<b>Consume {use} kWh during {during}.</b> That curtails exactly 40 kWh. Cutting to {floor} kWh would curtail more than 40 kWh, so the limit applies and only {deep} kWh counts.",
         "advice.cut"        : "<b>Cut as deep as you can during {during}.</b> Cutting to {floor} kWh curtails {c} kWh.",
         "advice.cutLimit"   : "<b>Cut as deep as you can during {during}.</b> Cutting to {floor} kWh curtails {c} kWh, with the limit.",
-        "ref.label"         : "Reference energy",
-        "ref.hilo"          : "Hilo: original consumption limit",
-        "ref.parts"         : "{base} kWh + {adj} kWh temperature adjustment",
-        "ref.soFar"         : "{v} kWh so far",
-        "ref.soFarNote"     : "rises with the consumption until {end}",
-        "ref.knownAt"       : "known at {end}",
-        "ref.knownAtNote"   : "{base} kWh + the temperature adjustment from {anchor}",
         "notif.head"        : "Hilo: peak event {day} {window}.",
         "notif.headIf"      : "Hilo: if {day} {window} were a peak event:",
         "notif.capped"      : "Reference energy with the limit {capped} kWh:",
@@ -224,7 +247,7 @@ definition(
         "energy.creating"   : "Création de l'appareil…",
         "energy.noDevice"   : "Aucun appareil.",
         "energy.onDone"     : "L'appareil est créé quand vous appuyez sur Done.",
-        "energy.now"        : "en ce moment",
+        "energy.now"        : "en ce moment, lu à {time}",
         "energy.today"      : "Aujourd'hui",
         "energy.yesterday"  : "Hier",
         "energy.history"    : "Historique",
@@ -240,29 +263,52 @@ definition(
         "btn.wcAnalysis"    : "Analyse du crédit hivernal",
         "wc.title"          : "Crédit hivernal",
         "wc.off"            : "Désactivé. Activez-le dans Réglages du crédit hivernal pour calculer l'énergie de référence de chaque événement de pointe la veille au soir.",
-        "wc.none"           : "Rien n'est encore calculé. Les énergies de référence sont calculées de décembre à mars après chaque lecture horaire, ou tout de suite avec Calculer maintenant.",
-        "wc.tagEvent"       : "Événement de pointe",
-        "wc.tagNotAnnounced": "Non annoncé",
-        "wc.capped"         : "Énergie de référence avec la limite",
-        "wc.cappedHilo"     : "Hilo : limite de consommation ajustée",
-        "wc.cappedNote"     : "s'applique quand plus de 40 kWh sont effacés",
-        "wc.anchorPlan"     : "Plan pour la période d'ancrage",
+        "wc.none"           : "Rien n'est encore calculé. Les énergies de référence sont calculées après chaque lecture horaire, ou tout de suite avec Calculer maintenant.",
         "wc.planAtMost"     : "au plus",
         "wc.planAtLeast"    : "au moins",
-        "wc.anchorSoFar"    : "Période d'ancrage jusqu'ici",
-        "wc.curtailed"      : "Énergie effacée",
-        "wc.curtailedNote"  : "en réduisant à {floor} kWh",
         "wc.computed"       : "Calculé le {time} · {n} événements d'Hydro-Québec enregistrés pour les {days} derniers jours",
+        "wc.offSeason"      : "Hors saison",
+        "wc.offSeasonNote"  : "Aucun événement de pointe d'avril à novembre : simulations seulement.",
+        "tl.yAM"            : "hier matin",
+        "tl.yPM"            : "hier soir",
+        "tl.tAM"            : "ce matin",
+        "tl.tPM"            : "ce soir",
+        "tl.nAM"            : "demain matin",
+        "tl.nPM"            : "demain soir",
+        "tl.today"          : "aujourd'hui",
+        "tl.tomorrow"       : "demain",
+        "tl.event"          : "Événement",
+        "tl.sim"            : "Simulation",
+        "tl.usedFor"        : "consommé {used} kWh, référence {target}",
+        "tl.curtailed"      : "effacés",
+        "tl.noData"         : "pas encore de données",
+        "tl.provisional"    : "provisoire",
+        "tl.anchorAt"       : "ancrage {anchor}",
+        "tl.limit"          : "limite {v}",
+        "tl.ref"            : "énergie de référence",
+        "tl.readAt"         : "à {time}",
+        "tl.consumed"       : "consommés · à {time}",
+        "tl.since"          : "depuis {time}",
+        "tl.ifEvent"        : "Si c'était un événement :",
+        "tl.anchorLeast"    : "Encore {left} kWh d'ici {end} : chaque kWh jusqu'à {target} relève l'énergie de référence.",
+        "tl.anchorLeastDone": "Minimum atteint : consommer davantage d'ici {end} n'ajoute rien.",
+        "tl.anchorMost"     : "Au plus {left} kWh de plus d'ici {end}, puis réduisez à {floor} kWh.",
+        "tl.anchorOver"     : "{over} kWh de plus que le plan : le conseil de {end} dira ce qui rapporte.",
+        "tl.projection"     : "À {w} W jusqu'à {end} : {proj} kWh consommés, {cut} kWh effacés, {credit}.",
+        "tl.stayUnder"      : "Pour finir à {floor} kWh, restez sous {w} W.",
+        "ph.plan"           : "Plan",
+        "ph.anchor"         : "Ancrage en cours",
+        "ph.advice"         : "Conseil",
+        "ph.event"          : "En cours",
+        "ban.event"         : "Événement de pointe {when} {window}",
+        "ban.now"           : "Événement de pointe en cours",
+        "ban.anchorIn"      : "ancrage dans {d}",
+        "ban.anchorLeft"    : "ancrage : encore {d}",
+        "ban.startsIn"      : "début dans {d}",
+        "ban.endsIn"        : "fin dans {d}",
         "advice.keep"       : "<b>Consommez {use} kWh pendant {during}.</b> Cela efface exactement 40 kWh. Réduire à {floor} kWh effacerait plus de 40 kWh : la limite s'appliquerait et seuls {deep} kWh compteraient.",
         "advice.cut"        : "<b>Réduisez au maximum pendant {during}.</b> Réduire à {floor} kWh efface {c} kWh.",
         "advice.cutLimit"   : "<b>Réduisez au maximum pendant {during}.</b> Réduire à {floor} kWh efface {c} kWh, avec la limite.",
-        "ref.label"         : "Énergie de référence",
-        "ref.hilo"          : "Hilo : limite de consommation originale",
-        "ref.parts"         : "{base} kWh + {adj} kWh d'ajustement pour la température",
-        "ref.soFar"         : "{v} kWh jusqu'ici",
-        "ref.soFarNote"     : "augmente avec la consommation jusqu'à {end}",
-        "ref.knownAt"       : "connue à {end}",
-        "ref.knownAtNote"   : "{base} kWh + l'ajustement pour la température de {anchor}",
         "notif.head"        : "Hilo : événement de pointe le {day}, {window}.",
         "notif.headIf"      : "Hilo : si le {day}, {window} était un événement de pointe :",
         "notif.capped"      : "Énergie de référence avec la limite {capped} kWh :",
@@ -321,7 +367,7 @@ Map mainPage() {
             }
         } else {
             section {
-                paragraph rawHtml: true, head + "<div class='flex flex-wrap gap-3'>${energyCard(childPending)}${winterCreditCard()}</div>"
+                paragraph rawHtml: true, head + "<div class='flex flex-wrap gap-3' data-hilo-lang='${uiLang()}'>${energyCard(childPending)}${winterCreditCard()}</div>" + LIVE_SCRIPT
                 languageInput()
             }
             // Open while the feature is off, so its switch is in view.
@@ -418,9 +464,69 @@ private static String uiStyle() {
 .hilo-card { flex: 1 1 280px; min-width: 260px; }
 .hilo-card h4 { margin: 0 0 8px; font-size: 1rem; font-weight: 600; }
 .hilo-big { font-size: 1.6rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.hilo-tl { display: flex; flex-direction: column; border: 1px solid var(--surface-border, rgba(128,128,128,.3)); border-radius: 6px; overflow: hidden; }
+.hilo-row { display: grid; grid-template-columns: 84px minmax(0, 1fr) auto; gap: 2px 10px; padding: 7px 10px; border-top: 1px solid var(--surface-border, rgba(128,128,128,.3)); align-items: baseline; }
+.hilo-row:first-child { border-top: 0; }
+.hilo-row .when { font-weight: 600; font-size: .85rem; }
+.hilo-row .when small, .hilo-row .val small { display: block; color: var(--text-color-secondary); font-weight: 400; font-size: .78rem; }
+.hilo-row .val { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hilo-row .detail { grid-column: 1 / -1; }
+.hilo-row.sim { outline: 1px dashed var(--text-color-secondary, #888); outline-offset: -3px; }
+.hilo-row.ev { background: rgba(232, 163, 61, .14); }
+.hilo-bar { height: 8px; background: rgba(128, 128, 128, .2); border-radius: 4px; overflow: hidden; margin: 4px 0 2px; }
+.hilo-bar i { display: block; height: 100%; background: var(--text-color-secondary, #888); }
+.hilo-row.ev .hilo-bar i { background: #e8a33d; }
+.hilo-bar i.over, .hilo-row.ev .hilo-bar i.over { background: #d9534f; }
+.hilo-good { color: #2e9d5b; }
+.hilo-banner { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; background: rgba(232, 163, 61, .2); font-weight: 600; padding: 6px 10px; border-radius: 5px; margin-bottom: 8px; }
+.hilo-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #2e9d5b; margin-right: 5px; }
+.hilo-dot.off { background: rgba(128, 128, 128, .5); }
 .hilo-btn { display: inline-block; padding: 4px 12px; margin: 8px 8px 0 0; border: 1px solid var(--surface-border, rgba(128,128,128,.4)); border-radius: 6px; text-decoration: none; }
 </style>"""
 }
+
+// Keeps the page's live numbers current from the hub's event socket: each frame for a device and
+// attribute on the page replaces the number (or a bar's width) and stamps its time. It also keeps the
+// countdowns current. One socket per browser tab; it stops reconnecting once the page has none.
+@Field static final String LIVE_SCRIPT = '''<script>
+(function () {
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function hms(d) { return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()); }
+  function dur(ms) { var m = Math.max(0, Math.floor(ms / 60000)); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m % 60) + ' min'; }
+  function all(sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); }
+  function apply(f) {
+    if (f.source !== 'DEVICE') return;
+    var v = Number(f.value);
+    if (isNaN(v)) return;
+    all('[data-hilo-dev="' + f.deviceId + '"][data-hilo-attr="' + f.name + '"]').forEach(function (el) {
+      if (el.hasAttribute('data-hilo-max')) {
+        var max = Number(el.getAttribute('data-hilo-max'));
+        el.style.width = Math.min(100, max > 0 ? 100 * v / max : 0) + '%';
+        if (el.hasAttribute('data-hilo-limit')) el.classList.toggle('over', v > max);
+        return;
+      }
+      var s = v.toFixed(Number(el.getAttribute('data-hilo-digits') || 1));
+      var box = el.closest('[data-hilo-lang]');
+      el.textContent = box && box.getAttribute('data-hilo-lang') === 'fr' ? s.replace('.', ',') : s;
+    });
+    all('[data-hilo-at="' + f.deviceId + ':' + f.name + '"]').forEach(function (el) { el.textContent = hms(new Date()); });
+  }
+  function tick() { all('[data-hilo-until]').forEach(function (el) { el.textContent = dur(Number(el.getAttribute('data-hilo-until')) - Date.now()); }); }
+  function dots(on) { all('[data-hilo-dot]').forEach(function (el) { el.classList.toggle('off', !on); }); }
+  function connect() {
+    if (!document.querySelector('[data-hilo-dev]')) { window.hiloLive = null; return; }
+    var ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/eventsocket');
+    window.hiloLive = ws;
+    ws.onopen = function () { dots(true); };
+    ws.onmessage = function (m) { try { apply(JSON.parse(m.data)); } catch (e) {} };
+    ws.onclose = function () { dots(false); setTimeout(connect, 10000); };
+  }
+  // The page redraws its sections on some changes and runs this again: keep the one socket.
+  if (window.hiloLive) dots(window.hiloLive.readyState === 1); else connect();
+  if (!window.hiloTick) window.hiloTick = setInterval(tick, 30000);
+  tick();
+})();
+</script>'''
 
 private String uiErrors() {
     List errs = [state.loginError, state.childError].findAll { it }.collect { trMsg(it) }
@@ -449,7 +555,10 @@ private String energyCard(boolean childPending) {
     ChildDeviceWrapper m = meterChild()
     String title = tr("energy.title", [name: htmlEsc(state.locationName)])
     if (!m) return card(title, tr(childPending ? "energy.creating" : (state.childError ? "energy.noDevice" : "energy.onDone")))
-    String body = "<div class='hilo-big'>${kwh(m.currentValue('power'), 0)} W</div><div class='note mb-2'>${tr('energy.now')}</div>" +
+    // The power event's time is its last change; the live script stamps each reading as it arrives.
+    String at = liveTime(m, "power", clock(m.currentState("power")?.date))
+    String body = "<div class='hilo-big'>${liveValue(m, 'power', m.currentValue('power') as BigDecimal, 0)} W</div>" +
+        "<div class='note mb-2'><span class='hilo-dot off' data-hilo-dot></span>${tr('energy.now', [time: at])}</div>" +
         kvRows([[tr("energy.today"), "${kwh(m.currentValue('energy'))} kWh"], [tr("energy.yesterday"), "${kwh(m.currentValue('energyYesterday'))} kWh"],
                 [tr("energy.history"), historyLine(), tr("energy.file", [file: historyFile('YYYY-MM')])],
                 [tr("energy.lastRead"), state.lastPoll ? formatClock(state.lastPoll as long) : "–"]])
@@ -461,59 +570,178 @@ private String energyCard(boolean childPending) {
 private String winterCreditCard() {
     if (!settings.wcEnable) return card(tr("wc.title"), "<div class='note'>${tr('wc.off')}</div>")
     ChildDeviceWrapper w = peakChild()
-    if (!w || !w.currentValue("eventDate")) return card(tr("wc.title"), "<div class='note'>${tr('wc.none')}</div>")
-    String day = w.currentValue("eventDate"), win = w.currentValue("window")
-    boolean am = win == "AM", announced = w.currentValue("announced") == "true"
-    String anchor = am ? "01:00–04:00" : "12:00–14:00"
-    String tag = announced ? "<span class='p-tag p-tag-warning mr-2'>${tr('wc.tagEvent')}</span>" : "<span class='p-tag p-tag-secondary mr-2'>${tr('wc.tagNotAnnounced')}</span>"
-    boolean live = w.currentValue("anchorWindow") == "${day} ${am ? '01:00-04:00' : '12:00-14:00'}"
-    // anchorPlan is an attribute value ("at most" / "at least"), shown in the page's language.
-    String plan = w.currentValue("anchorPlan")
-    String planText = plan == "at most" ? tr("wc.planAtMost") : (plan == "at least" ? tr("wc.planAtLeast") : htmlEsc(plan))
-    String body = "<div class='mb-2'>${tag}${htmlEsc(day)} ${am ? '06:00–10:00' : '16:00–20:00'}</div>" + adviceBox(w, am) +
-        kvRows([referenceEnergyRow(w, am, live, anchor),
-                ["${tr('wc.capped')}<small>${tr('wc.cappedHilo')}</small>", "${kwh(w.currentValue('cappedTarget'))} kWh", tr("wc.cappedNote")],
-                [tr("wc.anchorPlan"), "${planText} ${kwh(w.currentValue('anchorTarget'))} kWh", anchor],
-                [tr("wc.anchorSoFar"), live ? "${kwh(w.currentValue('anchorUsed'))} kWh" : "–"],
-                [tr("wc.curtailed"), "${kwh(w.currentValue('expectedCurtailment'))} kWh", tr("wc.curtailedNote", [floor: kwh(settings.wcFloor ?: 3.0)])]])
-    body += linkButton("/device/edit/${w.id}", tr("btn.device")) + (viewerInstalled(WC_VIEWER_FILE) ? linkButton(viewerUrl(WC_VIEWER_FILE), tr("btn.wcAnalysis")) : "")
+    List<Map> ws = (state.peakWindows ?: []) as List<Map>
+    if (!w || !ws) return card(tr("wc.title"), "<div class='note'>${tr('wc.none')}</div>")
+    long t = now()
+    List<Map> shown = timelineWindows(ws, t)
+    Map cur = shown.find { (it.end as long) > t }
+    Map ev = shown.find { it.event && (it.end as long) > t }
+    String head = ""
+    if (ev) head = banner(ev, t)
+    else if (cur && !inWinter(LocalDate.parse(cur.day as String))) {
+        head = "<div class='mb-2'><span class='p-tag p-tag-secondary mr-2'>${tr('wc.offSeason')}</span><span class='note' style='display:inline'>${tr('wc.offSeasonNote')}</span></div>"
+    }
+    String rows = shown.collect { Map r ->
+        r.is(cur) ? currentRow(r, w, t) : ((r.end as long) <= t ? doneRow(r) : nextRow(r))
+    }.join("")
+    String body = head + "<div class='hilo-tl'>${rows}</div>" +
+        linkButton("/device/edit/${w.id}", tr("btn.device")) + (viewerInstalled(WC_VIEWER_FILE) ? linkButton(viewerUrl(WC_VIEWER_FILE), tr("btn.wcAnalysis")) : "")
     Map last = state.peakLast as Map
     if (last?.at) body += "<div class='note mt-2'>${tr('wc.computed', [time: formatClock(last.at as long), n: ((state.peakEvents ?: []) as List).size(), days: PEAK_LOOKBACK_DAYS])}</div>"
     return card(tr("wc.title"), body)
 }
 
-// Once the anchor period is over the device knows what pays during the event: cutting deep, or consuming
-// just enough to curtail exactly 40 kWh when the limit would otherwise cut a deep curtailment below 40.
-private String adviceBox(ChildDeviceWrapper w, boolean am) {
-    String advice = w.currentValue("advice")
-    BigDecimal target = w.currentValue("target") as BigDecimal, capped = w.currentValue("cappedTarget") as BigDecimal
-    if (target == null || capped == null || !(advice in ["keep", "cut"])) return ""
-    BigDecimal floorKWh = (settings.wcFloor ?: 3.0) as BigDecimal
-    String during = am ? "06:00–10:00" : "16:00–20:00"
-    if (advice == "keep") {
-        BigDecimal deep = target - floorKWh > 40 && target > capped ? capped - floorKWh : target - floorKWh
-        return "<div class='p-message p-message-warn p-2 mb-2 border-round'>" +
-            tr("advice.keep", [use: kwh(w.currentValue('keepUse')), during: during, floor: kwh(floorKWh), deep: kwh(deep)]) + "</div>"
-    }
-    boolean limited = target - floorKWh > 40 && target > capped
-    BigDecimal c = limited ? capped - floorKWh : target - floorKWh
-    return "<div class='p-message p-message-info p-2 mb-2 border-round'>" +
-        tr(limited ? "advice.cutLimit" : "advice.cut", [during: during, floor: kwh(floorKWh), c: kwh(c)]) + "</div>"
+// ── Winter credit card: rows ──
+// A finished window shows its result; the current one (expanded) what to do now; the later ones their plan.
+// Windows with no announced event are simulations: grey, dashed, and "if this were an event".
+
+@Field static final Map<Integer, List<String>> WINDOW_LABELS = [(-1): ["tl.yAM", "tl.yPM"], 0: ["tl.tAM", "tl.tPM"], 1: ["tl.nAM", "tl.nPM"]]
+
+private String tlRow(Map r, String cls, String mid, String val, String detail = null) {
+    int off = (LocalDate.parse(r.day as String).toEpochDay() - localToday().toEpochDay()) as int
+    String label = WINDOW_LABELS[off] ? tr(WINDOW_LABELS[off][r.startHour == 6 ? 0 : 1]) : htmlEsc(r.day)
+    return "<div class='hilo-row ${cls}'><span class='when'>${label}<small>${r.startHour == 6 ? '06–10' : '16–20'}</small></span>" +
+        "<span>${mid}</span><span class='val'>${val}</span>${detail ? "<div class='detail'>${detail}</div>" : ''}</div>"
 }
 
-// The reference energy without the limit, the Hilo app's "original consumption limit". It needs the anchor
-// period's consumption: final once the period is over, a running value during it, unknown before.
-private List referenceEnergyRow(ChildDeviceWrapper w, boolean am, boolean live, String anchor) {
-    String label = "${tr('ref.label')}<small>${tr('ref.hilo')}</small>"
-    BigDecimal base = w.currentValue("base") as BigDecimal, target = w.currentValue("target") as BigDecimal
-    if (target != null) return [label, "<b>${kwh(target)}</b> kWh", tr("ref.parts", [base: kwh(base), adj: kwh(target - base)])]
-    String end = am ? "04:00" : "14:00"
-    BigDecimal used = w.currentValue("anchorUsed") as BigDecimal, ref = w.currentValue("anchorReference") as BigDecimal
-    if (live && used != null && base != null && ref != null) {
-        BigDecimal soFar = base + (am ? 4.0 / 3.0 : 2.0) * (used - ref)
-        return [label, tr("ref.soFar", [v: kwh(soFar)]), tr("ref.soFarNote", [end: end])]
+private String kindTag(Map r, String phaseKey = null) {
+    String text = r.event && phaseKey ? tr(phaseKey) : tr(r.event ? "tl.event" : "tl.sim")
+    return "<span class='p-tag ${r.event ? 'p-tag-warning' : 'p-tag-secondary'} mr-2'>${text}</span>"
+}
+
+private static String eventHours(Map r) { return r.startHour == 6 ? "06:00–10:00" : "16:00–20:00" }
+private static String anchorHours(Map r) { return r.startHour == 6 ? "01:00–04:00" : "12:00–14:00" }
+private String planValue(Map r) {
+    String plan = r.anchorPlan == "at most" ? tr("wc.planAtMost") : tr("wc.planAtLeast")
+    return "${plan} ${kwh(r.anchorTarget)} kWh<small>${tr('tl.limit', [v: kwh(r.cappedTarget)])}</small>"
+}
+
+private String doneRow(Map r) {
+    BigDecimal u = usedOf(r)
+    if (u == null || r.target == null) return tlRow(r, "", kindTag(r) + tr("tl.noData"), "–")
+    String mid = tr("tl.usedFor", [used: kwh(u), target: kwh(r.target)])
+    String val = "<span class='${(r.curtailed as BigDecimal) > 0 ? 'hilo-good' : ''}'>${kwh(r.curtailed)} kWh</span>" +
+        "<small>${tr('tl.curtailed')} · ${money(r.credit)}${r.complete ? '' : ' · ' + tr('tl.provisional')}</small>"
+    if (!r.complete) { mid = "<em>${mid}</em>"; val = "<em>${val}</em>" }
+    return tlRow(r, "", kindTag(r) + mid, val)
+}
+
+private String nextRow(Map r) {
+    return tlRow(r, "", kindTag(r) + tr("tl.anchorAt", [anchor: anchorHours(r)]), planValue(r))
+}
+
+private String currentRow(Map r, ChildDeviceWrapper w, long t) {
+    String phase = windowPhase(r, t)
+    String cls = r.event ? "ev" : "sim"
+    String floor = kwh(r.floor)
+    if (phase == "anchor") {
+        boolean live = w.currentValue("anchorWindow") == "${r.day} ${r.startHour == 6 ? '01:00-04:00' : '12:00-14:00'}"
+        BigDecimal used = live ? w.currentValue("anchorUsed") as BigDecimal : null
+        BigDecimal target = r.anchorTarget as BigDecimal
+        String at = live ? clock(w.currentState("anchorUsed")?.date) : "–"
+        String plan = r.anchorPlan == "at most" ? tr("wc.planAtMost") : tr("wc.planAtLeast")
+        String val = "${liveValue(w, 'anchorUsed', used)} / ${kwh(target)} kWh<small>${plan} · ${tr('tl.readAt', [time: liveTime(w, 'anchorUsed', at)])}</small>"
+        String end = r.startHour == 6 ? "04:00" : "14:00"
+        BigDecimal u = used ?: 0.0
+        String note
+        if (r.anchorPlan == "at least") note = u < target ? tr("tl.anchorLeast", [left: kwh(target - u), end: end, target: kwh(target)]) : tr("tl.anchorLeastDone", [end: end])
+        else note = u <= target ? tr("tl.anchorMost", [left: kwh(target - u), end: end, floor: floor]) : tr("tl.anchorOver", [over: kwh(u - target), end: end])
+        return tlRow(r, cls, kindTag(r, "ph.anchor") + tr("tl.anchorAt", [anchor: anchorHours(r)]), val,
+                     bar(w, "anchorUsed", u, target, r.anchorPlan == "at most") + "<span class='note'>${ifEvent(r, note)}</span>")
     }
-    return [label, tr("ref.knownAt", [end: end]), tr("ref.knownAtNote", [base: kwh(base), anchor: anchor])]
+    if (phase == "advice" && r.target != null) {
+        String val = "${kwh(r.target)} kWh<small>${tr('tl.ref')}</small>"
+        return tlRow(r, cls, kindTag(r, "ph.advice") + tr("tl.anchorAt", [anchor: anchorHours(r)]), val,
+                     "<div class='p-message ${r.event ? 'p-message-warn' : 'p-message-info'} p-2 mt-1 border-round'>${ifEvent(r, adviceText(r))}</div>")
+    }
+    if (phase == "event") {
+        // The device's count belongs to this event only once it was sent after the event started.
+        Date sent = w.currentState("eventUsed")?.date
+        BigDecimal used = sent && sent.time >= (r.start as long) ? w.currentValue("eventUsed") as BigDecimal : null
+        String val = "${liveValue(w, 'eventUsed', used)} kWh<small>${tr('tl.consumed', [time: liveTime(w, 'eventUsed', used == null ? '–' : clock(sent))])}</small>"
+        String detail = ""
+        if (r.target != null) {
+            BigDecimal u = used ?: 0.0
+            BigDecimal watts = (meterChild()?.currentValue("power") ?: 0) as BigDecimal
+            BigDecimal hoursLeft = ((r.end as long) - t) / 3_600_000.0
+            BigDecimal proj = u + watts / 1000 * hoursLeft
+            BigDecimal cut = curtailedKWh(r.target as BigDecimal, r.cappedTarget as BigDecimal, proj)
+            String note = tr("tl.projection", [w: kwh(watts, 0), end: r.startHour == 6 ? "10:00" : "20:00", proj: kwh(proj), cut: kwh(cut), credit: money(cut * CREDIT_CENTS / 100)])
+            BigDecimal room = (r.floor as BigDecimal) - u
+            if (room > 0 && hoursLeft > 0) note += " " + tr("tl.stayUnder", [floor: floor, w: kwh(room / hoursLeft * 1000, 0)])
+            detail = bar(w, "eventUsed", u, r.target as BigDecimal, true) + "<span class='note'>${ifEvent(r, note)}</span>"
+        }
+        return tlRow(r, cls, kindTag(r, "ph.event") + tr("tl.since", [time: r.startHour == 6 ? "06:00" : "16:00"]), val, detail)
+    }
+    // Before the anchor period, or after it without the hourly values to know the target.
+    String sentence = r.anchorPlan == "at most" ?
+        tr("notif.atMost", [target: kwh(r.anchorTarget), anchor: anchorHours(r), floor: floor]) :
+        tr("notif.atLeast", [target: kwh(r.anchorTarget), anchor: anchorHours(r), cut: kwh(r.expectedCut)])
+    return tlRow(r, cls, kindTag(r, "ph.plan") + tr("tl.anchorAt", [anchor: anchorHours(r)]), planValue(r),
+                 "<span class='note'>${ifEvent(r, sentence)}</span>")
+}
+
+// A simulation's text reads "if this were an event: …"; a real event's is the instruction itself.
+private String ifEvent(Map r, String s) {
+    return r.event ? caseFirst(s, true) : "${tr('tl.ifEvent')} ${caseFirst(s, false)}"
+}
+
+// Upper- or lower-cases the first letter after any leading tags.
+private static String caseFirst(String s, boolean upper) {
+    int i = 0
+    while (i < s.length() && s.charAt(i) == ('<' as char)) { int j = s.indexOf('>', i); if (j < 0) break; i = j + 1 }
+    if (i >= s.length()) return s
+    String c = s.substring(i, i + 1)
+    return s.substring(0, i) + (upper ? c.toUpperCase() : c.toLowerCase()) + s.substring(i + 1)
+}
+
+// Once the anchor period is over the window's reference energy is known, and with it what pays during
+// the event: cutting deep, or consuming just enough to curtail exactly 40 kWh when the limit would
+// otherwise cut a deep curtailment below 40.
+private String adviceText(Map r) {
+    BigDecimal target = r.target as BigDecimal, capped = r.cappedTarget as BigDecimal, floorKWh = r.floor as BigDecimal
+    boolean limited = target - floorKWh > CAP_KWH && target > capped
+    if (r.advice == "keep") {
+        BigDecimal deep = limited ? capped - floorKWh : target - floorKWh
+        return tr("advice.keep", [use: kwh(r.keepUse), during: eventHours(r), floor: kwh(floorKWh), deep: kwh(deep)])
+    }
+    BigDecimal c = limited ? capped - floorKWh : target - floorKWh
+    return tr(limited ? "advice.cutLimit" : "advice.cut", [during: eventHours(r), floor: kwh(floorKWh), c: kwh(c)])
+}
+
+// The top line during an announced event's day: what comes next, with a countdown the page keeps current.
+private String banner(Map ev, long t) {
+    String phase = windowPhase(ev, t)
+    Closure until = { long at -> "<span data-hilo-until='${at}'>${formatDuration(Math.max(at - t, 0L))}</span>" }
+    String left = phase == "plan" ? tr("ban.anchorIn", [d: until(ev.anchorStart as long)]) :
+        phase == "anchor" ? tr("ban.anchorLeft", [d: until(ev.anchorEnd as long)]) :
+        phase == "advice" ? tr("ban.startsIn", [d: until(ev.start as long)]) : tr("ban.endsIn", [d: until(ev.end as long)])
+    String when = ev.day == localToday().toString() ? tr("tl.today") : tr("tl.tomorrow")
+    String what = phase == "event" ? tr("ban.now") : tr("ban.event", [when: when, window: eventHours(ev)])
+    return "<div class='hilo-banner'><span>${what}</span><span>${left}</span></div>"
+}
+
+// A number and its time that the page's live script updates from the hub's event socket.
+private String liveValue(ChildDeviceWrapper d, String attr, BigDecimal v, int digits = 1) {
+    return "<span data-hilo-dev='${d.id}' data-hilo-attr='${attr}' data-hilo-digits='${digits}'>${kwh(v, digits)}</span>"
+}
+private static String liveTime(ChildDeviceWrapper d, String attr, String text) {
+    return "<span data-hilo-at='${d.id}:${attr}'>${text}</span>"
+}
+// Progress toward max; for a limit the bar turns red past it.
+private static String bar(ChildDeviceWrapper d, String attr, BigDecimal v, BigDecimal max, boolean limit) {
+    BigDecimal pct = max > 0 ? [v * 100 / max, 100.0].min() : 0.0
+    String over = limit && v > max ? " class='over'" : ""
+    return "<div class='hilo-bar'><i${over} style='width:${pct.setScale(0, BigDecimal.ROUND_HALF_UP)}%' data-hilo-dev='${d.id}' data-hilo-attr='${attr}' data-hilo-max='${max}'${limit ? " data-hilo-limit='1'" : ''}></i></div>"
+}
+
+private String clock(Date d) { return d ? d.format("HH:mm:ss", location.timeZone) : "–" }
+
+// Dollars, as written in each language.
+private String money(v) {
+    if (v == null) return "–"
+    String s = String.format("%.2f", (v as BigDecimal).doubleValue())
+    return uiLang() == "fr" ? "${s.replace('.', ',')} \$" : "\$${s}"
 }
 
 void installed() { logDebug "installed"; state.version = CODE_VERSION; initialize() }
@@ -559,7 +787,7 @@ void appButtonHandler(String btn) {
     checkVersion()
     switch (btn) {
         case "btnLogout":     logout(); break
-        case "btnPeakNow":    peakRun(true); break
+        case "btnPeakNow":    peakRun(); break
         default: logWarn "unhandled button: ${btn}"
     }
 }
@@ -1132,10 +1360,12 @@ static Map peakTarget(Map<String, Map<Integer, BigDecimal>> hours, String day, i
 
 // ── Winter credit: schedule, data and outputs ─────────────────────────
 // Hydro-Québec's peak events come from its open data (the winter credit's offer, CPC-D), read
-// twice a day. Each hourly read of today's consumption recomputes the targets of the next
-// morning and evening events, announced or not, and writes them to File Manager for the viewer;
-// the Hilo Winter Credit device shows the next one. During an anchor window the device counts
-// the window's energy from the live power, so a rule can stop pre-heating at the plan's limit.
+// twice a day. Each hourly read of today's consumption, all year, recomputes the six windows from
+// yesterday morning to tomorrow evening, announced or not: the targets of those ahead and the
+// result of those started. They go to File Manager for the viewer and to the app page; the Hilo
+// Winter Credit device shows the next event, or the current or next window, and the last result.
+// During an anchor window and an event the device counts the energy from the live power, so a
+// rule can stop pre-heating at the plan's limit.
 
 private void peakInitialize() {
     if (!ensurePeakChild()) return
@@ -1147,6 +1377,8 @@ private void peakInitialize() {
     else schedule("0 0 22 ? * *", "peakEvening")
     // A minute after each anchor window ends.
     schedule("0 1 4,14 ? * *", "peakAnchorEnded")
+    // A minute after each event window ends, so its result shows without waiting for the next read.
+    schedule("0 1 10,20 ? * *", "peakRun")
     subscribe(meterChild(), "power", "peakPowerHandler")
     runIn(10, "fetchPeakEvents")
 }
@@ -1169,7 +1401,7 @@ private boolean ensurePeakChild() {
 }
 
 // Called by the child's refresh().
-void peakRefresh() { checkVersion(); peakRun(true) }
+void peakRefresh() { checkVersion(); peakRun() }
 
 void fetchPeakEvents() {
     String since = LocalDate.now(location.timeZone.toZoneId()).minusDays(PEAK_LOOKBACK_DAYS).toString()
@@ -1201,7 +1433,7 @@ void peakEventsCallback(resp, data) {
     evs.findAll { (it.s as long) > t && !before.any { b -> b.s == it.s } }.each {
         logInfo "peak event announced: ${formatClock(it.s as long)} to ${new Date(it.e as long).format('HH:mm', location.timeZone)}"
     }
-    peakRun(false)
+    peakRun()
 }
 
 // [day "YYYY-MM-DD", start hour] of every event in the list and in the extra-events setting.
@@ -1243,38 +1475,90 @@ private Map<String, Map<Integer, BigDecimal>> peakHours(LocalDate from, LocalDat
 private static boolean inWinter(LocalDate d) { return d.monthValue == 12 || d.monthValue <= 3 }
 
 // After each hourly read of today.
-void peakUpdate() { peakRun(false) }
+void peakUpdate() { peakRun() }
 
-// Recomputes the next morning and evening targets. Outside December to March only on request.
-void peakRun(boolean force) {
+// Energy curtailed for a consumption: above 40 kWh the reference energy with the limit applies when lower.
+@CompileStatic
+static BigDecimal curtailedKWh(BigDecimal target, BigDecimal capped, BigDecimal used) {
+    BigDecimal c = target - used
+    if (c > CAP_KWH && target > capped) c = capped - used
+    return [c, 0.0].max()
+}
+
+// Where a window stands at t: plan, anchor, advice (anchor period over, event not started), event or done.
+@CompileStatic
+static String windowPhase(Map w, long t) {
+    if (t >= (w.end as long)) return "done"
+    if (t >= (w.start as long)) return "event"
+    if (t >= (w.anchorEnd as long)) return "advice"
+    if (t >= (w.anchorStart as long)) return "anchor"
+    return "plan"
+}
+
+// The windows the card lists, out of the six from yesterday to tomorrow: the finished ones, the
+// current or next one, one more, and any announced event after those.
+@CompileStatic
+static List<Map> timelineWindows(List<Map> ws, long t) {
+    int cur = ws.findIndexOf { Map w -> (w.end as long) > t }
+    if (cur < 0) return ws
+    int upto = [cur + 1, ws.findLastIndexOf { Map w -> w.event as boolean }].max()
+    return new ArrayList<Map>(ws.subList(0, [upto + 1, ws.size()].min()))
+}
+
+// Recomputes the six windows from yesterday morning to tomorrow evening.
+void peakRun() {
     if (!settings.wcEnable || !state.locationId) return
-    LocalDate today = LocalDate.now(location.timeZone.toZoneId())
-    LocalDate tomorrow = today.plusDays(1)
-    if (!force && !inWinter(tomorrow) && !inWinter(today)) return
+    LocalDate today = localToday()
     List<List> slots = peakEventSlots()
     Set<String> eventDays = slots.collect { it[0] as String } as Set
-    int nowHour = new Date().format("H", location.timeZone) as int
-    // The windows still ahead: today's evening before 16:00 and tomorrow's two.
-    List<List> windows = []
-    if (nowHour < 6) windows << [today.toString(), 6]
-    if (nowHour < 16) windows << [today.toString(), 16]
-    windows << [tomorrow.toString(), 6]
-    windows << [tomorrow.toString(), 16]
-    Map<String, Map<Integer, BigDecimal>> hours = peakHours(today.minusDays(PEAK_LOOKBACK_DAYS), today)
+    Map<String, Map<Integer, BigDecimal>> hours = peakHours(today.minusDays(PEAK_LOOKBACK_DAYS + 1), today)
     BigDecimal floorKWh = (settings.wcFloor ?: 3.0) as BigDecimal
-    List<Map> results = windows.collect { List w ->
-        String day = w[0] as String
-        int h = w[1] as int
-        Map r = peakTarget(hours, day, h, eventDays.findAll { it != day } as Set<String>, floorKWh, peakAnchorActual(day, h, hours))
-        r.event = slots.any { it[0] == day && it[1] == h }
-        r
+    long t = now()
+    List<Map> results = [-1, 0, 1].collectMany { int off ->
+        String day = today.plusDays(off).toString()
+        [6, 16].collect { int h -> peakWindow(hours, day, h, slots, eventDays, floorKWh, t) }
     }
-    // The device shows the next announced event, else tomorrow morning's simulation.
-    Map next = results.find { it.event } ?: results.find { it.day == tomorrow.toString() && it.startHour == 6 }
-    state.peakLast = [at: now(), next: peakBrief(next)]
-    peakChild()?.updatePeak(peakAttributes(next) + [summaryLog: peakBrief(next)?.message])
+    // The device shows the next announced event, else the current or next window.
+    Map next = results.find { it.event && (it.end as long) > t } ?: results.find { (it.end as long) > t }
+    List<Map> done = results.findAll { (it.end as long) <= t && usedOf(it) != null }
+    Map last = done ? done.last() : null
+    state.peakWindows = results.collect { Map r -> r.findAll { k, v -> !(k in ["rows", "refDays", "skipped", "missing", "anchorHours"]) } }
+    state.peakLast = [at: t, next: peakBrief(next)]
+    peakChild()?.updatePeak(peakAttributes(next) + lastAttributes(last) + [summaryLog: peakBrief(next)?.message])
     writePeakFile(results, floorKWh)
 }
+
+// One window: its target, the times of its anchor period and event, and once the event has
+// started the energy used (Hilo's hourly values when all four are in, else the live count) and
+// what that curtails.
+private Map peakWindow(Map<String, Map<Integer, BigDecimal>> hours, String day, int h, List<List> slots, Set<String> eventDays,
+                       BigDecimal floorKWh, long t) {
+    Map r = peakTarget(hours, day, h, eventDays.findAll { it != day } as Set<String>, floorKWh, peakAnchorActual(day, h, hours))
+    r.event = slots.any { it[0] == day && it[1] == h }
+    int back = h < 12 ? 5 : 4, alen = h < 12 ? 3 : 2
+    r.anchorStart = timeOf(day, h - back)
+    r.anchorEnd = timeOf(day, h - back + alen)
+    r.start = timeOf(day, h)
+    r.end = timeOf(day, h + EVENT_HOURS)
+    if (t < (r.start as long)) return r
+    List<BigDecimal> vals = (h..<(h + EVENT_HOURS)).collect { hours[day]?.get(it) }
+    if (vals.every { it != null }) {
+        r.used = vals.sum() as BigDecimal
+        r.complete = true
+    } else {
+        Map live = state.eventLive as Map
+        if (live?.day == day && live?.startHour == h) r.usedLive = live.kWh as BigDecimal
+    }
+    BigDecimal u = usedOf(r)
+    if (u != null && r.target != null) {
+        r.curtailed = curtailedKWh(r.target as BigDecimal, r.cappedTarget as BigDecimal, u)
+        r.credit = (r.curtailed as BigDecimal) * CREDIT_CENTS / 100
+    }
+    return r
+}
+
+// The event's consumption: the hourly total, else the live count, else null.
+private static BigDecimal usedOf(Map r) { return (r.used != null ? r.used : r.usedLive) as BigDecimal }
 
 // The event day's anchor-window kWh once the window is over: Hilo's hourly values when all are in,
 // else the live count. Null before the window ends.
@@ -1293,42 +1577,51 @@ private long timeOf(String day, int hour) {
     return Date.parse("yyyy-MM-dd H", "${day} ${hour}", location.timeZone).time
 }
 
-// Live count of the anchor window's energy, from the meter's power (held until the next reading).
+// Live counts of the anchor window's and the event's energy, from the meter's power (held until
+// the next reading). Hilo's hourly values replace them once all are in.
 void peakPowerHandler(evt) {
     if (!settings.wcEnable) return
     Date t = new Date()
     int h = t.format("H", location.timeZone) as int
-    Integer startHour = (h >= 1 && h < 4) ? 6 : ((h >= 12 && h < 14) ? 16 : null)
     String day = t.format("yyyy-MM-dd", location.timeZone)
-    Map live = (state.anchorLive ?: [:]) as Map
-    if (startHour == null) {
-        if (live.open) { live.open = false; state.anchorLive = live }
-        return
-    }
     BigDecimal w = (evt.value ?: 0) as BigDecimal
+    Integer anchorFor = (h >= 1 && h < 4) ? 6 : ((h >= 12 && h < 14) ? 16 : null)
+    Integer eventFor = (h >= 6 && h < 10) ? 6 : ((h >= 16 && h < 20) ? 16 : null)
+    BigDecimal a = liveCount("anchorLive", day, anchorFor, w, t.time)
+    if (a != null) peakChild()?.updatePeak([anchorUsed: a, anchorWindow: "${day} ${anchorFor == 6 ? '01:00-04:00' : '12:00-14:00'}"])
+    BigDecimal e = liveCount("eventLive", day, eventFor, w, t.time)
+    if (e != null) peakChild()?.updatePeak([eventUsed: e])
+}
+
+// Adds the time since the last reading, at that reading's power, to the count in state[key].
+// Returns the count when it has grown 0.1 kWh since last sent (and at once when a window opens), else null.
+private BigDecimal liveCount(String key, String day, Integer startHour, BigDecimal w, long t) {
+    Map live = (state[key] ?: [:]) as Map
+    if (startHour == null) {
+        if (live.open) { live.open = false; state[key] = live }
+        return null
+    }
     if (!(live.open && live.day == day && live.startHour == startHour)) {
         // sentKWh below zero, so the new window's 0 is sent at once.
-        live = [day: day, startHour: startHour, open: true, kWh: 0.0, lastMs: t.time, lastW: w, sentKWh: -1.0]
+        live = [day: day, startHour: startHour, open: true, kWh: 0.0, lastMs: t, lastW: w, sentKWh: -1.0]
     } else {
-        long dt = t.time - (live.lastMs as long)
+        long dt = t - (live.lastMs as long)
         // A gap over 10 min in the stream counts nothing rather than guess.
         if (dt > 0 && dt < 600_000L) live.kWh = (live.kWh as BigDecimal) + (live.lastW as BigDecimal) * dt / 3_600_000_000.0
-        live.lastMs = t.time
+        live.lastMs = t
         live.lastW = w
     }
-    state.anchorLive = live
     BigDecimal used = round3(live.kWh as BigDecimal)
-    if (used - (live.sentKWh as BigDecimal) >= 0.1) {
-        live.sentKWh = used
-        state.anchorLive = live
-        peakChild()?.updatePeak([anchorUsed: used, anchorWindow: "${day} ${startHour == 6 ? '01:00-04:00' : '12:00-14:00'}"])
-    }
+    boolean send = used - (live.sentKWh as BigDecimal) >= 0.1
+    if (send) live.sentKWh = used
+    state[key] = live
+    return send ? used : null
 }
 
 // After an anchor window: recompute and, on an event day, say what the event needs.
 void peakAnchorEnded() {
     if (!settings.wcEnable) return
-    peakRun(false)
+    peakRun()
     Date t = new Date()
     String day = t.format("yyyy-MM-dd", location.timeZone)
     int startHour = (t.format("H", location.timeZone) as int) < 12 ? 6 : 16
@@ -1339,7 +1632,7 @@ void peakAnchorEnded() {
 
 void peakEvening() {
     if (!settings.wcEnable) return
-    peakRun(false)
+    peakRun()
     LocalDate tomorrow = LocalDate.now(location.timeZone.toZoneId()).plusDays(1)
     List<List> slots = peakEventSlots().findAll { it[0] == tomorrow.toString() }
     if (!slots && !(settings.wcNotifyDaily && inWinter(tomorrow))) return
@@ -1391,6 +1684,15 @@ private Map peakAttributes(Map r) {
     a.advice = r.advice ?: "pending"
     a.keepUse = r.keepUse == null ? null : round3(r.keepUse as BigDecimal)
     return a
+}
+
+// The last finished window's result; provisional (lastFinal false) until Hilo's hourly values are in.
+private Map lastAttributes(Map r) {
+    if (!r) return [:]
+    return [lastWindow: "${r.day} ${r.startHour == 6 ? 'AM' : 'PM'}".toString(), lastAnnounced: r.event ? "true" : "false",
+            lastConsumed: round3(usedOf(r)), lastCurtailed: r.curtailed == null ? null : round3(r.curtailed as BigDecimal),
+            lastCredit: r.credit == null ? null : (r.credit as BigDecimal).setScale(2, BigDecimal.ROUND_HALF_UP),
+            lastFinal: r.complete ? "true" : "false"]
 }
 
 

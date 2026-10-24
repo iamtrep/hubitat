@@ -166,19 +166,23 @@ Under **Winter credit settings** on the app page:
 - **Events missing from Hydro-Québec's open data**: the open data has missed an event; add it as `YYYY-MM-DD AM` or `PM`, comma-separated. A missing past event changes the reference days.
 - **Compute now** computes at once, in any season.
 
-Peak events come from Hydro-Québec's [open data](https://donnees.hydroquebec.com/explore/dataset/evenements-pointe/) (offer CPC-D), read twice a day at the same minute, between 15:15 and 15:29 and between 21:15 and 21:29. From December to March the targets are recomputed after each hourly read. A minute after each anchor window ends on an event day, the manager recomputes with that window's use and notifies with the reference energy and what pays: cutting to the floor, or consuming just enough to curtail exactly 40 kWh when the limit would otherwise cut a deep curtailment below 40 kWh. The app page's Winter credit card shows the same advice until the event starts.
+Peak events come from Hydro-Québec's [open data](https://donnees.hydroquebec.com/explore/dataset/evenements-pointe/) (offer CPC-D), read twice a day at the same minute, between 15:15 and 15:29 and between 21:15 and 21:29. The windows from yesterday morning to tomorrow evening are recomputed after each hourly read, all year, and a minute after each event window ends. A minute after each anchor window ends on an event day, the manager recomputes with that window's use and notifies with the reference energy and what pays: cutting to the floor, or consuming just enough to curtail exactly 40 kWh when the limit would otherwise cut a deep curtailment below 40 kWh. 
+
+The app page's **Winter credit** card lists yesterday's and today's finished windows with their result (energy used against the reference energy, energy curtailed, credit), then the current window and the next. The current one shows what to do now: the plan, the anchor period's count against it, the advice until the event starts, then the event's count with a projection at the current power. A window with no announced event is a simulation, in grey; an announced event's day gets an amber banner with a countdown. Results stay provisional until Hilo's hourly values for the event are in. Off season (April to November) the card says so. The power, the counts and the countdowns update live while the page is open, from the hub's event socket.
 
 ### Hilo Winter Credit device
 
-Shows the next announced event, or tomorrow morning as if it were one:
+Shows the next announced event, or the current or next window as if it were one, and the last finished window's result:
 
 - `eventDate`, `window` (`AM` / `PM`), `announced` (`true` / `false`)
 - `base`, `anchorReference`, `cappedTarget` — kWh
 - `anchorPlan` (`at most` / `at least`) and `anchorTarget` — kWh to use in the anchor window
 - `expectedCurtailment` — kWh curtailed if the plan is followed and the event is cut to the floor
 - `anchorUsed` / `anchorWindow` — the anchor window's energy so far, counted from the live power, during 01:00–04:00 and 12:00–14:00
+- `eventUsed` — the event window's energy so far, counted the same way, during 06:00–10:00 and 16:00–20:00
 - `target`, `advice` (`pending` / `cut` / `keep`), `keepUse` — once the anchor window is over. `keep` means using `keepUse` kWh during the event keeps 40 kWh curtailed and pays more than cutting to the floor.
 - `referenceDays`, `summary`
+- `lastWindow` (`YYYY-MM-DD AM` / `PM`), `lastAnnounced` (`true` / `false`), `lastConsumed`, `lastCurtailed` — kWh, `lastCredit` — $, `lastFinal` (`false` while it uses the live count instead of Hilo's hourly values)
 
 A rule can stop pre-heating when `anchorPlan` is `at most` and `anchorUsed` reaches `anchorTarget`. **Refresh** recomputes.
 
