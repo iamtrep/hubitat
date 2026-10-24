@@ -123,7 +123,10 @@ SPDX-License-Identifier: MIT
 // File Manager. Hours are keyed by their local start time, so 23- and 25-hour days need no case.
 const FILE_RE = /^hilo-(.+)-energy-(\d{4}-\d{2})\.json$/;
 // Hydro-Québec's winter peak-event windows, local time, shaded on days from December 1 to March 31.
-const PEAKS = [[6, 9], [16, 20]];
+// Morning events ran 06:00–09:00 in winter 2024–25 and 06:00–10:00 from 2025–26 (Hydro-Québec open data).
+// A date outside winter takes the window of the winter that follows it.
+const peaksFor = date => { const y = +date.slice(0, 4), w = +date.slice(5, 7) >= 7 ? y : y - 1; return w >= 2025 ? [[6, 10], [16, 20]] : [[6, 9], [16, 20]]; };
+const windowsText = P => P.map(([a, b]) => `${String(a).padStart(2, '0')}:00–${String(b).padStart(2, '0')}:00`).join(' and ');
 const inSeason = date => ['12', '01', '02', '03'].includes(date.slice(5, 7));
 // Actual peak events: Hydro-Québec open data, the residential winter-credit offer (CPC-D), the same
 // feed as the Hydro Peak Events app. The API allows cross-origin reads; times come back in UTC.
@@ -136,7 +139,7 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const monthName = m => `${MONTHS[+m.slice(5, 7) - 1]} ${m.slice(0, 4)}`;
 const dayName = d => new Date(d + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 const hourOf = start => +start.slice(11, 13);
-const inPeak = h => PEAKS.some(([a, b]) => h >= a && h < b);
+const inPeak = (h, date) => peaksFor(date).some(([a, b]) => h >= a && h < b);
 // Outdoor temperature comes from Open-Meteo's historical API at the hub's coordinates. Asked in UTC
 // epoch seconds: its local-time output has 24 hours on clock-change days.
 const TEMP_URL = 'https://archive-api.open-meteo.com/v1/archive';
@@ -357,9 +360,9 @@ function render() {
     <div class="card"><h2><span>Daily use (kWh)${label ? ', ' + esc(label) : ''} ${zoomStack.length ? '<button id="zoomOut" title="Back to the previous period (Esc)">Zoom out</button>' : ''}</span><span class="legend">Click a day for its hours; drag across days to zoom in. Pale bars: hours missing.${temps ? ' <span class="t">Line</span>: mean outdoor temperature.' : ''}${events ? ' <span class="e">Mark</span>: peak event.' : ''}</span></h2><div id="daily"></div>
         <div class="legend" style="margin-top:6px">${esc(tempNote)}</div><div class="legend">${esc(eventNote)}</div></div>
     <div class="card"><h2><span id="dayTitle"></span><span class="legend" id="dayNote"></span></h2><div id="hourly"></div>
-        <div class="legend" style="margin-top:6px"><b>Shaded</b>: peak windows 06:00–09:00 and 16:00–20:00, December 1 to March 31${events ? ' · <span class="e">purple</span>: an actual peak event' : ''}</div></div>
+        <div class="legend" style="margin-top:6px"><b>Shaded</b>: peak windows ${windowsText(peaksFor(selDay || set[set.length - 1].date))}, December 1 to March 31${events ? ' · <span class="e">purple</span>: an actual peak event' : ''}</div></div>
     ${temps ? `<div class="card"><h2><span>Daily use against mean outdoor temperature</span><span class="legend">Full days only. Click a point for its hours.${events ? ' <span class="e">Coloured</span>: peak-event days.' : ''}</span></h2><div id="scatter"></div></div>` : ''}
-    <div class="card"><h2><span>Average day by hour (kWh)${label ? ', ' + esc(label) : ''}</span><span class="legend"><b>Shaded</b>: peak-event windows, 06:00–09:00 and 16:00–20:00</span></h2><div id="profile"></div><div class="legend" id="profileNote" style="margin-top:6px"></div><div class="legend" id="peakShare"></div></div>
+    <div class="card"><h2><span>Average day by hour (kWh)${label ? ', ' + esc(label) : ''}</span><span class="legend"><b>Shaded</b>: peak-event windows, ${windowsText(peaksFor(set[set.length - 1].date))}</span></h2><div id="profile"></div><div class="legend" id="profileNote" style="margin-top:6px"></div><div class="legend" id="peakShare"></div></div>
     <div class="card"><h2><span>${dayRows ? 'Days' : 'Months'}</span></h2><div class="scroll" id="table"></div></div>`;
     if ($('zoomOut')) $('zoomOut').onclick = zoomOut;
     drawDaily(set);
@@ -489,7 +492,7 @@ function drawDay() {
     const evStart = events ? d.hours.find(x => x.ev) : null;
     const wcLink = inSeason(d.date) || evDay(d) ? ` <a class="wclink" href="hilo-winter-credit.html#day=${d.date}&start=${evStart && evStart.h >= 12 ? 16 : 6}&loc=${encodeURIComponent(loc)}">Winter credit analysis →</a>` : '';
     $('dayTitle').innerHTML = `${esc(dayName(d.date))}: ${fmt(d.total)} kWh${wcLink}`;
-    const peak = d.hours.filter(x => inPeak(x.h) && x.kWh != null).reduce((s, x) => s + x.kWh, 0);
+    const peak = d.hours.filter(x => inPeak(x.h, d.date) && x.kWh != null).reduce((s, x) => s + x.kWh, 0);
     const evRuns = events ? runs(d.hours.map(x => !!x.ev)) : [];
     const evText = evRuns.map(([a, b]) => `${d.hours[a].h}:00–${d.hours[b - 1].h + 1}:00`).join(', ');
     $('dayNote').textContent = (evRuns.length ? `${evLabel(d)} ${evText} · ` : '') +
@@ -498,7 +501,7 @@ function drawDay() {
         (temps && d.tMean != null ? ` · outdoors ${deg(d.tMin)} to ${deg(d.tMax)} (red line)` : '');
     const el = $('hourly');
     // Peak windows on every winter day; an actual event's hours in their own colour, replacing the window they overlap.
-    const shade = (d.n === 24 && inSeason(d.date) ? PEAKS : [])
+    const shade = (d.n === 24 && inSeason(d.date) ? peaksFor(d.date) : [])
         .filter(([a, b]) => !evRuns.some(([ea, eb]) => ea < b && eb > a)).map(([a, b]) => ({ a, b, cls: 'peak' }))
         .concat(evRuns.map(([a, b]) => ({ a, b, cls: 'event' })));
     el.innerHTML = bars(d.hours.map((x, i) => ({ key: i, value: x.kWh, label: String(x.h) })), { height: 180, shade, unitDigits: 2,
@@ -518,17 +521,19 @@ function drawProfile(fulls) {
     };
     const evs = fulls.filter(evDay), ords = evs.length ? fulls.filter(d => !evDay(d)) : fulls;
     const avg = profile(ords), evAvg = evs.length ? profile(evs) : null;
+    // The windows of the period's last day; a period across two winters takes the later one.
+    const P = fulls.length ? peaksFor(fulls[fulls.length - 1].date) : peaksFor(new Date().toISOString().slice(0, 10));
     el.innerHTML = bars(avg.map((v, h) => ({ key: h, value: v, label: String(h) })), { height: 180, unitDigits: 2, overlay: evAvg,
-        shade: PEAKS.map(([a, b]) => ({ a, b, cls: 'peak' })),
+        shade: P.map(([a, b]) => ({ a, b, cls: 'peak' })),
         fmtTip: v => `${v.key}:00 to ${v.key + 1}:00: ${fmt(v.value, 2)} kWh on average` + (evAvg ? `, ${fmt(evAvg[v.key], 2)} on event days` : '') });
     wire(el);
     $('profileNote').innerHTML = evAvg ? `Bars: ${ords.length} days without an event · <span class="e">line</span>: ${evs.length} peak-event days` : '';
     const shares = a => {
         const tot = a.reduce((s, v) => s + (v || 0), 0);
-        return tot ? PEAKS.map(([x, y]) => `${String(x).padStart(2, '0')}:00–${y}:00 ${fmt(a.slice(x, y).reduce((s, v) => s + (v || 0), 0) / tot * 100, 0)} %`).join(', ') : '';
+        return tot ? P.map(([x, y]) => `${String(x).padStart(2, '0')}:00–${String(y).padStart(2, '0')}:00 ${fmt(a.slice(x, y).reduce((s, v) => s + (v || 0), 0) / tot * 100, 0)} %`).join(', ') : '';
     };
     const base = shares(avg);
-    $('peakShare').textContent = base ? `Share of the day's energy${evAvg ? ', days without an event' : ''}: ${base} (${fmt(300 / 24, 0)} % and ${fmt(400 / 24, 0)} % of the hours)` +
+    $('peakShare').textContent = base ? `Share of the day's energy${evAvg ? ', days without an event' : ''}: ${base} (${P.map(([a, b]) => fmt(100 * (b - a) / 24, 0) + ' %').join(' and ')} of the hours)` +
         (evAvg ? `; event days: ${shares(evAvg)}.` : '.') : '';
 }
 
@@ -554,7 +559,7 @@ function drawScatter(set, fulls) {
 
 function drawTable(dayRows, set) {
     const el = $('table');
-    const peakOf = d => d.hours.filter(x => inPeak(x.h) && x.kWh != null).reduce((s, x) => s + x.kWh, 0);
+    const peakOf = d => d.hours.filter(x => inPeak(x.h, d.date) && x.kWh != null).reduce((s, x) => s + x.kWh, 0);
     if (dayRows) {
         el.innerHTML = `<table><tr><th>Day</th><th>kWh</th><th>Peak windows</th><th>Lowest hour (kWh)</th><th>Highest hour (kWh)</th>${temps ? '<th>Outdoors, mean</th><th>min to max</th>' : ''}${events ? '<th>Peak event</th>' : ''}</tr>` +
             set.slice().reverse().map(d => {

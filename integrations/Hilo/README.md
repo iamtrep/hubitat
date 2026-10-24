@@ -150,15 +150,15 @@ Everything but the anchor-window use is known the evening before, so the plan is
 
 ### Settings
 
-Under **Winter credit** on the app page:
+Under **Winter credit settings** on the app page:
 
-- **Winter credit targets** turns the feature on and creates the Hilo Winter Credit device.
+- **Compute the reference energy of each peak event the evening before** turns the feature on and creates the Hilo Winter Credit device.
 - **kWh the home uses during a 4-hour event with the heating cut**: the floor, 3 kWh by default.
-- **Notify** and **Evening notification at** (22:00 by default): the evening before an event, a notification with the target and the plan. With **Notify every winter evening**, one every evening from December to March, as if the next morning were an event.
+- **Notify** and **Evening notification at** (22:00 by default): the evening before an event, a notification with the reference energy with the limit and the plan for the anchor period. With **Notify every winter evening**, one every evening from December to March, as if the next morning were an event.
 - **Events missing from Hydro-Québec's open data**: the open data has missed an event; add it as `YYYY-MM-DD AM` or `PM`, comma-separated. A missing past event changes the reference days.
 - **Compute now** computes at once, in any season.
 
-Peak events come from Hydro-Québec's [open data](https://donnees.hydroquebec.com/explore/dataset/evenements-pointe/) (offer CPC-D), read at about 15:15 and 21:15. From December to March the targets are recomputed after each hourly read. A minute after each anchor window ends on an event day, the manager recomputes with that window's use and notifies when using energy during the event would pay more than cutting to the floor.
+Peak events come from Hydro-Québec's [open data](https://donnees.hydroquebec.com/explore/dataset/evenements-pointe/) (offer CPC-D), read twice a day at the same minute, between 15:15 and 15:29 and between 21:15 and 21:29. From December to March the targets are recomputed after each hourly read. A minute after each anchor window ends on an event day, the manager recomputes with that window's use and notifies with the reference energy and what pays: cutting to the floor, or consuming just enough to curtail exactly 40 kWh when the limit would otherwise cut a deep curtailment below 40 kWh. The app page's Winter credit card shows the same advice until the event starts.
 
 ### Hilo Winter Credit device
 

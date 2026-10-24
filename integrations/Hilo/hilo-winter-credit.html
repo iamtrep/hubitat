@@ -578,6 +578,7 @@ function render() {
         ${tile(scored.length ? `${scored.filter(e => e.capped).length}` : '–', 'events where the temperature adjustment was limited')}
         ${tile(scored.length && scored.every(e => creditCents(e.x.day) != null) ? '$' + fmt(scored.reduce((t, e) => t + e.c * creditCents(e.x.day) / 100, 0), 0) : '–', `credit before taxes, at ${[...new Set(scored.map(e => creditCents(e.x.day)).filter(v => v != null))].map(v => fmt(v, 3)).join(' / ') || '–'} ¢/kWh`)}
     </div>
+    ${season < 2025 ? `<div class="card legend" style="border-color:var(--peak-text)">This page applies the rules in force from winter 2025–26: 4-hour events and the limit on the temperature adjustment. In winter 2024–25 morning events lasted 3 hours (06:00–09:00) and the limit did not exist yet (it applies from winter 2025–26, Régie decision D-2025-091), so these figures are not what was credited that winter.</div>` : ''}
     <div class="card"><h2><span>Winter ${season}–${String(season + 1).slice(2)}</span><span class="legend">Click a day for its hours and reference energy. <span class="e">AM / PM</span>: peak event. Struck: no peak hours. Pale: no history on file. Under each date: the day's mean outdoor temperature.</span></h2>
         <div class="cal" id="cal"></div><div class="legend" style="margin-top:6px">${esc(eventNote)}</div><div class="legend">${esc(tempNote)}</div></div>
     <div class="card"><h2><span id="dayTitle"></span><span class="bar-ctl">

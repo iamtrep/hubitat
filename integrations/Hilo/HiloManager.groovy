@@ -891,9 +891,9 @@ static Map peakTarget(Map<String, Map<Integer, BigDecimal>> hours, String day, i
 private void peakInitialize() {
     if (!ensurePeakChild()) return
     Random rng = new Random()
-    // Events are announced before 15:00 the day before.
-    schedule("${rng.nextInt(60)} ${15 + rng.nextInt(30)} 15 ? * *", "fetchPeakEvents")
-    schedule("${rng.nextInt(60)} ${rng.nextInt(30)} 21 ? * *", "fetchPeakEvents")
+    // Events are announced before 15:00 the day before. One cron for both reads: a second
+    // schedule() under the same handler would replace the first.
+    schedule("${rng.nextInt(60)} ${15 + rng.nextInt(15)} 15,21 ? * *", "fetchPeakEvents")
     if (settings.wcNotifyTime) schedule(timeToday(settings.wcNotifyTime as String, location.timeZone), "peakEvening")
     else schedule("0 0 22 ? * *", "peakEvening")
     // A minute after each anchor window ends.
@@ -1105,21 +1105,21 @@ private void peakNotify(String msg) {
 // The fields the device and the notifications use, plus a one-paragraph message.
 private Map peakBrief(Map r) {
     if (!r) return null
-    String when = "${r.day} ${r.startHour == 6 ? '06:00-10:00' : '16:00-20:00'}"
-    String anchor = r.startHour == 6 ? "01:00-04:00" : "12:00-14:00"
-    String head = r.event ? "Hilo: peak event ${when}." : "Hilo: if ${when} were a peak event:"
+    String window = r.startHour == 6 ? "06:00–10:00" : "16:00–20:00"
+    String anchor = r.startHour == 6 ? "01:00–04:00" : "12:00–14:00", end = r.startHour == 6 ? "04:00" : "14:00"
+    String head = r.event ? "Hilo: peak event ${r.day} ${window}." : "Hilo: if ${r.day} ${window} were a peak event:"
     String plan = r.anchorPlan == "at most" ?
-        "keep ${anchor} at most ${f1(r.anchorTarget)} kWh (target ${f1(r.floor + 40)}, then cut: curtail 40)." :
-        "cut deep: the capped target ${f1(r.cappedTarget)} leaves ${f1(r.expectedCut)} to curtail; ${anchor} use of at least ${f1(r.anchorTarget)} kWh gets it."
+        "consume at most ${f1(r.anchorTarget)} kWh during ${anchor}, then cut to ${f1(r.floor)} kWh: 40 kWh curtailed." :
+        "consume at least ${f1(r.anchorTarget)} kWh during ${anchor}, then cut as deep as you can: about ${f1(r.expectedCut)} kWh curtailed."
     String after = ""
     if (r.target != null) {
         after = r.advice == "keep" ?
-            " Anchor done: target ${f1(r.target)}, over the cap. Using ${f1(r.keepUse)} kWh during the event keeps 40; cutting to ${f1(r.floor)} gives ${f1(r.cut)}." :
-            " Anchor done: target ${f1(r.target)}; cut to ${f1(r.floor)} kWh to curtail ${f1(r.cut)}."
+            " After ${end}: reference energy ${f1(r.target)} kWh. Consume ${f1(r.keepUse)} kWh during the event to curtail exactly 40 kWh; cutting to ${f1(r.floor)} kWh curtails only ${f1(r.cut)} kWh." :
+            " After ${end}: reference energy ${f1(r.target)} kWh; cut to ${f1(r.floor)} kWh to curtail ${f1(r.cut)} kWh."
     }
     String missing = r.missing ? " Provisional: ${(r.missing as List).size()} reference hours not in yet." : ""
     return [day: r.day, startHour: r.startHour, event: r.event, plan: r.anchorPlan, anchorTarget: r.anchorTarget,
-            message: "${head} Base ${f1(r.base)}, capped target ${f1(r.cappedTarget)}: ${plan}${after}${missing}".toString()]
+            message: "${head} Reference energy with the limit ${f1(r.cappedTarget)} kWh: ${plan}${after}${missing}".toString()]
 }
 
 private Map peakAttributes(Map r) {
