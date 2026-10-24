@@ -30,7 +30,7 @@ definition(
     name: "Hilo Manager",
     namespace: "iamtrep",
     author: "pj",
-    description: "Hilo (Hydro-Québec) home energy: hourly consumption and live power",
+    description: "Unofficial Hilo (Hydro-Québec) integration: hourly consumption and live power",
     menu: "Integrations",
     category: "Utility",
     // Installed when first opened, so leaving the page before Done keeps the instance.

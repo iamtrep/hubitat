@@ -5,7 +5,9 @@ SPDX-License-Identifier: MIT
 
 # Hilo Integration
 
-Parent/child integration for [Hilo](https://www.hiloenergie.com/), Hydro-Québec's home energy service. The manager app logs in to a Hilo account, reads one location's hourly consumption, and keeps the full history in File Manager. A child device shows the day's energy and, pushed by Hilo about once a minute, the whole home's power from the utility meter.
+Unofficial parent/child integration for [Hilo](https://www.hiloenergie.com/), Hydro-Québec's home energy service. The manager app logs in to a Hilo account, reads one location's hourly consumption, and keeps the full history in File Manager. A child device shows the day's energy and, pushed by Hilo about once a minute, the whole home's power from the utility meter.
+
+> **Note:** This integration is not affiliated with or endorsed by Hilo or Hydro-Québec. Report problems with it here, not to Hilo or Hydro-Québec.
 
 ## Components
 
