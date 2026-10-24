@@ -35,7 +35,7 @@ metadata {
     preferences {
         input "deviceIP", "string", title: "Device IP Address (Optional)", description: "Enter the IP address of the device to monitor (leave blank to use HTTP GET only)", required: false
         input "httpURL", "string", title: "HTTP URL (Optional)",
-              description: "Enter a full URL for HTTP GET (leave blank to use ICMP ping only). Secret values (a password in user:pass@, or a query parameter such as access_token) are stored encrypted and shown as ${STORED}; leave ${STORED} in place to keep one", required: false
+              description: "Enter a full URL for HTTP GET (leave blank to use ICMP ping only). Secret values (a password in user:pass@, a query parameter such as access_token) are stored encrypted and shown masked, e.g. access_token=${BULLETS}a1b2; leave a masked value as it is to keep it", required: false
         input "pingInterval", "number", title: "Ping Interval (minutes)", description: "How often to check if device is online", defaultValue: 5, range: "1..*", required: true
         input "retryInterval", "number", title: "Initial Retry Interval (seconds)", description: "How long to wait before first retry after a failed ping", defaultValue: 30, range: "1..*", required: true
         input "maxRetries", "number", title: "Maximum Retry Count", description: "Maximum number of retry attempts before backing off to regular schedule", defaultValue: 5, range: "0..*", required: true
@@ -57,7 +57,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.1.6"
+@Field static final String CODE_VERSION = "0.1.7"
 @Field static final int RESPONSE_HISTORY_SIZE = 21
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int INITIAL_PING_DELAY = 2
@@ -65,19 +65,29 @@ import java.util.concurrent.ConcurrentHashMap
 @Field static final int DEFAULT_RETRY_THRESHOLD = 3
 // Statuses a retry can't fix: the HTTP check stops until preferences are saved or Initialize runs.
 @Field static final List<Integer> HTTP_STOP_STATUSES = [401, 403, 404, 410]
-// The URL stays readable in its preference except its secret values, which are kept encrypted
-// in state.httpUrlSecretsEnc and shown as STORED: the user-info part of the authority and the
-// value of any query parameter whose name matches SECRET_PARAM.
-@Field static final String STORED = "<stored>"
-@Field static final String USERINFO = "@userinfo"
+// The URL stays readable in its preference except its secret values, which are kept encrypted in
+// state.httpUrlSecretsEnc and masked the way WordPress masks API keys: a token shows bullets and
+// its last 4 characters, so it can be matched against the issuing app's token list; a password
+// shows bullets only. Secret values are the password in user:pass@ and the value of a query
+// parameter whose name matches SECRET_PARAM. Hosts, paths, usernames and other parameters stay
+// readable. See ARCHITECTURE.md, "Secrets: storage and display".
+@Field static final String BULLETS = "••••••••"
+@Field static final String USERINFO_PASSWORD = "@password"
 // A whole word, alone or after _ or -, in any case (access_token, X-Amz-Signature, apikey), or a
 // camelCase suffix (accessToken, apiKey); "monkey" or "keyword" don't match.
-@Field static final String SECRET_PARAM = /^(?i:(?:.*[_-])?(?:access_?token|token|api_?key|key|secret|password|passwd|pwd|sig|signature|auth|credentials?))$|^.*(?:Token|Key|Secret|Password|Signature)$/
+@Field static final String SECRET_PARAM = /^(?i:(?:.*[_-])?(?:access_?token|token|api_?key|key|secret|password|passwd|pwd|pin|sig|signature|auth|credentials?))$|^.*(?:Token|Key|Secret|Password|Signature)$/
+// Parameters whose value is a password: bullets only, no last 4 characters.
+@Field static final String PASSWORD_PARAM = /(?i).*(passw|pwd|pin).*/
+// A flag or small number is not a secret even in a credential-named parameter (auth=1).
+@Field static final String NOT_SECRET_VALUE = /(?i)true|false|yes|no|on|off|\d{1,3}/
+// How 0.1.6 showed a stored value, and its key for the whole user-info part.
+@Field static final String STORED_016 = "<stored>"
+@Field static final String USERINFO_016 = "@userinfo"
 // Decrypted secret values as JSON, kept in memory only: decrypt() costs ~350 ms on a C-8 Pro,
 // ~830 ms on a C-7. Keyed by device id; value [ciphertext, plaintext].
 @Field static final ConcurrentHashMap<String, List<String>> URL_CACHE = new ConcurrentHashMap<>()
-// The preference value storeHttpUrl() last wrote, by device id: the execution that writes a
-// setting may still read the old one, and an upgrade runs inside ping().
+// The preference value storeHttpUrl() last wrote, by device id. Preferred over the setting: the
+// execution that writes a setting may still read the old one, and an upgrade runs inside ping().
 @Field static final ConcurrentHashMap<String, String> SAVED_URL = new ConcurrentHashMap<>()
 
 void installed() {
@@ -97,20 +107,16 @@ void uninstalled() {
     SAVED_URL.remove(device.id.toString())
 }
 
-// Moves the secret values of the typed URL into encrypted state and writes the rest back to the
-// preference. Runs on every save and once after an upgrade, and takes each earlier layout:
-// 0.1.4 and earlier kept the whole URL in the preference, 0.1.5 kept it only encrypted
-// (state.httpUrlEnc) with the preference removed.
+// Moves the secret values of the typed URL into encrypted state and writes the masked URL back
+// to the preference. Runs on every save and once after an upgrade, and takes each earlier
+// layout: 0.1.4 and earlier kept the whole URL in the preference, 0.1.5 kept it only encrypted
+// (state.httpUrlEnc) with the preference removed, 0.1.6 showed stored values as <stored>.
 private void storeHttpUrl() {
     String typed = settings.httpURL as String
     if (!typed && state.httpUrlEnc) typed = decryptOrNull(state.httpUrlEnc as String, "0.1.5 URL")
-    Map kept = typed?.contains(STORED) ? urlSecrets() : [:]
-    Map split = typed ? splitSecrets(typed) : null
-    Map secrets = [:]
-    (split?.secrets as Map ?: [:]).each { String k, String v -> secrets[k] = (v == STORED) ? kept[k] : v }
-    List missing = secrets.findAll { k, v -> v == null }.collect { it.key }
-    if (missing) logWarn "No stored value for ${missing.join(', ')}; enter the full value in the HTTP URL"
-    secrets = secrets.findAll { k, v -> v != null }
+    Map split = typed ? splitSecrets(typed, urlSecrets()) : null
+    if (split?.missing) logWarn "No stored value matches ${(split.missing as List).join(', ')}; enter the full value in the HTTP URL"
+    Map secrets = (split?.secrets ?: [:]) as Map
     if (secrets) state.httpUrlSecretsEnc = encrypt(groovy.json.JsonOutput.toJson(secrets))
     else state.remove("httpUrlSecretsEnc")
     if (split && split.masked != settings.httpURL) device.updateSetting("httpURL", [value: split.masked, type: "string"])
@@ -121,11 +127,15 @@ private void storeHttpUrl() {
     else SAVED_URL.remove(device.id.toString())
 }
 
-// The URL to request: the preference with its stored values put back. Null when none is set.
+// The URL as the preference shows it, with secret values masked. Null when none is set.
+private String maskedUrl() {
+    return SAVED_URL.get(device.id.toString()) ?: (settings.httpURL as String)
+}
+
+// The URL to request: the masked URL with its stored values put back.
 private String checkUrl() {
-    String shown = (settings.httpURL as String) ?: SAVED_URL.get(device.id.toString())
-    if (!shown) return null
-    return shown.contains(STORED) ? joinSecrets(shown, urlSecrets()) : shown
+    String masked = maskedUrl()
+    return masked ? joinSecrets(masked, urlSecrets()) : null
 }
 
 private Map urlSecrets() {
@@ -148,20 +158,56 @@ private String decryptOrNull(String enc, String what) {
     }
 }
 
-// [masked: the URL with each secret value replaced by STORED, secrets: [name: value]]. A value
-// already STORED is reported as STORED so the caller can keep the one it has.
+// The stored values' names as a person reads them, for error messages.
+private String secretNames() {
+    return urlSecrets().keySet().collect { it == USERINFO_PASSWORD ? "password" : it }.join(", ")
+}
+
 @CompileStatic
-static Map splitSecrets(String url) {
-    String stored = STORED, secretParam = SECRET_PARAM    // closures can't reach the fields here
+static String maskSecret(String name, String value) {
+    boolean passwordLike = name == USERINFO_PASSWORD || name ==~ PASSWORD_PARAM
+    return (passwordLike || value.length() < 16) ? BULLETS : BULLETS + value.substring(value.length() - 4)
+}
+
+// A value the user left masked: bullets with up to 4 trailing characters, or 0.1.6's <stored>.
+// Returns the visible suffix ("" when none), or null when the value is not masked.
+@CompileStatic
+static String maskedSuffix(String value) {
+    if (value == STORED_016) return ""
+    java.util.regex.Matcher m = value =~ /^•+([^•]{0,4})$/
+    return m.find() ? m.group(1) : null
+}
+
+// Splits a typed or stored URL into [masked: the URL to show, secrets: name to value,
+// missing: names of masked values with no matching stored one]. A masked value keeps the stored
+// value of the same name if that ends with the shown characters; anything else counts as typed.
+@CompileStatic
+static Map splitSecrets(String url, Map kept) {
+    String secretParam = SECRET_PARAM, notSecret = NOT_SECRET_VALUE, pwKey = USERINFO_PASSWORD
     Map<String, String> secrets = [:]
+    List<String> missing = []
     String rest = url
     String fragment = ""
     int hash = rest.indexOf('#')
     if (hash >= 0) { fragment = rest.substring(hash); rest = rest.substring(0, hash) }
     java.util.regex.Matcher m = rest =~ /^([A-Za-z][A-Za-z0-9+.-]*:\/\/)([^\/?#@]*)@/
     if (m.find()) {
-        secrets[USERINFO] = m.group(2)
-        rest = m.group(1) + STORED + "@" + rest.substring(m.end())
+        String info = m.group(2)
+        if (info == STORED_016 && kept[USERINFO_016] != null) info = kept[USERINFO_016] as String
+        int colon = info.indexOf(':')
+        if (colon >= 0) {
+            String user = info.substring(0, colon)
+            String pass = info.substring(colon + 1)
+            String suffix = maskedSuffix(pass)
+            if (suffix != null) {
+                String old = kept[pwKey] as String
+                if (old != null && old.endsWith(suffix)) pass = old
+                else { missing << "password"; pass = null }
+            }
+            if (pass != null) secrets[pwKey] = pass
+            info = user + ":" + (pass != null ? maskSecret(pwKey, pass) : BULLETS)
+        }
+        rest = m.group(1) + info + "@" + rest.substring(m.end())
     }
     int q = rest.indexOf('?')
     if (q >= 0) {
@@ -170,25 +216,34 @@ static Map splitSecrets(String url) {
             int eq = pair.indexOf('=')
             String name = eq >= 0 ? pair.substring(0, eq) : pair
             String value = eq >= 0 ? pair.substring(eq + 1) : ""
-            if (value && name ==~ secretParam) {
-                secrets[name] = value
-                pairs << (name + "=" + stored)
-            } else {
-                pairs << pair
+            if (!value || !(name ==~ secretParam) || value ==~ notSecret) { pairs << pair; return }
+            String suffix = maskedSuffix(value)
+            if (suffix != null) {
+                String old = kept[name] as String
+                if (old != null && old.endsWith(suffix)) value = old
+                else { missing << name; pairs << pair; return }
             }
+            secrets[name] = value
+            pairs << (name + "=" + maskSecret(name, value))
         }
         rest = rest.substring(0, q + 1) + pairs.join('&')
     }
-    return [masked: rest + fragment, secrets: secrets]
+    return [masked: rest + fragment, secrets: secrets, missing: missing]
 }
 
+// The masked URL with each stored value put back where its mask is.
 @CompileStatic
 static String joinSecrets(String masked, Map secrets) {
-    String stored = STORED, userinfo = USERINFO
+    String pwKey = USERINFO_PASSWORD
     String url = masked
-    if (secrets[USERINFO] != null) url = url.replaceFirst(/^([A-Za-z][A-Za-z0-9+.-]*:\/\/)<stored>@/, '$1' + java.util.regex.Matcher.quoteReplacement(secrets[USERINFO] as String) + '@')
+    String pass = secrets[pwKey] as String
+    if (pass != null) {
+        String shown = ":" + maskSecret(pwKey, pass) + "@"
+        int at = url.indexOf(shown)
+        if (at >= 0) url = url.substring(0, at) + ":" + pass + "@" + url.substring(at + shown.length())
+    }
     secrets.each { k, v ->
-        if (k != userinfo) url = url.replace("${k}=${stored}".toString(), "${k}=${v}".toString())
+        if (k != pwKey) url = url.replace("${k}=${maskSecret(k as String, v as String)}".toString(), "${k}=${v}".toString())
     }
     return url
 }
@@ -371,7 +426,8 @@ void httpResponse(resp, Map data) {
             int status = resp.getStatus()
             if (status in HTTP_STOP_STATUSES) {
                 state.httpStopped = status
-                logError "HTTP GET ${shownUrl()} returned HTTP ${status}; HTTP checks stopped until preferences are saved or Initialize runs"
+                String rejected = (status in [401, 403] && secretNames()) ? "; the stored ${secretNames()} was rejected, enter the current value" : ""
+                logError "HTTP GET ${shownUrl()} returned HTTP ${status}${rejected}; HTTP checks stopped until preferences are saved or Initialize runs"
             } else {
                 Long retryAfter = retryAfterSeconds(resp)
                 if (retryAfter) state.httpRetryAfter = retryAfter
@@ -400,14 +456,14 @@ private Long retryAfterSeconds(resp) {
 }
 
 private Map redactSettings() {
-    return settings.collectEntries { k, v -> [(k): k == 'httpURL' && v ? splitSecrets(v as String).masked : v] }
+    return settings.collectEntries { k, v -> [(k): k == 'httpURL' && v ? splitSecrets(v as String, [:]).masked : v] }
 }
 
-// The URL as logs and events show it: secret values stay masked even if the preference still
-// holds one (a save not yet processed by storeHttpUrl).
+// The URL as logs and events show it. Masked again in case the preference still holds a value
+// typed in full (a save not yet processed by storeHttpUrl).
 private String shownUrl() {
-    String u = (settings.httpURL as String) ?: SAVED_URL.get(device.id.toString())
-    return u ? splitSecrets(u).masked as String : "(none)"
+    String u = maskedUrl()
+    return u ? splitSecrets(u, [:]).masked as String : "(none)"
 }
 
 // Firmware 2.5.1.x (Apache HttpClient 5.x) drops a query string embedded in the

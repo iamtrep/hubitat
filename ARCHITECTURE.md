@@ -253,6 +253,28 @@ An integration that logs an error on every failed poll pages the user once per p
 
 Reference implementations: VisiblAirManager (`pollFailed()`/`pollSucceeded()`, threshold 3) and FGLairManager (threshold 5, `noteRetryAfter()`). Home Assistant's [`log-when-unavailable`](https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/log-when-unavailable/) rule takes the same approach.
 
+### Secrets: storage and display
+
+Anyone with admin access to a hub can read app settings, `state`, device preferences and data values, attributes, events and logs, and these also end up in screenshots, forum posts and diagnostics. A secret must not be readable in any of them. It must still be identifiable enough to troubleshoot.
+
+**What is a secret.** A value that grants access on its own or with public information: a password or PIN, an access, refresh, session or bearer token, an API key or secret, a signing or private key, a cookie, or a webhook URL whose path is the credential. Identifiers are not secrets and stay readable everywhere: IP and MAC addresses, hostnames, device, app, hub and account ids, client ids, serial numbers and usernames. Masking an identifier only makes troubleshooting harder.
+
+**Storage.**
+- A secret the user types is read once, stored with `encrypt()` in `state`, and its setting removed (`app.removeSetting()` / `device.removeSetting()`). A token received from a service is stored only encrypted.
+- `decrypt()` costs 350–830 ms, so the plaintext is cached in a `@Field static ConcurrentHashMap` keyed by app or device id, holding `[ciphertext, plaintext]` so a rewritten value misses. Drop the entry when the value is cleared and in `uninstalled()`.
+- Plaintext never goes into `state`, settings, data values, attributes, events, logs or scheduled-job data.
+- Values stored in plain text by an earlier version are encrypted on upgrade.
+- Keep secret and non-secret parts apart. In a URL only the secret parts are secret: the password in `user:pass@`, and the value of a query parameter named like a credential (`access_token`, `apiKey`, `X-Amz-Signature`, ...). Host, path and other parameters stay readable.
+
+**Display.** Show a stored secret the way WordPress shows an API key ([`_wp_connectors_mask_api_key()`](https://developer.wordpress.org/reference/functions/_wp_connectors_mask_api_key/)):
+- **Tokens and API keys** (long random values): bullets, then the last 4 characters, e.g. `access_token=••••••••a1b2`. The 4 characters let you match the value against the issuing side (Maker API's token list, an app's endpoint URL). That matters because an app can hold several OAuth tokens since 2.5.2 and the app id no longer tells them apart. Hubitat's tokens are UUIDs, and 4 hex characters give away 16 of their 122 random bits.
+- **Passwords and PINs**: bullets only, `••••••••`. The end of a password is a real leak.
+- Logs and events show the same masked form, so a rejected token in the logs can be matched too. Error messages name the secret that failed ("HTTP 401: the stored access_token was rejected; enter the current one").
+- A field that shows a stored secret keeps it when saved unchanged, and a new value replaces it, as Node-RED does with its password placeholder ([credentials](https://nodered.org/docs/creating-nodes/credentials)). A titled input says so: "Password (stored, enter only to change it)".
+- No command or button reveals a stored secret: an admin could press it.
+
+Prior art: Node-RED keeps stored passwords out of the editor and shows a placeholder; Vercel makes secret variables "write-only after saving" and leaves config readable ([docs](https://vercel.com/docs/environment-variables/sensitive-environment-variables)); `kubectl describe secret` shows sizes instead of values ([docs](https://kubernetes.io/docs/tasks/configmap-secret/managing-secret-using-kubectl/)); OpenTelemetry keeps a URL's query keys and replaces only sensitive values ([url attributes](https://opentelemetry.io/docs/specs/semconv/registry/attributes/url/)).
+
 ### Firmware-dependent platform APIs
 
 A platform method whose signature changed between firmware releases throws on a hub that runs the older one. Compare `location.hub.firmwareVersionString` against the first release that has the signature, store the result, and branch on it. Compare the version components as integers, since string comparison puts `2.4.10` before `2.4.9`. Reference: IPReachabilitySensor's `supportsPingTimeout()`, which picks `NetworkUtils.ping(ip, count, timeout)` when the firmware supports it and `NetworkUtils.ping(ip, count)` otherwise.
