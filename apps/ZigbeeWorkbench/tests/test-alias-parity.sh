@@ -21,7 +21,7 @@ SRC="$APP_DIR/ZigbeeWorkbench.groovy"
 command -v node >/dev/null || { echo "[harness] node not found"; exit 2; }
 command -v groovy >/dev/null || { echo "[harness] groovy not found"; exit 2; }
 [ -f "$UI" ] && [ -f "$SRC" ] || { echo "[harness] source not found: $UI or $SRC"; exit 2; }
-TMP="$(mktemp -d)"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/alias-parity.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
 # Names, and the Hub Inspector aliases for them.
