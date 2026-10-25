@@ -36,6 +36,16 @@ The hub is a small 4-core ARM board sharing memory with every other Hubitat app 
 
 When in doubt, ship raw and let the SPA derive. Examples in place: the Network tab's Zigbee LQI rollup and stale-neighbor flag (`zbMeshDetails()`), the Z-Wave mesh rollups and S0 flag (`zwMeshStats()`), app-label HTML cleanup (`noTags()`), and audit dates, which ship as epoch ms (`lastActivityTimeMs`, `createTimeMs`, `updateTimeMs`). The mesh rollups keep the values an older payload already carries.
 
+## Scope: Troubleshooting, Not Monitoring
+
+Hub Inspector exists to answer "what is wrong, and why?" when someone opens it. Some evidence has to be gathered before that moment, because a fault is often only visible against an earlier state: scheduled config snapshots, perf checkpoints and the 5-minute temperature samples run in the background for that reason. They record; they do not judge.
+
+- **Background jobs collect and store, nothing more.** They never evaluate thresholds, and the app emits no events, notifications or device state: no child devices, no `sendEvent`/`sendLocationEvent`, no notification-device inputs.
+- **Severity lives in the SPA**, computed against the configured thresholds (`TH` in `hub_inspector_ui.html`) only while a page is open. The thresholds are rough guides that draw attention to off-normal values, not calibrated limits, and nothing outside the UI should depend on them.
+- **Alerting on hub metrics belongs to drivers and rules.** A hub-information driver that exposes memory, CPU load and temperature as attributes lets a rule fire at thresholds the user picks.
+
+Test for a new feature: if it helps someone diagnose a problem while looking at the app, or preserves evidence they will need then, it fits. If it has to act when nobody is looking, it does not.
+
 ## System Shape
 
 ### Backend layout
@@ -272,6 +282,7 @@ Treat these as regressions even if the feature "works" locally:
 - hub-side computation of values that depend only on data already in the same response payload — those should be derived in the SPA
 - new sorting or top-N selection done in Groovy when the SPA already sorts or filters the same column via `tbl()`
 - hub-side string/HTML/markdown assembly when the SPA owns rendering for the same surface
+- a background job that evaluates thresholds, or any path that emits events, notifications or child-device state (see *Scope*)
 
 ## Change Design Rules
 
