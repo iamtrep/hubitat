@@ -36,6 +36,19 @@ definition(
 // Keyed by app id; the stored ciphertext rides along so a changed password misses.
 @Field static final ConcurrentHashMap<String, List<String>> SECRET_CACHE = new ConcurrentHashMap<>()
 @Field static final String DNI_PREFIX = "visiblair-"
+// The last lastSampleTimeStamp sent to each child, keyed "appId:uuid". A poll between two samples
+// (the API samples every 15 min, the default poll is 5) skips the child. Empty after a reboot or code
+// push, so the first poll sends everything.
+@Field static final ConcurrentHashMap<String, String> LAST_SAMPLE = new ConcurrentHashMap<>()
+// App ids whose child devices were synced since the last reboot or code push.
+@Field static final ConcurrentHashMap<String, Boolean> CHILDREN_SYNCED = new ConcurrentHashMap<>()
+// Start of the last scheduled poll, by app id. After a reboot a cron schedule runs a catch-up about
+// 10 s after its first run; a scheduled poll within MIN_POLL_GAP_MS of the last is skipped.
+@Field static final ConcurrentHashMap<String, Long> LAST_POLL = new ConcurrentHashMap<>()
+@Field static final long MIN_POLL_GAP_MS = 60_000L
+// The API's bearer token, by app id, reused until the API refuses it (see reloginIfRefused).
+// Memory only: a reboot or code push costs one login.
+@Field static final ConcurrentHashMap<String, String> API_TOKEN = new ConcurrentHashMap<>()
 // Consecutive failed polls before the outage is logged as an error and children go offline.
 @Field static final int POLL_FAILURES_BEFORE_ALARM = 3
 @Field static final long OUTAGE_REMINDER_MS = 3600000L
@@ -110,6 +123,8 @@ void updated() {
 // The poll is a cron schedule, which survives a reboot, so no systemStart handler is needed.
 void initialize() {
     checkVersion(false)
+    // A changed email or password takes effect on Done.
+    API_TOKEN.remove(app.id.toString())
     if (debugEnable || traceEnable) runIn(1800, turnOffDebugLogging)
     encryptPassword()
 
@@ -118,7 +133,7 @@ void initialize() {
         return
     }
 
-    pollSensors()
+    pollSensors(true)
 
     int rate = (pollRate ?: 5) as int
     Random rng = new Random()
@@ -144,7 +159,7 @@ void appButtonHandler(String buttonName) {
     switch (buttonName) {
         case "btnRediscover":
             logInfo "re-discovery requested"
-            pollSensors()
+            pollSensors(true)
             break
         case "btnRemoveOrphans":
             List<Map> orphans = state.orphanedDevices ?: []
@@ -198,8 +213,14 @@ private String apiPasswordValue() {
     }
 }
 
-// Logs in, then runs the request named by data.next with the fresh token.
+// Runs the request named by next with the token in memory, or logs in first when there is none.
 private void loginThen(String next, String failMsg, Map ctx = [:]) {
+    Map req = ctx + [next: next, failMsg: failMsg]
+    String token = API_TOKEN.get(app.id.toString())
+    if (token) {
+        runRequest(token, req + [cached: true])
+        return
+    }
     Map loginParams = [
         uri: "${VISIBLAIR_API}/auth/login",
         requestContentType: "application/json",
@@ -207,7 +228,29 @@ private void loginThen(String next, String failMsg, Map ctx = [:]) {
         body: JsonOutput.toJson([email: apiEmail, password: apiPasswordValue()]),
         timeout: HTTP_TIMEOUT
     ]
-    asynchttpPost("handleLoginResponse", loginParams, ctx + [next: next, failMsg: failMsg])
+    asynchttpPost("handleLoginResponse", loginParams, req)
+}
+
+private void runRequest(String token, Map req) {
+    switch (req.next) {
+        case "poll":        requestSensors(token, req); break
+        case "firmware":    requestFirmwareCommand(token, req); break
+        case "fetchConfig": requestSensorsForConfig(token, req); break
+        case "assign":      requestConfigUpdate(token, req.config as Map, req); break
+    }
+}
+
+// A reused token the API refused, or an empty sensor list on a reused token: drops the token
+// and sends the same request again after a fresh login, once. True when it did.
+private boolean reloginIfRefused(resp, Map data, boolean emptyAnswer = false) {
+    if (!data.cached) return false
+    int status = resp.getStatus()
+    if (!(status in [401, 403]) && !emptyAnswer) return false
+    API_TOKEN.remove(app.id.toString())
+    logNet "token refused (${emptyAnswer ? 'empty answer' : "HTTP ${status}"}); logging in again"
+    Map ctx = data.findAll { k, v -> !(k in ["cached", "next", "failMsg"]) }
+    loginThen(data.next as String, data.failMsg as String, ctx)
+    return true
 }
 
 void handleLoginResponse(resp, data) {
@@ -234,19 +277,28 @@ void handleLoginResponse(resp, data) {
         return
     }
     logNet "login successful"
-    switch (data.next) {
-        case "poll":        requestSensors(token); break
-        case "firmware":    requestFirmwareCommand(token, data.uuid as String, data.cmd as String); break
-        case "fetchConfig": requestSensorsForConfig(token, data.uuid as String, data.overrides as Map); break
-        case "assign":      requestConfigUpdate(token, data.uuid as String, data.config as Map, data.overrides as Map); break
-    }
+    API_TOKEN.put(app.id.toString(), token)
+    runRequest(token, data.findAll { k, v -> k != "cached" })
 }
 
 // --- Discovery & Polling ---
 
-void pollSensors() {
+// force: from initialize, a button or a child's refresh; sends every sensor's data even when the
+// sample is unchanged. The cron schedule calls it without arguments.
+void pollSensors(boolean force = false) {
     checkVersion()
     if (!apiEmail || !hasApiPassword()) return
+    String appKey = app.id.toString()
+    long t = now()
+    Long last = LAST_POLL.put(appKey, t)
+    if (!force && last != null && t - last < MIN_POLL_GAP_MS) {
+        logDebug "skipping a poll ${(t - last).intdiv(1000L)} s after the last one"
+        return
+    }
+    if (force) {
+        LAST_SAMPLE.keySet().findAll { String k -> k.startsWith(appKey + ":") }.each { LAST_SAMPLE.remove(it) }
+        CHILDREN_SYNCED.remove(appKey)
+    }
 
     loginThen("poll", "cannot poll sensors")
 }
@@ -261,11 +313,12 @@ private Map sensorsRequest(String token) {
     ]
 }
 
-private void requestSensors(String token) {
-    asynchttpGet("handlePollResponse", sensorsRequest(token))
+private void requestSensors(String token, Map req) {
+    asynchttpGet("handlePollResponse", sensorsRequest(token), req)
 }
 
 void handlePollResponse(resp, data) {
+    if (reloginIfRefused(resp, data)) return
     if (resp.hasError()) {
         pollFailed("sensors: ${resp.getErrorMessage()}")
         return
@@ -282,6 +335,7 @@ void handlePollResponse(resp, data) {
         pollFailed("sensors: ${e.message}")
         return
     }
+    if (!json && reloginIfRefused(resp, data, true)) return
     handlePollData(json)
 }
 
@@ -308,9 +362,15 @@ private void handlePollData(data) {
                 description: sensor.description
             ]
         }
-        state.discoveredSensors = discovered
-
-        syncChildDevices(discovered)
+        // Child data values and state change only when the sensor list or its configs do.
+        String appKey = app.id.toString()
+        boolean listChanged = discovered != (state.discoveredSensors ?: [])
+        boolean childMissing = discovered.any { Map d -> !getChildDevice("${DNI_PREFIX}${d.uuid}") }
+        if (listChanged || childMissing || !CHILDREN_SYNCED.containsKey(appKey)) {
+            if (listChanged) state.discoveredSensors = discovered
+            syncChildDevices(discovered)
+            CHILDREN_SYNCED.put(appKey, true)
+        }
         storeSensorConfigs(realSensors)
         dispatchSensorData(realSensors)
     } catch (Exception e) {
@@ -379,7 +439,7 @@ private void updateSensorHealth(List sensorList, String recovery = null) {
             child.setHealthStatus("offline", "last sample time unreadable")
         } else if (t - sampledAt > STALE_SAMPLE_PERIODS * period * 1000L) {
             child.setHealthStatus("offline", "no sample for ${formatDuration(t - sampledAt)}")
-        } else {
+        } else if (recovery || child.currentValue("healthStatus") != "online") {
             child.setHealthStatus("online", recovery ?: "reporting")
         }
     }
@@ -464,10 +524,16 @@ private void dispatchSensorData(List sensorList) {
         String uuid = sensorData.uuid as String
         String dni = "${DNI_PREFIX}${uuid}"
         ChildDeviceWrapper child = getChildDevice(dni)
-        if (child) {
-            logTrace "dispatching data to ${dni}"
-            child.updateSensorData(sensorData.findAll { k, v -> !SENSOR_SECRET_FIELDS.contains(k) })
+        if (!child) return
+        String key = "${app.id}:${uuid}".toString()
+        String ts = sensorData.lastSampleTimeStamp as String
+        if (ts && LAST_SAMPLE.get(key) == ts) {
+            logTrace "no new sample for ${dni} since ${ts}"
+            return
         }
+        logTrace "dispatching data to ${dni}"
+        child.updateSensorData(sensorData.findAll { k, v -> !SENSOR_SECRET_FIELDS.contains(k) })
+        if (ts) LAST_SAMPLE.put(key, ts)
     }
 }
 
@@ -505,7 +571,9 @@ void sendFirmwareCommand(String uuid, String command) {
     loginThen("firmware", "cannot send firmware command", [cmd: command, uuid: uuid])
 }
 
-private void requestFirmwareCommand(String token, String uuid, String command) {
+private void requestFirmwareCommand(String token, Map req) {
+    String uuid = req.uuid as String
+    String command = req.cmd as String
     Map requestParams = [
         uri: "${VISIBLAIR_API}/firmware/${command}",
         query: [uuid: uuid],
@@ -516,10 +584,11 @@ private void requestFirmwareCommand(String token, String uuid, String command) {
         timeout: HTTP_TIMEOUT
     ]
 
-    asynchttpPut("handleFirmwareResponse", requestParams, [cmd: command, uuid: uuid])
+    asynchttpPut("handleFirmwareResponse", requestParams, req)
 }
 
 void handleFirmwareResponse(resp, data) {
+    if (reloginIfRefused(resp, data)) return
     try {
         if (resp.hasError()) {
             logError "firmware command '${data.cmd}' failed: ${resp.getErrorMessage()}"
@@ -539,7 +608,7 @@ void handleFirmwareResponse(resp, data) {
 
 void refreshSensor(String dni) {
     logDebug "refresh requested by ${dni}, triggering bulk poll"
-    pollSensors()
+    pollSensors(true)
 }
 
 // --- Sensor Configuration ---
@@ -591,7 +660,7 @@ private void storeSensorConfigs(List sensorList) {
         }
         configs[uuid] = config
     }
-    state.sensorConfigs = configs
+    if (configs != state.sensorConfigs) state.sensorConfigs = configs
 }
 
 void updateSensorConfig(String uuid, Map overrides) {
@@ -618,11 +687,12 @@ private void fetchAndUpdateConfig(String uuid, Map overrides) {
     loginThen("fetchConfig", "cannot fetch config", [uuid: uuid, overrides: overrides])
 }
 
-private void requestSensorsForConfig(String token, String uuid, Map overrides) {
-    asynchttpGet("handleConfigFetchResponse", sensorsRequest(token), [token: token, uuid: uuid, overrides: overrides])
+private void requestSensorsForConfig(String token, Map req) {
+    asynchttpGet("handleConfigFetchResponse", sensorsRequest(token), req)
 }
 
 void handleConfigFetchResponse(resp, data) {
+    if (reloginIfRefused(resp, data)) return
     String uuid = data.uuid as String
     if (resp.hasError()) {
         logError "fetchAndUpdateConfig: ${resp.getErrorMessage()}"
@@ -644,7 +714,7 @@ void handleConfigFetchResponse(resp, data) {
         }
         configs[uuid] = config
         state.sensorConfigs = configs
-        requestConfigUpdate(data.token as String, uuid, config, overrides)
+        sendConfigUpdate(uuid, config, overrides)
     } catch (Exception e) {
         logError "fetchAndUpdateConfig: ${e.message}"
     }
@@ -654,7 +724,9 @@ private void sendConfigUpdate(String uuid, Map config, Map overrides) {
     loginThen("assign", "cannot update config", [uuid: uuid, config: config, overrides: overrides])
 }
 
-private void requestConfigUpdate(String token, String uuid, Map config, Map overrides) {
+private void requestConfigUpdate(String token, Map config, Map req) {
+    String uuid = req.uuid as String
+    Map overrides = req.overrides as Map
     Map<String, String> query = [uuid: uuid]
     (config + (SENSOR_SECRETS.get(sensorSecretKey(uuid)) ?: [:])).each { String key, value ->
         query[key] = (value instanceof Map || value instanceof List) ? JsonOutput.toJson(value) : (value?.toString() ?: "")
@@ -671,10 +743,12 @@ private void requestConfigUpdate(String token, String uuid, Map config, Map over
         timeout: HTTP_TIMEOUT
     ]
 
-    asynchttpPut("handleConfigResponse", requestParams, [uuid: uuid, overrides: overrides])
+    // The config is in the query already; the retry rebuilds it from the stored config.
+    asynchttpPut("handleConfigResponse", requestParams, req.findAll { k, v -> k != "config" } + [config: config])
 }
 
 void handleConfigResponse(resp, data) {
+    if (reloginIfRefused(resp, data)) return
     try {
         if (resp.hasError()) {
             logError "config update for ${data.uuid} failed: ${resp.getErrorMessage()}"
