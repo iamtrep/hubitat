@@ -91,6 +91,7 @@ void seasonHandler(evt) {
 }
 
 void notifyAlert(String text) {
+    checkVersion()
     notifyDevices?.each { it.deviceNotification(text) }
     speechDevices?.each { it.speak(text) }
     if (notifyDevices || speechDevices) logCmd "sent: ${text}"

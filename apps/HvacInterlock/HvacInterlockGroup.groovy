@@ -82,9 +82,9 @@ Map mainPage() {
 }
 
 String permitInstructions() {
-    String dev = esc(statusDevice()?.displayName ?: "${app.getLabel()} status")
+    String dev = esc(getChildDevice(dni())?.displayName ?: "${app.getLabel()} status")
     return "Set this once on each scheduler in the group.<br>" +
-           "<b>Thermostat Scheduler+ program:</b> add ${dev} to <i>Pause while any of these is off</i>, " +
+           "<b>HVAC Scheduler program:</b> add ${dev} to <i>Pause while any of these is off</i>, " +
            "<i>While paused</i> = Turn thermostats off, <i>When the pause ends</i> = Restore the thermostat mode and apply the schedule.<br>" +
            "<b>Built-in Thermostat Scheduler:</b> <i>Disable when ${dev} is off</i> and <i>Turn thermostats off when restricted</i>. " +
            "The built-in restores the mode when the restriction lifts but keeps the old setpoints until its next period."
@@ -100,7 +100,7 @@ String statusHtml() {
 
 // ── Lifecycle ─────────────────────────────────────────────────────────
 
-void installed() { checkVersion(false); initialize() }
+void installed() { checkVersion(false); state.knownThermostats = []; initialize() }
 
 void updated() { checkVersion(false); unsubscribe(); unschedule(); initialize() }
 
@@ -116,7 +116,13 @@ void initialize() {
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
     String s = parent?.currentSeason()
     if (s) state.season = s
-    evaluateGroup("initialize")
+    // A thermostat added to a direct group gets the group's mode on this save; the others
+    // keep a mode changed by hand. Before the first save that records the list (an install
+    // that predates it), nothing counts as added.
+    List<String> ids = styleOf() == 'direct' ? (thermostats ?: []).collect { it.id as String } : []
+    List<String> added = state.knownThermostats == null ? [] : addedIds((state.knownThermostats as List<String>), ids)
+    state.knownThermostats = ids
+    evaluateGroup("initialize", added)
 }
 
 void logsOff() {
@@ -183,8 +189,9 @@ void contactHandler(evt) {
         if (!since.containsKey(id)) since[id] = now()
         state.remove('allClosedSince')
     } else {
-        since.remove(id)
-        if (since.isEmpty()) state.allClosedSince = now()
+        // A repeated closed report must not restart the close delay.
+        boolean wasOpen = since.remove(id) != null
+        if (since.isEmpty() && (wasOpen || state.allClosedSince == null)) state.allClosedSince = now()
     }
     state.openSince = since
     logEvt "${evt.device.displayName} ${evt.value}"
@@ -203,7 +210,7 @@ void timerHandler() { checkVersion(); evaluateGroup("timer") }
 
 void startHandler(evt) { checkVersion(); rebuildOpenings(); evaluateGroup("restart") }
 
-void evaluateGroup(String why) {
+void evaluateGroup(String why, List<String> added = []) {
     String style = styleOf()
     String season = state.season as String
     String wanted = wantedFor(style, policyFrom(style, settings), season)
@@ -224,15 +231,20 @@ void evaluateGroup(String why) {
     Map eff = effective(wanted, raised, (settings.response ?: 'block') as String)
     statusDevice()?.updateStatus([switch: eff.state == 'off' ? 'off' : 'on', contact: raised ? 'open' : 'closed',
                                  blockReason: eff.blockReason, openContacts: open ?: 'none'])
-    if (style == 'direct' && (eff.state != state.effective || why == 'restart')) applyModes(eff.state as String)
+    if (style == 'direct') {
+        if (eff.state != state.effective || why == 'restart') applyModes(eff.state as String)
+        else if (added) applyModes(eff.state as String, added)
+    }
     state.effective = eff.state
     logDebug "${why}: season ${season}, wanted ${wanted}, effective ${eff.state}, alert ${raised}"
 }
 
-void applyModes(String target) {
-    List<Map> ts = (thermostats ?: []).collect { [id: it.id as String, mode: it.currentValue("thermostatMode") as String] }
+// only: limit the writes to these thermostat ids; null = every thermostat.
+void applyModes(String target, List<String> only = null) {
+    List devs = (thermostats ?: []).findAll { only == null || only.contains(it.id as String) }
+    List<Map> ts = devs.collect { [id: it.id as String, mode: it.currentValue("thermostatMode") as String] }
     List<String> ids = modeWrites(ts, target)
-    (thermostats ?: []).findAll { ids.contains(it.id as String) }.each { dev ->
+    devs.findAll { ids.contains(it.id as String) }.each { dev ->
         if (!supportsMode(dev.currentValue("supportedThermostatModes"), target)) {
             logWarn "${dev.displayName} does not support mode ${target}; left as it is"
             return
@@ -334,6 +346,9 @@ String clearText(String group) { return "${group}: alert cleared".toString() }
 List<String> modeWrites(List<Map> thermostats, String target) {
     return thermostats.findAll { it.mode != target }.collect { it.id as String }
 }
+
+@CompileStatic
+List<String> addedIds(List<String> before, List<String> now) { return now.findAll { !before.contains(it) } }
 
 // supportedThermostatModes is a JSON-like list string; missing or empty means unknown.
 @CompileStatic

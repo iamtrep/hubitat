@@ -57,21 +57,23 @@ Before the group has received a season, it changes nothing and logs a warning. A
 
 The status device's switch is on while the equipment may run. Set this once on each scheduler in the group; the group's page shows the exact device name:
 
-- **Thermostat Scheduler+ program:** add the status device to *Pause while any of these is off*, *While paused* = Turn thermostats off (its default is to leave them), *When the pause ends* = Restore the thermostat mode and apply the schedule.
+- **HVAC Scheduler program:** add the status device to *Pause while any of these is off*, *While paused* = Turn thermostats off (its default is to leave them), *When the pause ends* = Restore the thermostat mode and apply the schedule.
 - **Built-in Thermostat Scheduler:** *Disable when <status device> is off* and *Turn thermostats off when restricted*.
 
-Thermostat Scheduler+ is recommended. The built-in works, with limits:
+HVAC Scheduler is recommended. The built-in works, with limits:
 
-| | Thermostat Scheduler+ | Built-in Thermostat Scheduler |
+| | HVAC Scheduler | Built-in Thermostat Scheduler |
 |---|---|---|
 | When the group allows the equipment again | Restores the mode and applies the current setpoints | Restores the mode; the old setpoints stay until its next period |
 | Checking the pause took effect | Its device's `status` reads `restricted` | Nothing to read |
 
 HVAC Interlock never talks to the scheduler, so one group can gate a mix of both.
 
+Before removing a permit group, take its status device out of each scheduler's pause or restriction setting. Removing the group deletes the device, so nothing would write that switch again.
+
 ## Direct groups
 
-A direct group writes the thermostat mode when its effective state changes, and only then: a mode changed by hand stays until the group's state next changes. After a hub restart it corrects any thermostat whose mode differs from the group's state. It skips a thermostat whose supported modes do not include the target, with a warning. It never reacts to hub mode changes.
+A direct group writes the thermostat mode when its effective state changes, and only then: a mode changed by hand stays until the group's state next changes. A thermostat added to the group gets the group's mode when the group is saved. After a hub restart it corrects any thermostat whose mode differs from the group's state. It skips a thermostat whose supported modes do not include the target, with a warning. It never reacts to hub mode changes.
 
 ## The status device
 
