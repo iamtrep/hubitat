@@ -109,7 +109,7 @@ Map mainPage() {
                     href(name: "deleteFilter${i}", page: "deleteFilterPage",
                         title: "Delete ${filter.label ?: "Filter ${i + 1}"}",
                         description: "",
-                        params: [filterIndex: i])
+                        params: [filterId: filter.id])
                 }
             }
             if (filters.size() < MAX_FILTERS) {
@@ -172,18 +172,20 @@ Map bridgePage(Map params) {
                 href(name: "deleteBridge", page: "deleteBridgePage",
                     title: "Delete this bridge",
                     description: "Remove bridge and its device",
-                    params: [bridgeIndex: idx])
+                    params: [bridgeDni: br?.dni])
             }
         }
     }
 }
 
+// The page is rendered again on a reload, so the bridge is named by its DNI, not its place
+// in the list: a second render finds nothing to delete instead of deleting the next bridge.
 Map deleteBridgePage(Map params) {
-    int idx = params?.bridgeIndex != null ? params.bridgeIndex as int : (state.editingBridgeIndex != null ? state.editingBridgeIndex as int : -1)
     List<Map> bridges = state.bridges ?: []
-    String label = "Unknown"
+    int idx = bridges.findIndexOf { it.dni == params?.bridgeDni }
+    String label = null
 
-    if (idx >= 0 && idx < bridges.size()) {
+    if (idx >= 0) {
         Map br = bridges[idx]
         label = br.label ?: "Bridge ${idx}"
         try {
@@ -200,7 +202,7 @@ Map deleteBridgePage(Map params) {
 
     dynamicPage(name: "deleteBridgePage", title: "Bridge Deleted", install: false, uninstall: false, nextPage: "mainPage") {
         section {
-            paragraph "<b>${label}</b> has been deleted."
+            paragraph label ? "<b>${label}</b> has been deleted." : "This bridge was already deleted."
         }
     }
 }
@@ -315,18 +317,19 @@ Map filterPage(Map params) {
                 href(name: "deleteFilter", page: "deleteFilterPage",
                     title: "Delete this filter",
                     description: "Remove this filter permanently",
-                    params: [filterIndex: idx])
+                    params: [filterId: filters[idx]?.id])
             }
         }
     }
 }
 
+// Named by its id, not its place in the list, for the same reason as deleteBridgePage.
 Map deleteFilterPage(Map params) {
-    int idx = params?.filterIndex != null ? params.filterIndex as int : (state.editingFilterIndex != null ? state.editingFilterIndex as int : -1)
     List<Map> filters = state.filters ?: []
-    String label = "Unknown"
+    int idx = params?.filterId != null ? filters.findIndexOf { it.id?.toString() == params.filterId.toString() } : -1
+    String label = null
 
-    if (idx >= 0 && idx < filters.size()) {
+    if (idx >= 0) {
         label = filters[idx]?.label ?: "Filter ${idx + 1}"
         clearFilterRuntime(filters[idx])
         app.removeSetting("notifyDevices_${idx}")
@@ -354,7 +357,7 @@ Map deleteFilterPage(Map params) {
 
     dynamicPage(name: "deleteFilterPage", title: "Filter Deleted", install: false, uninstall: false, nextPage: "mainPage") {
         section {
-            paragraph "<b>${label}</b> has been deleted."
+            paragraph label ? "<b>${label}</b> has been deleted." : "This filter was already deleted."
         }
     }
 }
