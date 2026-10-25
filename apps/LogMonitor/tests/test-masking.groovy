@@ -95,7 +95,7 @@ t('maskUrl: file name in path not masked', { assert M.maskUrl('http://h/local/ba
     })
 }
 [
-    'build 2.5.3.107 installed',
+    'build 2.5.2.129 installed',
     'loopback 127.0.0.1 and docs 192.0.2.5',
     'at 14:03:22.123 the switch turned on',
     "already masked ${B}a7b8",

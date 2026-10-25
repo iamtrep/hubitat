@@ -1145,7 +1145,7 @@ static String maskHexId(String v) {
 }
 
 // Private: first and last octet. Public: first octet. Loopback, link-local, multicast,
-// documentation and reserved addresses, and firmware builds (2.5.3.107), stay as they are.
+// documentation and reserved addresses, and firmware builds (2.5.2.129), stay as they are.
 static String maskIpv4(String ip) {
     if (ip ==~ /2\.\d\.\d\.\d+/) return null
     List<Integer> o = ip.tokenize(".").collect { it as int }
