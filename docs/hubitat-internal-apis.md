@@ -367,7 +367,7 @@ Three traps:
 
 Re-measured on 2.5.2.135 against a custom app (throwaway probe): the rules above hold, and the filter takes the `access_token` *parameter*, so a form-encoded POST body field works like the query (the query's value wins when both are present), while a JSON body field does not count. An empty `?access_token=` falls through to the header. The 401's `error_description` is the `access_token` parameter as sent (empty when empty) and `null` when there was none, including for a wrong Bearer token. An app id that does not exist answers `404` `{"error":true,"type":"AppException","message":"Not Found"}` before any token check *(probed 2.5.2.135, throwaway app)*. Full routing and render rules: [`hubitat-platform-notes.md`](hubitat-platform-notes.md) ("App endpoints and child apps").
 
-Undocumented by Hubitat — nothing promises this across firmware versions. Code that relies on it should keep the query-param form as a fallback *(absent 2.5.2.135: the docs2 Maker API page mentions no `Authorization` header or Bearer token)*.
+The Maker API settings page shows the header form: each endpoint example has a `curl -H "Authorization: Bearer <token>"` line beside the `?access_token=` URL, for the local and the cloud URLs *(probed 2.5.3.107, Maker API settings page)*. The docs2 Maker API page mentions no `Authorization` header or Bearer token *(absent 2.5.2.135)*, and nothing documents it for other apps' endpoints, so code for those should keep the query-param form as a fallback *(inferred: from the above)*.
 
 ### Cloud relay response size limit
 
