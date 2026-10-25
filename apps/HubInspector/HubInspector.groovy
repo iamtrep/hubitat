@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "6.2.1"
+@Field static final String CODE_VERSION = "6.2.2"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -2457,14 +2457,17 @@ Map fetchSecurityInfo(Map prefetchedHubData = null) {
     // so the UI can render "Unknown" instead of a falsely reassuring "Off".
     Map limitedAccess = null
     if (laRaw != null) {
-        String laClean = laRaw.replaceAll(/<[^>]+>/, '').trim()
+        // entries come back separated by <br/>; stripping the tags without a separator glued them together
+        String laClean = laRaw.replaceAll(/(?i)<br\s*\/?>/, ',').replaceAll(/<[^>]+>/, '').trim()
         boolean limitedSet = laClean && !laClean.equalsIgnoreCase("no limit set") && !laClean.isEmpty()
         limitedAccess = [
             enabled: limitedSet,
             addresses: limitedSet ? laClean.split(/[,\s]+/).findAll { it } as List : []
         ]
     }
-    List allowedSubnets = subnets == null ? null : (subnets.trim().split(',').findAll { it } as List)
+    String subnetsClean = subnets?.trim()
+    List allowedSubnets = subnetsClean == null ? null :
+        (subnetsClean.equalsIgnoreCase("not set") ? [] : (subnetsClean.split(/\s*,\s*/).findAll { it } as List))
     Boolean cloudDisabled = hubData ? (hubData.disableCloudController == true) : null
     return [
         limitedAccess: limitedAccess,

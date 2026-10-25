@@ -148,7 +148,7 @@ input[type=number].cfg-n{width:64px;padding:4px 6px;border:1px solid var(--borde
 
 .ng{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px}
 .ni{padding:7px 10px;background:var(--alt);border-radius:4px}
-.ni .nl{font-size:11px;color:var(--muted)} .ni .nv{font-size:13px;font-weight:500}
+.ni .nl{font-size:11px;color:var(--muted)} .ni .nv{font-size:13px;font-weight:500;overflow-wrap:anywhere}
 
 .chart-wrap{overflow-x:auto;margin:8px 0}
 
@@ -213,7 +213,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "6.2.1";
+const CODE_VERSION = "6.2.2";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -1315,7 +1315,7 @@ function downloadRecording(buf, meta, filenameProtocol){
 }
 
 function mc(l,v,c){const s=c?' style="color:'+c+'"':'';return'<div class="m"><div class="m-l">'+h(l)+'</div><div class="m-v"'+s+'>'+(v??'N/A')+'</div></div>'}
-function ni(l,v,c){const s=c?' style="color:'+c+';font-weight:600"':'';return'<div class="ni"><div class="nl">'+h(l)+'</div><div class="nv"'+s+'>'+h(String(v??'N/A'))+'</div></div>'}
+function ni(l,v,c,wide){const s=c?' style="color:'+c+';font-weight:600"':'';return'<div class="ni"'+(wide?' style="grid-column:1/-1"':'')+'><div class="nl">'+h(l)+'</div><div class="nv"'+s+'>'+h(String(v??'N/A'))+'</div></div>'}
 // Module-level thresholds with hardcoded defaults — updated when settings load
 let TH={warnMemMb:100,critMemMb:75,warnCpuLoad:4,critCpuLoad:8,warnTempC:65,critTempC:80,chattyDeviceThreshold:10};
 
@@ -2860,14 +2860,15 @@ async function rNetwork(){const P='p-network';loading(P);try{
       if(la==null){
         o+=ni('Limited Access','Unknown (fetch failed)','var(--muted)');
       } else if(la.enabled){
-        o+=ni('Limited Access','Enabled ('+la.addresses.length+' address'+(la.addresses.length===1?'':'es')+')','var(--ok)');
-        if(la.addresses.length)o+=ni('Allowed IPs',la.addresses.join(', '));
+        o+=ni('Limited Access','Enabled ('+la.addresses.length+' entr'+(la.addresses.length===1?'y':'ies')+')','var(--ok)');
+        if(la.addresses.length)o+=ni('Allowed IPs / Subnets',la.addresses.join(', '),null,la.addresses.length>2);
       } else {
         o+=ni('Limited Access','Off \u2014 any LAN IP can reach the hub UI','var(--warn)');
       }
-      if(sec.allowedSubnets==null)o+=ni('Allowed Subnets','Unknown (fetch failed)','var(--muted)');
-      else if(sec.allowedSubnets.length)o+=ni('Allowed Subnets',sec.allowedSubnets.join(', '));
-      else o+=ni('Allowed Subnets','(none restricted)');
+      // allowSubnets adds non-private subnets; private-range clients are always accepted
+      if(sec.allowedSubnets==null)o+=ni('Extra Allowed Subnets','Unknown (fetch failed)','var(--muted)');
+      else if(sec.allowedSubnets.length)o+=ni('Extra Allowed Subnets',sec.allowedSubnets.join(', '),null,sec.allowedSubnets.length>2);
+      else o+=ni('Extra Allowed Subnets','None (private ranges always allowed)');
       if(sec.dnsFallback!=null)o+=ni('DNS Fallback',sec.dnsFallback?'Enabled':'Disabled');
       if(sec.cloudController)o+=ni('Hubitat Cloud',sec.cloudController==='enabled'?'Enabled':'Disabled (local-only)');
     }
@@ -3755,7 +3756,8 @@ function computeSnapshotDiff(older, newer){
     const nAddrs=(nSec.limitedAccess&&nSec.limitedAccess.addresses)||[];
     const setEq=(a,b)=>a.length===b.length&&a.every(x=>b.includes(x));
     if(!setEq(oAddrs,nAddrs))securityChanges.limitedAddresses={from:oAddrs,to:nAddrs};
-    const oSub=oSec.allowedSubnets||[];const nSub=nSec.allowedSubnets||[];
+    // snapshots taken before the fix stored the hub's "Not set" reply as a subnet
+    const subs=a=>(a||[]).filter(x=>!/^not set$/i.test(x));const oSub=subs(oSec.allowedSubnets);const nSub=subs(nSec.allowedSubnets);
     if(!setEq(oSub,nSub))securityChanges.allowedSubnets={from:oSub,to:nSub};
     if(oSec.dnsFallback!==nSec.dnsFallback)securityChanges.dnsFallback={from:oSec.dnsFallback,to:nSec.dnsFallback};
     if(oSec.cloudController!==nSec.cloudController&&(oSec.cloudController!=null||nSec.cloudController!=null))
@@ -3860,7 +3862,7 @@ function renderDiff(d,elId){
   if(secCh&&Object.keys(secCh).length){o+='<div style="margin:8px 0"><b>Security:</b></div>';
     if(secCh.limitedAccess)o+='<div class="diff-item diff-chg">Limited Access: '+(secCh.limitedAccess.from?'enabled':'off')+' → '+(secCh.limitedAccess.to?'enabled':'off')+'</div>';
     if(secCh.limitedAddresses)o+='<div class="diff-item diff-chg">Allowed IPs: ['+secCh.limitedAddresses.from.map(h).join(', ')+'] → ['+secCh.limitedAddresses.to.map(h).join(', ')+']</div>';
-    if(secCh.allowedSubnets)o+='<div class="diff-item diff-chg">Allowed Subnets: ['+secCh.allowedSubnets.from.map(h).join(', ')+'] → ['+secCh.allowedSubnets.to.map(h).join(', ')+']</div>';
+    if(secCh.allowedSubnets)o+='<div class="diff-item diff-chg">Extra Allowed Subnets: ['+secCh.allowedSubnets.from.map(h).join(', ')+'] → ['+secCh.allowedSubnets.to.map(h).join(', ')+']</div>';
     if(secCh.dnsFallback)o+='<div class="diff-item diff-chg">DNS Fallback: '+(secCh.dnsFallback.from?'on':'off')+' → '+(secCh.dnsFallback.to?'on':'off')+'</div>';
     if(secCh.cloudController)o+='<div class="diff-item diff-chg">Hubitat Cloud: '+h(secCh.cloudController.from||'?')+' → '+h(secCh.cloudController.to||'?')+'</div>';
   }

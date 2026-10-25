@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
 <!-- AUTO:hubinspector-version -->
-**Current version:** 6.2.1
+**Current version:** 6.2.2
 <!-- /AUTO -->
 
 ---
@@ -339,8 +339,8 @@ Strip at the very top with a badge for **Z-Wave, Zigbee, Matter, and Hub Mesh** 
 - IP address, connection type (DHCP/static), gateway, subnet, DNS
 - Ethernet / WiFi status; if WiFi is active, the WiFi network name
 - **NTP Server** — current time-source IP, or "(not configured)" when unset
-- **Limited Access** — green when IP allowlist is enabled (with the allowed IPs listed), orange-warn when off ("any LAN IP can reach the hub UI")
-- **Allowed Subnets** — comma-separated subnet allowlist, or "(none restricted)"
+- **Limited Access** — green when the hub UI is limited to an allowlist of IPs and subnets (with the entries listed), orange-warn when off ("any LAN IP can reach the hub UI")
+- **Extra Allowed Subnets** — non-private subnets the hub also accepts connections from, or "None (private ranges always allowed)"
 - **DNS Fallback** — Enabled / Disabled
 - **Hubitat Cloud** — Enabled, or "Disabled (local-only)" when the hub is configured for local-only operation
 
