@@ -108,7 +108,7 @@ La consommation est lue une fois par heure, à une minute entre :10 et :50 tiré
 
 Quand Hilo est injoignable, chacune des deux premières lectures échouées journalise un avertissement. La troisième journalise une erreur et marque l'appareil hors ligne, puis un rappel suit chaque heure tant que la panne dure. La première lecture réussie journalise le rétablissement et marque l'appareil en ligne. Quand Hilo répond avec `Retry-After`, la lecture s'arrête pendant ce délai, jusqu'à une heure.
 
-Après un redémarrage du hub, le flux en direct se connecte d'abord à un moment au hasard entre 1 et 3 minutes après le démarrage. Il est rouvert avec un nouveau jeton toutes les 50 minutes. Quand il tombe ou reste silencieux 5 minutes, il se reconnecte après un délai qui double de 5 s à 5 min. Après 3 reconnexions échouées de suite, l'appareil est marqué hors ligne jusqu'au retour de la puissance.
+Après un redémarrage du hub, le flux en direct se connecte de 2 à 3 minutes après le démarrage, dès que l'application a un nouveau jeton. L'application renouvelle le jeton toutes les 50 minutes et le flux est rouvert avec celui-ci. Quand il tombe ou reste silencieux 5 minutes, il se reconnecte après un délai qui double de 5 s à 5 min. Après 3 reconnexions échouées de suite, l'appareil est marqué hors ligne jusqu'au retour de la puissance.
 
 ## Fichiers d'historique
 

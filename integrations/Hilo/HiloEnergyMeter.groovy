@@ -10,7 +10,8 @@
  * once a minute.
  *
  * Hilo's stream goes silent near the access token's one-hour expiry without
- * closing, so the driver reopens it with a fresh token every STREAM_ROTATE_SECS.
+ * closing, so the parent pushes a fresh token every 50 min (streamToken) and the
+ * driver reopens the stream with it. The driver never calls the parent for a token.
  * Hilo sends a keepalive comment every 12 s; readTimeout ends a stream that
  * stops sending anything.
  */
@@ -49,7 +50,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 
 // Event descriptions and preference titles, in the language the parent app sets. Logs stay in
 // English and never come from here.
@@ -86,18 +87,12 @@ metadata {
 
 @Field static final String GRAPHQL_URL = "https://platform.hiloenergie.com/api/digital-twin/v3/graphql"
 @Field static final String SUBSCRIPTION = 'subscription onAnyDeviceUpdated($locationHiloId: String!) { onAnyDeviceUpdated(locationHiloId: $locationHiloId) { deviceType transmissionTime device { ... on BasicSmartMeter { power { value kind } } } } }'
-// Reopen before the stream goes silent, about 57 min after it opens (one sample).
-@Field static final int STREAM_ROTATE_SECS = 3000
 // Three missed keepalives (12 s apart) end the stream with an ERROR status.
 @Field static final int STREAM_READ_TIMEOUT = 40
 @Field static final int BACKOFF_MIN_SECS = 5
 @Field static final int BACKOFF_MAX_SECS = 300
 // Failed reconnects in a row before the device reports offline.
 @Field static final int STREAM_OFFLINE_AFTER = 3
-// After a boot, the first connect waits until a random point in the hub's first STARTUP_SPREAD_SECS
-// past STARTUP_MIN_SECS of uptime, away from the startup rush of other integrations.
-@Field static final int STARTUP_MIN_SECS = 60
-@Field static final int STARTUP_SPREAD_SECS = 120
 // No power update for this long while the stream should be open: reconnect.
 @Field static final long STALE_DATA_MS = 300_000L
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
@@ -107,6 +102,9 @@ metadata {
 @Field static final ConcurrentHashMap<String, Long> CLOSING = new ConcurrentHashMap<>()
 // Per device: time of the last stream data, kept off the database.
 @Field static final ConcurrentHashMap<String, Long> LAST_DATA = new ConcurrentHashMap<>()
+// Per device: the access token the manager last pushed. Empty after a boot or code push until the
+// manager pushes the next one.
+@Field static final ConcurrentHashMap<String, String> TOKENS = new ConcurrentHashMap<>()
 
 void installed() { logDebug "installed"; state.version = CODE_VERSION }
 
@@ -127,17 +125,12 @@ void initialize() {
     state.remove("reconnectDelay")
     state.remove("streamFailures")
     if (liveEnabled()) {
-        runIn(startDelay(), "connectStream")
+        // Counts from now, so checkStream() gives the first connect its full STALE_DATA_MS.
+        LAST_DATA.put(device.id.toString(), now())
+        // After a boot there is no token yet: the manager's push connects.
+        if (TOKENS.get(device.id.toString())) runIn(2, "connectStream")
         schedule("${new Random().nextInt(60)} */5 * ? * *", "checkStream")
     }
-}
-
-// Seconds before the first connect: 2, or past the startup window after a boot.
-private int startDelay() {
-    long up = location.hub.uptime as long
-    if (up >= STARTUP_MIN_SECS + STARTUP_SPREAD_SECS) return 2
-    long at = STARTUP_MIN_SECS + new Random().nextInt(STARTUP_SPREAD_SECS)
-    return Math.max(2L, at - up) as int
 }
 
 void deviceTypeUpdated() { logDebug "driver change detected" }
@@ -203,11 +196,17 @@ void updateHealth(String status, String reason = null, String reasonUi = null) {
     }
 }
 
-void startLiveStream() { if (liveEnabled()) runIn(2, "connectStream") }
+// From the manager, with a fresh access token: reopens the stream with it, in a run of its own
+// so the manager's call returns at once.
+void streamToken(String token) {
+    checkVersion()
+    TOKENS.put(device.id.toString(), token)
+    if (liveEnabled()) runIn(1, "connectStream")
+}
 
 void stopLiveStream() {
     unschedule("connectStream")
-    unschedule("rotateStream")
+    TOKENS.remove(device.id.toString())
     closeStream()
 }
 
@@ -217,10 +216,10 @@ void connectStream() {
     if (!liveEnabled()) return
     String hiloId = device.getDataValue("locationHiloId")
     if (!hiloId) { streamFailed("no Hilo location"); return }
-    // Without a valid token in memory, the manager refreshes it in its own run and calls
-    // startLiveStream() when it has one; checkStream() retries if it never does.
-    String token = parent?.cachedAccessToken()
-    if (!token) { logDebug "waiting for the manager to refresh the access token"; return }
+    // Never asks the manager (see streamToken); a token past its life fails the connect, and the
+    // backoff retries until the next push.
+    String token = TOKENS.get(device.id.toString())
+    if (!token) { logDebug "waiting for an access token from the manager"; return }
     closeStream()
     String url = GRAPHQL_URL + "?query=" + enc(SUBSCRIPTION) + "&variables=" + enc(JsonOutput.toJson([locationHiloId: hiloId]))
     logNet "connecting to Hilo"
@@ -229,13 +228,6 @@ void connectStream() {
         headers    : ["Authorization": "Bearer ${token}", "Accept": "text/event-stream"],
         readTimeout: STREAM_READ_TIMEOUT
     ])
-    runIn(STREAM_ROTATE_SECS, "rotateStream")
-}
-
-// Reopens the stream with a fresh token before Hilo lets it go silent.
-void rotateStream() {
-    logNet "reopening the stream with a fresh token"
-    connectStream()
 }
 
 private void closeStream() {
@@ -269,7 +261,6 @@ private boolean streamStale() { return now() - lastData() > STALE_DATA_MS }
 
 // Retries with a delay that doubles from BACKOFF_MIN_SECS to BACKOFF_MAX_SECS.
 private void streamFailed(String why) {
-    unschedule("rotateStream")
     int n = ((state.streamFailures ?: 0) as int) + 1
     int delay = (state.reconnectDelay ?: BACKOFF_MIN_SECS) as int
     state.streamFailures = n
