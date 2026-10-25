@@ -54,6 +54,9 @@ check('failure -> drop') { drv.socketDecision('failure: null') == 'drop' && drv.
 check('closed -> drop') { drv.socketDecision('status: closed') == 'drop' && drv.socketDecision('closed') == 'drop' }
 check('closing and null -> none') { drv.socketDecision('status: closing') == 'none' && drv.socketDecision(null) == 'none' && drv.socketDecision('  ') == 'none' }
 check('RECONNECT_S is 10') { drv.RECONNECT_S == 10 }
+check('reconnect delay doubles from 10 s to a 300 s cap') {
+    [0, 1, 2, 3, 4, 5, 6, 7, 50].collect { drv.reconnectDelay(it) } == [10, 10, 20, 40, 80, 160, 300, 300, 300]
+}
 
 check('the late report of our own close is ignored for 5 s; a real drop is not') {
     long t = 1_000_000L
