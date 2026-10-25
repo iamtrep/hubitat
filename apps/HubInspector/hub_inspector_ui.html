@@ -213,7 +213,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "6.2.2";
+const CODE_VERSION = "6.2.3";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -416,13 +416,15 @@ function h(s){const d=document.createElement('div');d.textContent=s??'';return d
 // Deterministic adjective-noun aliaser. Each distinct real name maps to a stable,
 // unique codename (e.g. "amber-otter"). Dependency-free so it's unit-testable via
 // extractFn. nm()=display wrapper; scrub()=rewrite names embedded in free text.
+// setSalt() mixes in the hub's random aliasSalt: without it the source alone maps a guessed
+// name to its alias, so common names could be read back from a post.
 function makeObf(){
   const ADJECTIVES=['amber','azure','brave','brisk','bronze','calm','clever','coral','crimson','dapper','eager','fierce','frosty','gentle','glossy','golden','grand','hardy','hidden','humble','icy','indigo','jolly','keen','lively','lucky','merry','misty','mossy','noble','olive','plucky','quiet','rapid','rosy','rustic','sandy','silent','silver','sleek','smooth','snowy','solid','spry','stormy','sturdy','sunny','swift','tame','tidy','vivid','warm','wild','witty','zesty'];
   const NOUNS=['acorn','badger','beacon','beetle','bramble','canyon','cedar','cliff','comet','cricket','dahlia','delta','ember','falcon','ferret','finch','garnet','geode','glade','harbor','heron','iris','jade','kestrel','lagoon','lichen','lotus','marble','meadow','mesa','moss','newt','onyx','opal','otter','pebble','plume','quartz','quill','raven','reef','river','sage','shoal','silt','slate','spark','spruce','sumac','thistle','tundra','vale','vine','weave','willow','yarrow'];
   const map=new Map(), used=new Set();
   let names=[];        // registered real names, sorted longest-first (then alpha) for scrub + deterministic priming
-  let enabled=false;
-  function hash(s){let hv=2166136261>>>0;for(let i=0;i<s.length;i++){hv^=s.charCodeAt(i);hv=Math.imul(hv,16777619);}return hv>>>0;}
+  let enabled=false, salt='';
+  function hash(s){if(salt)s=salt+'\u0000'+s;let hv=2166136261>>>0;for(let i=0;i<s.length;i++){hv^=s.charCodeAt(i);hv=Math.imul(hv,16777619);}return hv>>>0;}
   function register(list){
     let added=false;
     (list||[]).forEach(n=>{if(n!=null&&n!==''){const k=String(n);if(names.indexOf(k)<0){names.push(k);added=true;}}});
@@ -454,7 +456,9 @@ function makeObf(){
     return out;
   }
   function nm(s){return enabled?alias(s):s;}
-  return {alias,register,prime,scrub,nm,
+  // A new salt changes every alias: drop the assigned ones; registered names stay.
+  function setSalt(v){v=v==null?'':String(v);if(v===salt)return;salt=v;map.clear();used.clear();}
+  return {alias,register,prime,scrub,nm,setSalt,
     get enabled(){return enabled;},
     set enabled(v){enabled=!!v;}};
 }
@@ -1438,6 +1442,8 @@ function assembleForumData(r){
     appStats: {
       totalApps: as.totalApps, builtInApps: as.builtInApps, userApps: as.userApps,
       userAppsList: (app.userApps||[]).map(a=>({name:a.type, label:a.label, id:a.id})),
+      // labelled instances of any app (a rule's label, say), registered so alert text can be scrubbed
+      labels: (app.allApps||[]).filter(a=>a&&a.name&&a.name!==a.type).map(a=>a.name),
       builtInInstances: app.builtInInstances||{}
     },
     networkData: { network: net.network||{}, zwave: zw, zigbee: zb, hubMesh: net.hubMesh||null, matter: net.matter||null },
@@ -1448,19 +1454,31 @@ function assembleForumData(r){
     stats: perf.stats||null,
     radioStats: perf.radioStats||null,
     uptimeMin: net.uptimeSeconds!=null ? net.uptimeSeconds/60 : null,
-    obfuscate: set.obfuscateForumExport||false
+    // On unless the user turned it off; the dashboard toggle doesn't apply here.
+    obfuscate: set.forumObfuscate!==false,
+    aliasSalt: set.aliasSalt||''
   };
 }
+// Obf.enabled is the dashboard's setting; the export sets its own and restores the dashboard's after.
 function buildForumMarkdown(d){
+  const prev=Obf.enabled;
+  try{return forumMarkdownBody(d);}finally{Obf.enabled=prev;}
+}
+function forumMarkdownBody(d){
   const lines=[];
   const L=s=>lines.push(s);
   const obfuscate=d.obfuscate||false;
   Obf.enabled=obfuscate;
   if(obfuscate){
-    const reg=[];
-    ((d.deviceStats&&d.deviceStats.allDevices)||[]).forEach(x=>{if(x&&x.name)reg.push(x.name);});
-    ((d.deviceStats&&d.deviceStats.lowBatteryDevices)||[]).forEach(x=>{if(x&&x.name)reg.push(x.name);});
-    ((d.appStats&&d.appStats.userAppsList)||[]).forEach(x=>{if(x&&x.label)reg.push(x.label);});
+    Obf.setSalt(d.aliasSalt);
+    // Every name the export can print, so scrub() also catches them inside alert text.
+    const reg=[],add=(list,f)=>(list||[]).forEach(x=>{if(x&&x[f])reg.push(x[f]);});
+    const ds=d.deviceStats||{},as=d.appStats||{},st=d.stats||{},nd=d.networkData||{};
+    add(ds.allDevices,'name');add(ds.lowBatteryDevices,'name');add(as.userAppsList,'label');
+    (as.labels||[]).forEach(n=>reg.push(n));
+    add(st.deviceStats,'name');add(st.appStats,'name');
+    add(nd.hubMesh&&(nd.hubMesh.peers||nd.hubMesh.hubList),'name');
+    add(d.zwaveMesh&&d.zwaveMesh.nodes,'name');
     Obf.register(reg); Obf.prime();
   }
   const hubInfo=d.hubInfo||{};
@@ -1519,7 +1537,7 @@ function buildForumMarkdown(d){
   // Alerts
   if(alerts&&alerts.length){
     L('');L('### Alerts');
-    alerts.forEach(a=>L(`- **${a.severity}**: ${a.name}`));
+    alerts.forEach(a=>L(`- **${a.severity}**: ${Obf.scrub(a.name)}`));
   }else{
     L('');L('No active alerts.');
   }
@@ -1561,7 +1579,7 @@ function buildForumMarkdown(d){
   const userAppsList=appStats.userAppsList||[];
   if(userAppsList.length){
     const appCounts={};
-    userAppsList.forEach(a=>{const key=a.name||a.label||'Unknown';appCounts[key]=(appCounts[key]||0)+1;});
+    userAppsList.forEach(a=>{const key=a.name||Obf.nm(a.label)||'Unknown';appCounts[key]=(appCounts[key]||0)+1;});
     L('');L('**Installed User Apps:**');
     Object.keys(appCounts).sort().forEach(name=>{
       const count=appCounts[name];
@@ -1701,7 +1719,7 @@ function buildForumMarkdown(d){
         const ip=hub.ip||hub.ipAddress||'';
         const devs=hub.deviceCount!=null?hub.deviceCount:(hub.deviceIds?hub.deviceIds.length:0);
         const vars=hub.varCount!=null?hub.varCount:(hub.hubVarNames?hub.hubVarNames.length:0);
-        L(`| ${hub.name} | ${ip} | ${status} | ${devs} | ${vars} |`);
+        L(`| ${Obf.nm(hub.name)} | ${ip} | ${status} | ${devs} | ${vars} |`);
       });
     }
   }
@@ -1723,12 +1741,12 @@ function buildForumMarkdown(d){
   if(devRtStats.length){
     const topDevTypes=[...devRtStats].sort((a,b)=>Number(b.pctTotal||0)-Number(a.pctTotal||0)).slice(0,5);
     if(topDevTypes.some(dt=>Number(dt.pctTotal||0)!==0)){
-      L('');L('**Top Device Types by CPU:**');
+      L('');L('**Top Devices by CPU:**');
       L('| Device | % Total | Exec Count | Avg (ms) |');
       L('|---|---:|---:|---:|');
       topDevTypes.forEach(dt=>{
         const pct=Number(dt.pctTotal||0);
-        if(pct>0)L(`| ${dt.name} | ${pct.toFixed(3)}% | ${dt.count||0} | ${Number(dt.average||0).toFixed(1)} |`);
+        if(pct>0)L(`| ${Obf.nm(dt.name)} | ${pct.toFixed(3)}% | ${dt.count||0} | ${Number(dt.average||0).toFixed(1)} |`);
       });
     }
   }
@@ -1737,7 +1755,7 @@ function buildForumMarkdown(d){
   if(appRtStats.length){
     const topAppTypes=[...appRtStats].sort((a,b)=>Number(b.pctTotal||0)-Number(a.pctTotal||0)).slice(0,5);
     if(topAppTypes.some(at=>Number(at.pctTotal||0)!==0)){
-      L('');L('**Top App Types by CPU:**');
+      L('');L('**Top Apps by CPU:**');
       L('| App | % Total | Exec Count | Avg (ms) |');
       L('|---|---:|---:|---:|');
       topAppTypes.forEach(at=>{
@@ -1770,7 +1788,7 @@ function buildForumMarkdown(d){
 
   return lines.join('\n');
 }
-api('settings').then(s=>{if(s){Object.assign(TH,s);Obf.enabled=!!s.obfuscateForumExport;if(Obf.enabled)seedObfRegistry();}}).catch(()=>{});
+api('settings').then(s=>{if(s){Object.assign(TH,s);Obf.setSalt(s.aliasSalt);Obf.enabled=!!s.obfuscateForumExport;if(Obf.enabled)seedObfRegistry();}}).catch(()=>{});
 async function seedObfRegistry(){
   try{
     const [dv,ap]=await Promise.all([api('devices'),api('apps')]);
@@ -4008,7 +4026,9 @@ async function rConfig(){const P='p-config';loading(P);try{
 
   // Export
   o+='<div class="card"><div class="card-h">Privacy</div><div class="card-b"><div class="cfg-row">';
-  o+=`<label><input type="checkbox" id="cfg_obfuscate" ${s.obfuscateForumExport?'checked':''}> Obfuscate device/app names throughout the UI and forum export (uses stable random aliases)</label>`;
+  o+=`<label><input type="checkbox" id="cfg_obfuscate" ${s.obfuscateForumExport?'checked':''}> Obfuscate device/app names in the dashboard (uses stable random aliases)</label>`;
+  o+='</div><div class="cfg-row">';
+  o+=`<label><input type="checkbox" id="cfg_forumObfuscate" ${s.forumObfuscate!==false?'checked':''}> Obfuscate device/app names in the forum export</label>`;
   o+='</div></div></div>';
 
   // Alert Thresholds
@@ -4087,6 +4107,7 @@ async function rConfig(){const P='p-config';loading(P);try{
   };
 
   document.getElementById('cfg_debugLogging').onchange=async function(){await saveSetting({debugLogging:this.checked});flash('cfg_debugStatus','Saved ✓')};
+  document.getElementById('cfg_forumObfuscate').onchange=async function(){await saveSetting({forumObfuscate:this.checked});drop('settings')};
   document.getElementById('cfg_obfuscate').onchange=async function(){
     const on=this.checked;
     await saveSetting({obfuscateForumExport:on});drop('settings');

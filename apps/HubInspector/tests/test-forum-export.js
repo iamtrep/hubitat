@@ -129,10 +129,11 @@ t('zigbeeMesh: neighbors remapped to the neighborDetails array (builder expects 
   assert.strictEqual(d.zigbeeMesh.neighbors[0].shortId, 'A1');
   assert.strictEqual(d.zigbeeMesh.avgLqi, 200);
 });
-t('radioStats passthrough + uptimeMin derived + obfuscate from settings', () => {
+t('radioStats passthrough + uptimeMin derived + names aliased unless the forum option is off', () => {
   assert.strictEqual(d.radioStats.zwave[0].msgCount, 100);
   assert.strictEqual(d.uptimeMin, 1500);   // 90000s / 60
   assert.strictEqual(d.obfuscate, true);
+  assert.strictEqual(assembleForumData(Object.assign({}, r, { settings: { forumObfuscate: false } })).obfuscate, false);
 });
 t('Matter / Hub Mesh / Performance sections carried through for the builder', () => {
   // Matter is a raw passthrough; builder reads networkData.matter.{installed,networkState,fabricId}.
@@ -151,7 +152,7 @@ t('degrades safely on empty input (no throw)', () => {
   const e = assembleForumData({});
   assert.deepStrictEqual(e.hubInfo, {});
   assert.strictEqual(e.zwaveMesh, null);
-  assert.strictEqual(e.obfuscate, false);
+  assert.strictEqual(e.obfuscate, true);   // no settings: aliased
   assert.deepStrictEqual(e.ghostNodes, []);
 });
 

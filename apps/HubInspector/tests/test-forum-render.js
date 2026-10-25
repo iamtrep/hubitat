@@ -21,7 +21,7 @@ function extractFn(name) {
   for (; i < src.length; i++) { if (src[i] === '{') d++; else if (src[i] === '}') { d--; if (d === 0) { i++; break; } } }
   return src.slice(s, i);
 }
-const HELPERS = ['makeObf', 'assembleForumData', 'buildForumMarkdown', 'composeAlerts', 'flattenRadioDevices',
+const HELPERS = ['makeObf', 'assembleForumData', 'buildForumMarkdown', 'forumMarkdownBody', 'composeAlerts', 'flattenRadioDevices',
   'fmem', 'ftemp', 'tScale', 'tSym', 'c2u', 'splitGhostNodes', 'zbWeakNeighbors', 'zbStaleNeighbors', 'zbMeshDetails', 'zwMeshStats', 'noTags', 'isNewer'];
 const CD = (src.match(/const CD=\{[^;]*\};/) || [])[0];
 assert(CD, 'CD const not found');
@@ -93,7 +93,7 @@ const r = {
     },
     radioStats: { zwave: [], zigbee: [{ name: 'Kitchen Plug', id: 6, msgCount: 15801 }] }
   },
-  settings: { obfuscateForumExport: false }
+  settings: { forumObfuscate: false }
 };
 
 const md = buildForumMarkdown(assembleForumData(r));
@@ -146,9 +146,9 @@ has('| Hub B | 192.0.2.30 | Online | 5 | 1 |', 'hub mesh peer row');
 // Performance
 has('### Performance');
 has('**Device Runtime:** 4h 40m 56s (5.1% busy)');
-has('**Top Device Types by CPU:**');
+has('**Top Devices by CPU:**');
 has('Ping Ecobee via LAN');
-has('**Top App Types by CPU:**');
+has('**Top Apps by CPU:**');
 has('**Top Talkers:**');
 has('Kitchen Plug', 'top talker');
 has('15801', 'top talker total msgs');
@@ -186,7 +186,7 @@ const r2 = {
   },
   performance: { stats: { uptime: '14d 8h 7m 8s', totalDevicesRuntime: '8h 46m 59s', devicePct: '2.6%', deviceStats: [], appStats: [] },
                  radioStats: { zwave: [], zigbee: [] } },
-  settings: { obfuscateForumExport: false }
+  settings: { forumObfuscate: false }
 };
 const md2 = buildForumMarkdown(assembleForumData(r2));
 function has2(needle, label) {
@@ -210,18 +210,55 @@ has2('**Fabric:** 9F93BB6F02A43E79', 'Matter still renders');
 // --- obfuscation: names become aliases; prose shows alias ALONE (no appended type) ---
 {
   const rObf = JSON.parse(JSON.stringify(r));
-  rObf.settings = { obfuscateForumExport: true };
+  rObf.settings = {};   // aliasing is the export's default
   const mdObf = buildForumMarkdown(assembleForumData(rObf));
   assert.ok(!/Fuite Piano/.test(mdObf), 'real device name leaked into obfuscated export');
   assert.ok(!/Apple TV Salon/.test(mdObf), 'real device name leaked into obfuscated export');
   // Old behavior substituted the driver TYPE for the name in prose; the agreed design
   // aliases the name and shows the alias ALONE — so the type must NOT appear in prose.
   assert.ok(!/Water Sensor/.test(mdObf), 'low-battery prose still shows the driver type (must be alias alone)');
-  // buildForumMarkdown left Obf enabled + the name registered/primed, so this is the exact alias it emitted:
-  const fpAlias = Obf.nm('Fuite Piano');
+  // buildForumMarkdown registered + primed the name, so this is the exact alias it emitted:
+  const fpAlias = Obf.alias('Fuite Piano');
   assert.ok(/^[a-z]+-[a-z]+$/.test(fpAlias), 'unexpected alias format: ' + fpAlias);
   assert.ok(mdObf.includes(fpAlias), 'expected alias "' + fpAlias + '" not found in obfuscated export');
   console.log('  ok   obfuscated export aliases names (alias-alone prose, no types)');
+  assert.strictEqual(Obf.enabled, false, 'export left the dashboard aliasing switched on');
+  console.log('  ok   export restores the dashboard aliasing setting');
+}
+
+// --- obfuscation covers every printed name: each user-chosen name carries a LEAK_ marker ---
+{
+  const rl = {
+    dashboard: { appVersion: '5.58.0', hub: { name: 'LEAK_hubName', hardware: 'C-8', firmware: '2.5.3' } },
+    devices: { summary: { totalDevices: 3, activeDevices: 1, inactiveDevices: 1 }, byConnectionType: { zwave: 2 }, byIntegration: { 'Z-Wave': 2 },
+      lowBatteryDevices: [{ id: 1, name: 'LEAK_lowBattery', battery: 5 }],
+      deviceRows: [{ id: 2, name: 'LEAK_inactiveDevice', status: 'Inactive' }, { id: 1, name: 'LEAK_lowBattery', status: 'Active' }] },
+    apps: { summary: { totalApps: 3, builtInApps: 1, userApps: 2 },
+      userApps: [{ id: 10, label: 'LEAK_appLabel', type: 'Some App' }, { id: 11, label: 'LEAK_appLabelNoType' }],
+      allApps: [{ id: 12, name: 'LEAK_ruleLabel', type: 'Rule-5.1' }], builtInInstances: { 'Rule-5.1': 1 } },
+    network: { uptimeSeconds: 6000, network: { hasEthernet: true, lanAddr: '192.0.2.1' },
+      zwave: { enabled: true, healthy: true, nodeCount: 1,
+        mesh: { nodes: [{ nodeId: 5, name: 'LEAK_zwNode', security: 'S0', zwaveType: 'SWITCH', per: 5, state: 'OK', neighbors: 0, msgCount: 9000, route: '01 -> 05 100kbps' }] },
+        ghostNodes: [{ id: 9, name: 'LEAK_ghost', kind: 'ghost' }] },
+      zigbee: { enabled: true, healthy: true, channel: 20, deviceCount: 1,
+        mesh: { neighborList: [{ shortId: 'AB12', name: 'LEAK_zbNeighbor', lqi: 50, age: 9 }], routeList: [] }, devicesSlim: [] },
+      hubMesh: { enabled: true, peers: [{ name: 'LEAK_meshPeerHub', ip: '192.0.2.2', deviceCount: 1, varCount: 0 }] }, matter: null },
+    health: { alertSignals: { platformAlerts: [], spammyDevicesMessage: 'LEAK_inactiveDevice is spammy',
+      hubMessages: ['Device LEAK_inactiveDevice has not reported', 'Rule LEAK_ruleLabel is slow', 'App LEAK_runtimeApp, LEAK_runtimeDevice and LEAK_meshPeerHub'] } },
+    performance: { stats: { uptime: '1h', totalDevicesRuntime: '1s', totalAppsRuntime: '1s',
+        deviceStats: [{ id: 1, name: 'LEAK_runtimeDevice', pctTotal: 5, count: 3, average: 2 }],
+        appStats: [{ id: 10, name: 'LEAK_runtimeApp', pctTotal: 5, count: 3, average: 2 }] },
+      radioStats: { zwave: [{ id: 1, name: 'LEAK_talker', msgCount: 9000 }], zigbee: [] } },
+    settings: {}
+  };
+  const mdl = buildForumMarkdown(assembleForumData(rl));
+  const leaks = [...new Set(mdl.match(/LEAK_\w+/g) || [])];
+  assert.deepStrictEqual(leaks, [], 'names leaked into the default export: ' + leaks.join(', '));
+  // The markers' sections all rendered, so their absence means they were aliased.
+  ['Top Devices by CPU', 'Top Apps by CPU', '### Hub Mesh', 'Top Talkers', 'Low Battery', 'Problem Nodes'].forEach(s => assert.ok(mdl.includes(s), 'section missing: ' + s));
+  const real = buildForumMarkdown(assembleForumData(Object.assign({}, rl, { settings: { forumObfuscate: false } })));
+  assert.ok(real.includes('LEAK_runtimeDevice') && real.includes('LEAK_meshPeerHub'), 'real-names export lost the names');
+  console.log('  ok   default export aliases every printed name; real names only on request');
 }
 
 console.log(`\n${pass}/${pass + fail} passed${fail ? `, ${fail} failed` : ''}`);

@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
 <!-- AUTO:hubinspector-version -->
-**Current version:** 6.2.2
+**Current version:** 6.2.3
 <!-- /AUTO -->
 
 ---
@@ -136,7 +136,7 @@ Post in the [Hub Inspector forum thread](https://community.hubitat.com/t/beta-hu
 3. What you did, what you expected, and what happened. A screenshot helps.
 4. Any Hub Inspector errors from **Logs**.
 
-The **Copy for Forum** button on the Dashboard copies a summary of your hub that you can paste into your post. To hide device and app names, turn on **Obfuscate device/app names** in the Settings tab first.
+The **Copy for Forum** button on the Dashboard copies a summary of your hub that you can paste into your post. Device, app and hub names are replaced with aliases; to post real names, turn off **Obfuscate device/app names in the forum export** in the Settings tab.
 
 For Z-Wave problems, also open `http://<hub-ip>/hub/zwaveDetails/json` in a browser, save the page, and send it by private message. It lists your devices, so don't post it publicly.
 
@@ -556,7 +556,7 @@ The scan crawls every device via `/device/fullJson/{id}` — one call per device
 
 ## Settings Tab
 
-Most settings are accessible from the Hubitat admin UI under **Apps → Hub Inspector → Settings**. Three settings are available only through the dashboard's Settings tab and are not shown in the Hubitat admin UI: **Auto-refresh interval** (Live Data section), **Obfuscate device/app names** (Privacy section), and **Clear Enrichment Cache** (Maintenance section).
+Most settings are accessible from the Hubitat admin UI under **Apps → Hub Inspector → Settings**. Four settings are available only through the dashboard's Settings tab and are not shown in the Hubitat admin UI: **Auto-refresh interval** (Live Data section), **Obfuscate device/app names in the dashboard** and **Obfuscate device/app names in the forum export** (Privacy section), and **Clear Enrichment Cache** (Maintenance section).
 
 ### Config Snapshot Scheduling
 - Enable automatic snapshots: on/off
@@ -603,7 +603,8 @@ Changes take effect immediately in the dashboard without a page reload.
 Debug and trace logging switch off after 30 minutes.
 
 ### Privacy
-- **Obfuscate device/app names** — Replaces every device, app and file name, throughout the dashboard and in the forum export, with a stable adjective-noun alias (for example `amber-otter`). The same name always gets the same alias, so a screenshot and a forum post still line up. The CSV export keeps real names, since it is for local use.
+- **Obfuscate device/app names in the dashboard** — Off by default. Replaces every device, app and file name throughout the dashboard with a stable adjective-noun alias (for example `amber-otter`). The same name always gets the same alias on a given hub, so a screenshot and a forum post still line up. Aliases are mixed with a random value generated on each install, so they can't be worked out from guessed names. The CSV export keeps real names, since it is for local use.
+- **Obfuscate device/app names in the forum export** — On by default. Replaces device, app and hub names in the forum export with the same aliases, including names inside alert text.
 
 ### Maintenance
 - **Clear Enrichment Cache** — Clears the cached per-device classification data (controller type, parent app). The next analysis re-fetches this from the hub. Use this if device classifications appear stale after adding or re-pairing devices.
@@ -625,9 +626,9 @@ The forum export generates a concise Markdown-formatted summary suitable for pas
 - Z-Wave: health, ghost nodes, problem nodes, S0 flag, mesh quality stats
 - Zigbee: health, channel, LQI stats, weak/stale neighbors
 - Hub Mesh and Matter status
-- Performance: device and app runtime, top device and app types by CPU, top talkers
+- Performance: device and app runtime, top devices and apps by CPU, top talkers
 
-**Obfuscation:** Enable "Obfuscate device/app names" in Settings to replace names with stable aliases in the forum export and across the dashboard, so you can share diagnostics or screenshots publicly without revealing device names or room labels.
+**Obfuscation:** The forum export replaces device, app and hub names with stable aliases unless "Obfuscate device/app names in the forum export" is turned off. Enable "Obfuscate device/app names in the dashboard" in Settings to use the same aliases across the dashboard, for screenshots.
 
 ---
 

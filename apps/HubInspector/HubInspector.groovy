@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "6.2.2"
+@Field static final String CODE_VERSION = "6.2.3"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -1204,10 +1204,21 @@ Map apiGetSettings() {
         critTempC:             critTempCValue(),
         temperatureScale:      getTemperatureScale(),
         debugLogging:            settings.debugLogging ?: false,
+        // obfuscateForumExport is the dashboard toggle (name kept for existing installs);
+        // forumObfuscate is the forum export's, on until the user turns it off.
         obfuscateForumExport:    settings.obfuscateForumExport ?: false,
+        forumObfuscate:          settings.forumObfuscate != false,
+        aliasSalt:               aliasSalt(),
         liveRefreshSec:          (settings.liveRefreshSec ?: 30) as int,
         cacheSize:               controllerTypeCache().size()
     ])
+}
+
+// Random per-install salt for the name aliases, so an alias can't be matched against aliases
+// precomputed from guessed names. Not a credential: it only hides names. Never log or export it.
+String aliasSalt() {
+    if (!state.aliasSalt) state.aliasSalt = UUID.randomUUID().toString()
+    return state.aliasSalt
 }
 
 Map apiUpdateSettings() {
@@ -1219,7 +1230,7 @@ Map apiUpdateSettings() {
     }
     if (!body) return jsonResponse([success: false, error: "Empty or invalid body"])
 
-    Set boolKeys    = ["autoSnapshot", "autoCheckpoint", "debugLogging", "obfuscateForumExport"] as Set
+    Set boolKeys    = ["autoSnapshot", "autoCheckpoint", "debugLogging", "obfuscateForumExport", "forumObfuscate"] as Set
     Set numberKeys  = ["maxSnapshots", "maxCheckpoints", "inactivityDays", "lowBatteryThreshold",
                         "chattyDeviceThreshold", "warnMemMb", "critMemMb",
                         "snapshotInterval", "liveRefreshSec"] as Set

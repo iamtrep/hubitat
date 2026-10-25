@@ -93,5 +93,31 @@ t('prime: collision resolution is registration-order independent', () => {
   names.forEach(n => assert.strictEqual(a.nm(n), b.nm(n), 'alias differs for ' + n));
 });
 
+t('salt: aliases differ per salt, stay stable for one salt', () => {
+  const a = makeObf(); a.setSalt('salt-one');
+  const b = makeObf(); b.setSalt('salt-one');
+  const c = makeObf(); c.setSalt('salt-two');
+  const names = ['Front Door', 'Kitchen Light', 'Garage Door', 'Basement Motion'];
+  assert.deepStrictEqual(names.map(a.alias), names.map(b.alias));
+  assert.notDeepStrictEqual(names.map(a.alias), names.map(c.alias));
+});
+t('salt: a dictionary built without the salt does not read names back', () => {
+  const rooms = ['Front', 'Back', 'Kitchen', 'Garage', 'Basement', 'Living Room', 'Bedroom', 'Office', 'Bathroom', 'Hallway', 'Porch', 'Patio'];
+  const things = ['Door', 'Light', 'Motion', 'Switch', 'Lock', 'Sensor', 'Lamp', 'Fan', 'Plug', 'Window'];
+  const dict = []; rooms.forEach(r => things.forEach(x => dict.push(r + ' ' + x)));
+  const victim = makeObf(); victim.setSalt('3f6c1d2e-8a41-4b7e-9c55-0d2f7a1b9e60');
+  const atk = makeObf(); const rev = {}; dict.forEach(w => { rev[atk.alias(w)] = w; });
+  const hits = ['Front Door', 'Kitchen Light', 'Garage Door', 'Basement Motion'].filter(n => rev[victim.alias(n)] === n);
+  assert.deepStrictEqual(hits, []);
+});
+t('salt: changing it reassigns aliases; registered names survive for scrub', () => {
+  const o = makeObf(); o.enabled = true; o.register(['Front Door']); o.prime();
+  const before = o.nm('Front Door');
+  o.setSalt('new-salt');
+  const after = o.nm('Front Door');
+  assert.notStrictEqual(before, after);
+  assert.strictEqual(o.scrub('Front Door is open'), after + ' is open');
+});
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
