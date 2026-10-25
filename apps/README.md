@@ -39,7 +39,7 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 | [sensors/](./sensors/) |  |
 | [SwitchedHeaterThermostat/](./SwitchedHeaterThermostat/) | Heater switches driven by a Virtual Thermostat and temperature sensors, with alerts |
 | [tests/](./tests/) |  |
-| [ThermostatSchedulerPlus/](./ThermostatSchedulerPlus/) | Thermostat schedules with profiles, holds and an API |
+| [HvacScheduler/](./HvacScheduler/) | Thermostat schedules with profiles, holds and an API |
 | [utilities/](./utilities/) |  |
 | [WellMonitor/](./WellMonitor/) | Monitors well pump cycles, downstream consumption, tank usage, and emergency shutoff |
 | [ZigbeeWorkbench/](./ZigbeeWorkbench/) | Inspect and change any Zigbee device without changing its driver: ZDO tables and descriptors, attributes, reporting, commands, binding |

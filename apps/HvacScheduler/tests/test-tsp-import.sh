@@ -4,7 +4,7 @@
 # TEST-LIVE: needs a reachable hub
 
 #
-# Thermostat Scheduler+ importer test (Mode 2): POST /import builds a paused
+# HVAC Scheduler importer test (Mode 2): POST /import builds a paused
 # program from a built-in Thermostat Scheduler.
 # Reference (set up by hand once, shared with test-tsp-parity.sh): a built-in
 # "Thermostat Scheduler 2.0" instance labelled "TEST TS EcoMode+Away" with one
@@ -35,7 +35,7 @@ python3 - "$HUB_NAME" "$CONFIG_FILE" <<'PYTHON_SCRIPT'
 import json, re, sys, time, urllib.request, urllib.error, urllib.parse, http.cookiejar
 
 hub_name_arg, config_file = sys.argv[1], sys.argv[2]
-PARENT_TYPE = "Thermostat Scheduler+"
+PARENT_TYPE = "HVAC Scheduler"
 REF_LABEL = "TEST TS EcoMode+Away"
 IMPORT_LABEL = "test-tsp-import"
 BUILTIN_TYPE = "Thermostat Scheduler 2.0"

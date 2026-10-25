@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: MIT
 
 /*
- Thermostat Scheduler+
+ HVAC Scheduler
 
- Parent of Thermostat Scheduler+ programs. Lists them, creates them, imports built-in
+ Parent of HVAC Scheduler programs. Lists them, creates them, imports built-in
  Thermostat Schedulers, and serves the read, command and configuration API (OAuth,
  local by default).
 */
@@ -13,11 +13,11 @@ import com.hubitat.app.InstalledAppWrapper
 import groovy.transform.Field
 
 @Field static final String CODE_VERSION = "0.3.1"
-@Field static final String CHILD_NAME = "Thermostat Scheduler+ Program"
+@Field static final String CHILD_NAME = "HVAC Scheduler Program"
 @Field static final String BUILTIN_TYPE = "Thermostat Scheduler 2.0"
 
 definition(
-    name: "Thermostat Scheduler+",
+    name: "HVAC Scheduler",
     namespace: "iamtrep",
     author: "pj",
     description: "Thermostat schedules with profiles, holds and an API",
@@ -26,8 +26,8 @@ definition(
     singleInstance: true,
     installOnOpen: true,
     oauth: true,
-    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/apps/ThermostatSchedulerPlus/ThermostatSchedulerPlus.groovy",
-    documentationLink: "https://github.com/iamtrep/hubitat/tree/main/apps/ThermostatSchedulerPlus",
+    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/apps/HvacScheduler/HvacScheduler.groovy",
+    documentationLink: "https://github.com/iamtrep/hubitat/tree/main/apps/HvacScheduler",
     iconUrl: "", iconX2Url: ""
 )
 

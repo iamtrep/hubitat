@@ -1,13 +1,13 @@
 // Copyright (c) 2026 PJ
 // SPDX-License-Identifier: MIT
 //
-// Core unit tests for Thermostat Scheduler+. Parses the block between the
+// Core unit tests for HVAC Scheduler. Parses the block between the
 // "Core (pure)" and "End core" markers of the shipped program file and runs it,
 // so the tests bind to shipped code. Run under the pinned Groovy 2.4.21 jar:
 //   java -cp groovy-all-2.4.21.jar groovy.ui.GroovyMain <this file>
 
 File here = new File(getClass().protectionDomain.codeSource.location.toURI()).parentFile
-String src = new File(here.parentFile, 'ThermostatSchedulerPlusProgram.groovy').text
+String src = new File(here.parentFile, 'HvacSchedulerProgram.groovy').text
 int a = src.indexOf('// ── Core (pure)'), b = src.indexOf('// ── End core')
 if (a < 0 || b < a) { println '[FAIL] core markers not found'; System.exit(2) }
 core = new GroovyShell().parse('import groovy.transform.CompileStatic; ' + src.substring(a, b))   // the core's @CompileStatic needs the file's import; same line keeps line numbers

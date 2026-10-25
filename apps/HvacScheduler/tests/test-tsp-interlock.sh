@@ -4,7 +4,7 @@
 # TEST-LIVE: needs a reachable hub
 
 #
-# Thermostat Scheduler+ with HVAC Interlock and hub variables (Mode 1).
+# HVAC Scheduler with HVAC Interlock and hub variables (Mode 1).
 # Cases: a profile setpoint from a hub variable follows the variable; eco on
 # and off through program device commands; an HVAC Interlock permit group
 # pausing the program through its status switch (thermostat off, then mode
@@ -44,7 +44,7 @@ python3 - "$HUB_NAME" "$CONFIG_FILE" <<'PYTHON_SCRIPT'
 import json, re, sys, time, urllib.request, urllib.error, urllib.parse, http.cookiejar
 
 hub_name_arg, config_file = sys.argv[1], sys.argv[2]
-PARENT_TYPE = "Thermostat Scheduler+"
+PARENT_TYPE = "HVAC Scheduler"
 GROUP_TYPE = "HVAC Interlock Group"
 GROUP_LABEL = "test-ilk-tsp"
 MAKER_LABEL = "test-tsp-maker"
@@ -149,7 +149,7 @@ maker_id = makers[0]["id"]
 maker_token = token_of(maker_id)
 api_token = token_of(parent_id, "/apiPage")
 if not maker_token or not api_token:
-    die("Could not find the Maker API or Thermostat Scheduler+ access token (OAuth enabled?)")
+    die("Could not find the Maker API or HVAC Scheduler access token (OAuth enabled?)")
 
 def http_json(method, url, token, body=None):
     h = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -327,7 +327,7 @@ try:
     opt_page = page_of(prog_id, "pauseWhenOff")
     save_settings(prog_id, opt_page, {"pauseWhenOff": [status_id], "pauseWhenOn": [peak_id]})
     devs = [d["data"] for d in fetch("/hub2/devicesList")["devices"]]
-    pdev = [str(d["id"]) for d in devs if str(d.get("name", "")).startswith(PROG_LABEL) and d.get("type") == "Thermostat Scheduler+ Program Device"]
+    pdev = [str(d["id"]) for d in devs if str(d.get("name", "")).startswith(PROG_LABEL) and d.get("type") == "HVAC Scheduler Program Device"]
     if len(pdev) != 1:
         die(f"Expected one program device for {PROG_LABEL}, found {pdev}")
     prog_dev = pdev[0]

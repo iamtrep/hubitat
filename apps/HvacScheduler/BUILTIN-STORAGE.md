@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT
 
 # Built-in Thermostat Scheduler storage
 
-Where the built-in **Thermostat Scheduler 2.0** (version 2.0.3) keeps its configuration, as the importer (`convertBuiltin` in `ThermostatSchedulerPlusProgram.groovy`) reads it. The built-in has no export; the parent reads `/installedapp/configure/json/{id}` (`settings`) and `/installedapp/statusJson/{id}` (`appState`) over the hub's loopback.
+Where the built-in **Thermostat Scheduler 2.0** (version 2.0.3) keeps its configuration, as the importer (`convertBuiltin` in `HvacSchedulerProgram.groovy`) reads it. The built-in has no export; the parent reads `/installedapp/configure/json/{id}` (`settings`) and `/installedapp/statusJson/{id}` (`appState`) over the hub's loopback.
 
 Each key below was confirmed by setting the value through the built-in's own page on a test instance and reading it back (firmware 2.5.2.129).
 

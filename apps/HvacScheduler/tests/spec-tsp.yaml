@@ -1,13 +1,13 @@
 # Copyright (c) 2026 PJ
 # SPDX-License-Identifier: MIT
-# Thermostat Scheduler+ program — Mode 1 behavior spec.
+# HVAC Scheduler program — Mode 1 behavior spec.
 app:
-  source: apps/ThermostatSchedulerPlus/ThermostatSchedulerPlusProgram.groovy
-  type_name: "Thermostat Scheduler+ Program"
+  source: apps/HvacScheduler/HvacSchedulerProgram.groovy
+  type_name: "HVAC Scheduler Program"
   instance_label: test-tsp
   parent:
-    source: apps/ThermostatSchedulerPlus/ThermostatSchedulerPlus.groovy
-    type_name: "Thermostat Scheduler+"
+    source: apps/HvacScheduler/HvacScheduler.groovy
+    type_name: "HVAC Scheduler"
     create_mapping: true
   config:
     debugEnable: true

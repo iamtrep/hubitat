@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 /*
- Thermostat Scheduler+ Program
+ HVAC Scheduler Program
 
  One zone: schedules thermostats from named profiles, with holds, mode overrides,
  an eco offset and pause handling. Publishes its state on a component device.
@@ -17,16 +17,16 @@ import groovy.transform.Field
 @Field static final String CODE_VERSION = "0.3.2"
 
 definition(
-    name: "Thermostat Scheduler+ Program",
+    name: "HVAC Scheduler Program",
     namespace: "iamtrep",
     author: "pj",
-    description: "One Thermostat Scheduler+ program",
+    description: "One HVAC Scheduler program",
     menu: "Automations", // new in platform 2.5.0
     category: "Convenience",
-    parent: "iamtrep:Thermostat Scheduler+",
+    parent: "iamtrep:HVAC Scheduler",
     singleThreaded: true,
-    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/apps/ThermostatSchedulerPlus/ThermostatSchedulerPlusProgram.groovy",
-    documentationLink: "https://github.com/iamtrep/hubitat/tree/main/apps/ThermostatSchedulerPlus",
+    importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/apps/HvacScheduler/HvacSchedulerProgram.groovy",
+    documentationLink: "https://github.com/iamtrep/hubitat/tree/main/apps/HvacScheduler",
     iconUrl: "", iconX2Url: ""
 )
 
@@ -967,7 +967,7 @@ ChildDeviceWrapper programDevice() {
     String dni = "tsp-${app.id}"
     ChildDeviceWrapper d = getChildDevice(dni)
     if (!d) {
-        d = addChildDevice("iamtrep", "Thermostat Scheduler+ Program Device", dni, [name: "${app.label} scheduler", label: "${app.label} scheduler", isComponent: true])
+        d = addChildDevice("iamtrep", "HVAC Scheduler Program Device", dni, [name: "${app.label} scheduler", label: "${app.label} scheduler", isComponent: true])
         logCfg "created ${d.displayName}"
     } else if (d.label != "${app.label} scheduler") d.setLabel("${app.label} scheduler")
     return d

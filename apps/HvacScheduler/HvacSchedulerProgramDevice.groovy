@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: MIT
 
 /*
- Thermostat Scheduler+ Program Device
+ HVAC Scheduler Program Device
 
- Component device of a Thermostat Scheduler+ program. Publishes what the program is
+ Component device of an HVAC Scheduler program. Publishes what the program is
  doing and forwards commands to it. switch: on = running, off = paused.
 */
 
@@ -13,8 +13,8 @@ import groovy.transform.Field
 @Field static final String CODE_VERSION = "0.3.2"
 
 metadata {
-    definition(name: "Thermostat Scheduler+ Program Device", namespace: "iamtrep", author: "pj", component: true,
-               importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/apps/ThermostatSchedulerPlus/ThermostatSchedulerPlusProgramDevice.groovy") {
+    definition(name: "HVAC Scheduler Program Device", namespace: "iamtrep", author: "pj", component: true,
+               importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/apps/HvacScheduler/HvacSchedulerProgramDevice.groovy") {
         capability "Actuator"
         capability "Switch"
         capability "Refresh"

@@ -4,7 +4,7 @@
 # TEST-LIVE: needs a reachable hub
 
 #
-# Thermostat Scheduler+ API test (Mode 2): parent app HTTP routes.
+# HVAC Scheduler API test (Mode 2): parent app HTTP routes.
 # Needs the parent app installed with a "test-tsp" program (see test-tsp.sh).
 # Leaves the program resumed (no hold). Turns the parent's debug logging on (it
 # turns itself off after 30 minutes) and creates the program "test-tsp-new" once,
@@ -32,7 +32,7 @@ python3 - "$HUB_NAME" "$CONFIG_FILE" <<'PYTHON_SCRIPT'
 import json, re, sys, time, urllib.request, urllib.error, urllib.parse, http.cookiejar
 
 hub_name_arg, config_file = sys.argv[1], sys.argv[2]
-PARENT_TYPE = "Thermostat Scheduler+"
+PARENT_TYPE = "HVAC Scheduler"
 PROGRAM_NAME = "test-tsp"
 STATUS_LABEL = "test-tsp scheduler"
 NEW_PROGRAM = "test-tsp-new"

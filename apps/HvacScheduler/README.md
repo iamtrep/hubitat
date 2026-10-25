@@ -3,7 +3,7 @@ Copyright (c) 2026 PJ
 SPDX-License-Identifier: MIT
 -->
 
-# Thermostat Scheduler+
+# HVAC Scheduler
 
 A thermostat scheduler for Hubitat Elevation with named profiles, several schedules per zone, holds, mode overrides, an eco offset and pause handling. Each program publishes what it is doing on its own program device, so rules, dashboards, Maker API and other apps can read and control it. The parent app also serves a small HTTP API.
 
@@ -13,14 +13,14 @@ It covers what the built-in Thermostat Scheduler does and fixes four of its know
 
 | File | Type | Name on the hub |
 |---|---|---|
-| `ThermostatSchedulerPlus.groovy` | App (parent) | Thermostat Scheduler+ |
-| `ThermostatSchedulerPlusProgram.groovy` | App (child) | Thermostat Scheduler+ Program |
-| `ThermostatSchedulerPlusProgramDevice.groovy` | Driver | Thermostat Scheduler+ Program Device |
+| `HvacScheduler.groovy` | App (parent) | HVAC Scheduler |
+| `HvacSchedulerProgram.groovy` | App (child) | HVAC Scheduler Program |
+| `HvacSchedulerProgramDevice.groovy` | Driver | HVAC Scheduler Program Device |
 
 ## Install
 
 1. Add the two apps in **Apps Code** and the driver in **Drivers Code**.
-2. In **Apps**, choose **Add user app** and pick **Thermostat Scheduler+**. The parent enables OAuth for itself on install.
+2. In **Apps**, choose **Add user app** and pick **HVAC Scheduler**. The parent enables OAuth for itself on install.
 3. Open the parent and choose **Create New Program**. Pick the thermostats, name the program and press **Done**.
 
 A program controls one or more thermostats that share a schedule, usually one zone. Saving it creates the program device **"<program> scheduler"** (for example "Living room scheduler"). The device belongs to the program and is deleted with it.
@@ -97,7 +97,7 @@ The new program starts paused and does not touch the thermostats. Open it, check
 
 ## Program device
 
-Driver **Thermostat Scheduler+ Program Device**, capabilities Switch, Actuator and Refresh. It does not declare Thermostat, so it stays out of thermostat pickers. Attributes with nothing to report read `none`.
+Driver **HVAC Scheduler Program Device**, capabilities Switch, Actuator and Refresh. It does not declare Thermostat, so it stays out of thermostat pickers. Attributes with nothing to report read `none`.
 
 The device is how rules, Maker API, dashboards and other apps reach one program; the program app does the scheduling. A driver alone could not: it can't select the thermostats, subscribe to their events, read hub variables, serve the HTTP API or show the editor pages.
 
@@ -170,13 +170,13 @@ Run from the repository root. On-hub tests target the default hub in `.hubitat.j
 
 | Test | What it covers |
 |---|---|
-| `java -cp groovy-all-2.4.21.jar groovy.ui.GroovyMain apps/ThermostatSchedulerPlus/tests/test_core.groovy` | Core unit tests, off the hub |
-| `RUN_SLOW_TESTS=1 bash apps/ThermostatSchedulerPlus/tests/test-tsp.sh` | Behavior on virtual thermostats with a test clock |
-| `RUN_SLOW_TESTS=1 bash apps/ThermostatSchedulerPlus/tests/test-tsp-retry.sh` | Write check, with the Stubborn Thermostat test driver |
-| `bash apps/ThermostatSchedulerPlus/tests/test-tsp-api.sh` | HTTP API, on the program `test-tsp.sh` provisions |
-| `bash apps/ThermostatSchedulerPlus/tests/test-tsp-import.sh` | Importing the built-in scheduler the parity test uses |
-| `bash apps/ThermostatSchedulerPlus/tests/test-tsp-interlock.sh` | Hub variable setpoints, eco by device command, pausing on an HVAC Interlock group |
-| `RUN_SLOW_TESTS=1 bash apps/ThermostatSchedulerPlus/tests/test-tsp-parity.sh` | Side by side with a built-in Thermostat Scheduler |
+| `java -cp groovy-all-2.4.21.jar groovy.ui.GroovyMain apps/HvacScheduler/tests/test_core.groovy` | Core unit tests, off the hub |
+| `RUN_SLOW_TESTS=1 bash apps/HvacScheduler/tests/test-tsp.sh` | Behavior on virtual thermostats with a test clock |
+| `RUN_SLOW_TESTS=1 bash apps/HvacScheduler/tests/test-tsp-retry.sh` | Write check, with the Stubborn Thermostat test driver |
+| `bash apps/HvacScheduler/tests/test-tsp-api.sh` | HTTP API, on the program `test-tsp.sh` provisions |
+| `bash apps/HvacScheduler/tests/test-tsp-import.sh` | Importing the built-in scheduler the parity test uses |
+| `bash apps/HvacScheduler/tests/test-tsp-interlock.sh` | Hub variable setpoints, eco by device command, pausing on an HVAC Interlock group |
+| `RUN_SLOW_TESTS=1 bash apps/HvacScheduler/tests/test-tsp-parity.sh` | Side by side with a built-in Thermostat Scheduler |
 
 ## More
 

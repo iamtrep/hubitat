@@ -3,7 +3,7 @@ Copyright (c) 2026 PJ
 SPDX-License-Identifier: MIT
 -->
 
-# Thermostat Scheduler+ test plan
+# HVAC Scheduler test plan
 
 Modes are those of TESTING.md. Every on-hub test follows its closed-loop contract: `[PASS]`/`[FAIL]` lines, exit 0 when all pass, 1 on a failure, 2 on a setup error.
 
@@ -21,7 +21,7 @@ B, C and E take minutes each and belong to `RUN_SLOW_TESTS=1` runs. E checks the
 
 ## Phase A: core unit tests
 
-`test_core.groovy` parses the block between the "Core (pure)" and "End core" markers of `ThermostatSchedulerPlusProgram.groovy` and runs it under the pinned Groovy 2.4.21 jar, so the tests bind to shipped code. Covered: date helpers (week days, month ends, both DST changes), transitions (fixed times, sunrise and sunset offsets, DateTime variables set and missing, the first period of a day, day groups, a period inside the skipped and the repeated DST hour), the resolver (every layer, eco on schedules and overrides, eco offset changes, mode schedules, variable setpoints, missing profiles), hold expiry for each end, write planning (heat, cool, auto with separation in both directions, off thermostats, blank fan and mode, `noModeIds`), restrictions, the next wake time, configuration validation, command parsing for every command and end format, `applyOutcome` (`ok`, `partial`, `failed`), the Away override a new program gets (`seedOverrides`), when a write check is overdue (`verifyOverdue`), merging a second write batch into a pending check (`mergeWrites`), hub variable renames (`renameVarRefs`), hold setpoint ranges (`setpointRangeError`), no fan writes to off thermostats, and strict ISO hold ends (trailing text, past times).
+`test_core.groovy` parses the block between the "Core (pure)" and "End core" markers of `HvacSchedulerProgram.groovy` and runs it under the pinned Groovy 2.4.21 jar, so the tests bind to shipped code. Covered: date helpers (week days, month ends, both DST changes), transitions (fixed times, sunrise and sunset offsets, DateTime variables set and missing, the first period of a day, day groups, a period inside the skipped and the repeated DST hour), the resolver (every layer, eco on schedules and overrides, eco offset changes, mode schedules, variable setpoints, missing profiles), hold expiry for each end, write planning (heat, cool, auto with separation in both directions, off thermostats, blank fan and mode, `noModeIds`), restrictions, the next wake time, configuration validation, command parsing for every command and end format, `applyOutcome` (`ok`, `partial`, `failed`), the Away override a new program gets (`seedOverrides`), when a write check is overdue (`verifyOverdue`), merging a second write batch into a pending check (`mergeWrites`), hub variable renames (`renameVarRefs`), hold setpoint ranges (`setpointRangeError`), no fan writes to off thermostats, and strict ISO hold ends (trailing text, past times).
 
 ## Phase B: behavior
 
@@ -37,7 +37,7 @@ B, C and E take minutes each and belong to `RUN_SLOW_TESTS=1` runs. E checks the
 
 ## Phase E: parity
 
-`test-tsp-parity.sh` runs a built-in Thermostat Scheduler and a Thermostat Scheduler+ program built from its configuration on twin virtual thermostats, and compares them: apply now, Away mode in and out, a restriction on and off, and the intended difference after a manual change in Away. It exits 2 with the time to re-run when a period boundary is less than 150 seconds away.
+`test-tsp-parity.sh` runs a built-in Thermostat Scheduler and an HVAC Scheduler program built from its configuration on twin virtual thermostats, and compares them: apply now, Away mode in and out, a restriction on and off, and the intended difference after a manual change in Away. It exits 2 with the time to re-run when a period boundary is less than 150 seconds away.
 
 ## Phase F: configuration `PUT` and importer
 

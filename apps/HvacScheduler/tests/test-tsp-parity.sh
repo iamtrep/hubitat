@@ -4,8 +4,8 @@
 # TEST-LIVE: needs a reachable hub
 
 #
-# Thermostat Scheduler+ parity test: the built-in Thermostat Scheduler and a
-# Thermostat Scheduler+ program run the same schedule on twin virtual
+# HVAC Scheduler parity test: the built-in Thermostat Scheduler and a
+# HVAC Scheduler program run the same schedule on twin virtual
 # thermostats, in real time, and the test compares the two heating setpoints.
 #
 # Reference (set up by hand once, never changed by this test): a built-in
@@ -17,14 +17,14 @@
 #
 # Provisioned idempotently by this test:
 #   - virtual thermostat "test-parity-plus" (same driver as the reference)
-#   - Thermostat Scheduler+ program "test-parity" (created through the parent's
+#   - HVAC Scheduler program "test-parity" (created through the parent's
 #     debug route) with a configuration generated from the reference's schedule,
 #     the reference's restriction switch as its pause switch
 #   - Maker API "test-parity-maker" (devices and hub mode)
 #
 # Cases (5 s settle each): apply vs Set Scheduled Temperatures, Away mode in and
 # out, restriction on and off, and the intended difference (Away, manual change,
-# apply: the built-in keeps the manual value, Thermostat Scheduler+ reapplies).
+# apply: the built-in keeps the manual value, HVAC Scheduler reapplies).
 # Leaves the hub mode, every switch and the reference thermostat as found.
 #
 # Runtime ~90 s: gated behind RUN_SLOW_TESTS=1 (TESTING.md §1.1).
@@ -67,8 +67,8 @@ hub_name_arg, config_file = sys.argv[1], sys.argv[2]
 
 BUILTIN_TYPE = "Thermostat Scheduler 2.0"
 BUILTIN_LABEL = "TEST TS EcoMode+Away"
-PARENT_TYPE = "Thermostat Scheduler+"
-PROGRAM_TYPE = "Thermostat Scheduler+ Program"
+PARENT_TYPE = "HVAC Scheduler"
+PROGRAM_TYPE = "HVAC Scheduler Program"
 PROGRAM = "test-parity"
 STATUS = "test-parity scheduler"
 PLUS_THERM = "test-parity-plus"
@@ -429,7 +429,7 @@ try:
         if num(r) is not None and num(r) == num(p):
             ok(f"{what}: both {num(r)}")
         else:
-            fail(f"{what}: built-in {r}, Thermostat Scheduler+ {p}")
+            fail(f"{what}: built-in {r}, HVAC Scheduler {p}")
         if want is not None:
             if num(p) == want: ok(f"{what}: value is {want}")
             else: fail(f"{what}: value {p}, want {want}")
@@ -495,7 +495,7 @@ try:
     r, p = both("thermostatMode")
     want_mode = "off" if turn_off else "heat"
     if r == p == want_mode: ok(f"restricted: both thermostats {want_mode}")
-    else: fail(f"restricted: built-in {r}, Thermostat Scheduler+ {p} (want {want_mode})")
+    else: fail(f"restricted: built-in {r}, HVAC Scheduler {p} (want {want_mode})")
     st = attr(status_dev, "status")
     if st == "restricted": ok("restricted: program status restricted")
     else: fail(f"restricted: program status {st}")
@@ -507,7 +507,7 @@ try:
     cmd(restrict_id, unrestricted_state()); settle()
     r, p = both("thermostatMode")
     if r == p == "heat": ok("restriction lifted: both thermostats heat")
-    else: fail(f"restriction lifted: built-in {r}, Thermostat Scheduler+ {p} (want heat)")
+    else: fail(f"restriction lifted: built-in {r}, HVAC Scheduler {p} (want heat)")
     if turn_off:
         check_equal("restriction lifted reapplies the period", period_value)
     else:
@@ -515,11 +515,11 @@ try:
         # restriction ended and writes nothing, so a value set while restricted stays.
         r, p = both()
         info(f"built-in writes nothing when the restriction lifts (keeps {r}); "
-             f"Thermostat Scheduler+ resumes and applies the schedule")
+             f"HVAC Scheduler resumes and applies the schedule")
         if num(r) == PARK: ok(f"built-in keeps the value set while restricted ({PARK})")
         else: fail(f"built-in has {r} after the restriction lifted; observed behavior was {PARK}")
-        if num(p) == period_value: ok(f"Thermostat Scheduler+ reapplies the period ({period_value})")
-        else: fail(f"Thermostat Scheduler+ has {p} after the restriction lifted, want {period_value}")
+        if num(p) == period_value: ok(f"HVAC Scheduler reapplies the period ({period_value})")
+        else: fail(f"HVAC Scheduler has {p} after the restriction lifted, want {period_value}")
 
     # ── Case 4 ───────────────────────────────────────────────────────
     section("Case 4: Away, manual change, apply (intended difference)")
@@ -530,11 +530,11 @@ try:
     settle()
     r, p = both()
     info(f"expected difference: after apply in Away the built-in has {r} (manual value was {MANUAL}), "
-         f"Thermostat Scheduler+ has {p} (Away value {heat_away})")
+         f"HVAC Scheduler has {p} (Away value {heat_away})")
     if num(r) == MANUAL: ok(f"built-in keeps the manual {MANUAL}: it skips the Away value on apply (known built-in bug)")
     else: fail(f"built-in has {r} after apply in Away; the known behavior is to keep the manual {MANUAL}")
-    if num(p) == heat_away: ok(f"Thermostat Scheduler+ applies the Away value {heat_away}")
-    else: fail(f"Thermostat Scheduler+ gives {p}, want {heat_away}")
+    if num(p) == heat_away: ok(f"HVAC Scheduler applies the Away value {heat_away}")
+    else: fail(f"HVAC Scheduler gives {p}, want {heat_away}")
 except Exception as e:
     fail(f"unexpected error during the cases: {type(e).__name__}: {e}")
 finally:
