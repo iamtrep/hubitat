@@ -96,8 +96,8 @@ metadata {
 @Field static final int STREAM_OFFLINE_AFTER = 3
 // After a boot, the first connect waits until a random point in the hub's first STARTUP_SPREAD_SECS
 // past STARTUP_MIN_SECS of uptime, away from the startup rush of other integrations.
-@Field static final int STARTUP_MIN_SECS = 300
-@Field static final int STARTUP_SPREAD_SECS = 300
+@Field static final int STARTUP_MIN_SECS = 60
+@Field static final int STARTUP_SPREAD_SECS = 120
 // No power update for this long while the stream should be open: reconnect.
 @Field static final long STALE_DATA_MS = 300_000L
 @Field static final int DEBUG_LOG_TIMEOUT = 1800

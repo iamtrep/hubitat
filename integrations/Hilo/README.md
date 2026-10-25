@@ -106,7 +106,7 @@ Consumption is read once an hour, at a minute between :10 and :50 picked at rand
 
 When Hilo can't be reached, each of the first two failed reads logs a warning. The third logs one error and marks the device offline, and a reminder follows every hour while the outage lasts. The first good read logs the recovery and marks the device online. When Hilo answers with `Retry-After`, polling pauses for that long, up to an hour.
 
-After a hub restart, the live stream first connects at a random point 5 to 10 minutes after boot. It is reopened with a fresh token every 50 minutes. When it drops or stays silent for 5 minutes, it reconnects after a delay that doubles from 5 s to 5 min. After 3 failed reconnects in a row, the device is marked offline until power arrives again.
+After a hub restart, the live stream first connects at a random point 1 to 3 minutes after boot. It is reopened with a fresh token every 50 minutes. When it drops or stays silent for 5 minutes, it reconnects after a delay that doubles from 5 s to 5 min. After 3 failed reconnects in a row, the device is marked offline until power arrives again.
 
 ## History files
 
