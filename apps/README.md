@@ -31,6 +31,7 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 |---|---|
 | [HubInspector/](./HubInspector/) | Comprehensive hub diagnostics: inventory, performance tracking, network analysis, and snapshot comparison |
 | [HvacInterlock/](./HvacInterlock/) | Gates heating and cooling equipment by season and open windows |
+| [HvacScheduler/](./HvacScheduler/) | Thermostat schedules with profiles, holds and an API |
 | [HvacSeasonManager/](./HvacSeasonManager/) | Publishes the heating and cooling season on a device, from dates and the outdoor temperature |
 | [IndoorAirQualityController/](./IndoorAirQualityController/) | Runs ventilation in stages from indoor CO2 and warns when a window should be opened or the air is too dry |
 | [LocationEventMapper/](./LocationEventMapper/) | TBD |
@@ -39,7 +40,6 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 | [sensors/](./sensors/) |  |
 | [SwitchedHeaterThermostat/](./SwitchedHeaterThermostat/) | Heater switches driven by a Virtual Thermostat and temperature sensors, with alerts |
 | [tests/](./tests/) |  |
-| [HvacScheduler/](./HvacScheduler/) | Thermostat schedules with profiles, holds and an API |
 | [utilities/](./utilities/) |  |
 | [WellMonitor/](./WellMonitor/) | Monitors well pump cycles, downstream consumption, tank usage, and emergency shutoff |
 | [ZigbeeWorkbench/](./ZigbeeWorkbench/) | Inspect and change any Zigbee device without changing its driver: ZDO tables and descriptors, attributes, reporting, commands, binding |
