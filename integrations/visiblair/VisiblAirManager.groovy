@@ -36,6 +36,16 @@ definition(
 // Keyed by app id; the stored ciphertext rides along so a changed password misses.
 @Field static final ConcurrentHashMap<String, List<String>> SECRET_CACHE = new ConcurrentHashMap<>()
 @Field static final String DNI_PREFIX = "visiblair-"
+// The last lastSampleTimeStamp sent to each child, keyed "appId:uuid". A poll between two samples
+// (the API samples every 15 min, the default poll is 5) skips the child. Empty after a reboot or code
+// push, so the first poll sends everything.
+@Field static final ConcurrentHashMap<String, String> LAST_SAMPLE = new ConcurrentHashMap<>()
+// App ids whose child devices were synced since the last reboot or code push.
+@Field static final ConcurrentHashMap<String, Boolean> CHILDREN_SYNCED = new ConcurrentHashMap<>()
+// Start of the last scheduled poll, by app id. After a reboot a cron schedule runs a catch-up about
+// 10 s after its first run; a scheduled poll within MIN_POLL_GAP_MS of the last is skipped.
+@Field static final ConcurrentHashMap<String, Long> LAST_POLL = new ConcurrentHashMap<>()
+@Field static final long MIN_POLL_GAP_MS = 60_000L
 // Consecutive failed polls before the outage is logged as an error and children go offline.
 @Field static final int POLL_FAILURES_BEFORE_ALARM = 3
 @Field static final long OUTAGE_REMINDER_MS = 3600000L
@@ -118,7 +128,7 @@ void initialize() {
         return
     }
 
-    pollSensors()
+    pollSensors(true)
 
     int rate = (pollRate ?: 5) as int
     Random rng = new Random()
@@ -144,7 +154,7 @@ void appButtonHandler(String buttonName) {
     switch (buttonName) {
         case "btnRediscover":
             logInfo "re-discovery requested"
-            pollSensors()
+            pollSensors(true)
             break
         case "btnRemoveOrphans":
             List<Map> orphans = state.orphanedDevices ?: []
@@ -244,9 +254,22 @@ void handleLoginResponse(resp, data) {
 
 // --- Discovery & Polling ---
 
-void pollSensors() {
+// force: from initialize, a button or a child's refresh; sends every sensor's data even when the
+// sample is unchanged. The cron schedule calls it without arguments.
+void pollSensors(boolean force = false) {
     checkVersion()
     if (!apiEmail || !hasApiPassword()) return
+    String appKey = app.id.toString()
+    long t = now()
+    Long last = LAST_POLL.put(appKey, t)
+    if (!force && last != null && t - last < MIN_POLL_GAP_MS) {
+        logDebug "skipping a poll ${(t - last).intdiv(1000L)} s after the last one"
+        return
+    }
+    if (force) {
+        LAST_SAMPLE.keySet().findAll { String k -> k.startsWith(appKey + ":") }.each { LAST_SAMPLE.remove(it) }
+        CHILDREN_SYNCED.remove(appKey)
+    }
 
     loginThen("poll", "cannot poll sensors")
 }
@@ -308,9 +331,15 @@ private void handlePollData(data) {
                 description: sensor.description
             ]
         }
-        state.discoveredSensors = discovered
-
-        syncChildDevices(discovered)
+        // Child data values and state change only when the sensor list or its configs do.
+        String appKey = app.id.toString()
+        boolean listChanged = discovered != (state.discoveredSensors ?: [])
+        boolean childMissing = discovered.any { Map d -> !getChildDevice("${DNI_PREFIX}${d.uuid}") }
+        if (listChanged || childMissing || !CHILDREN_SYNCED.containsKey(appKey)) {
+            if (listChanged) state.discoveredSensors = discovered
+            syncChildDevices(discovered)
+            CHILDREN_SYNCED.put(appKey, true)
+        }
         storeSensorConfigs(realSensors)
         dispatchSensorData(realSensors)
     } catch (Exception e) {
@@ -379,7 +408,7 @@ private void updateSensorHealth(List sensorList, String recovery = null) {
             child.setHealthStatus("offline", "last sample time unreadable")
         } else if (t - sampledAt > STALE_SAMPLE_PERIODS * period * 1000L) {
             child.setHealthStatus("offline", "no sample for ${formatDuration(t - sampledAt)}")
-        } else {
+        } else if (recovery || child.currentValue("healthStatus") != "online") {
             child.setHealthStatus("online", recovery ?: "reporting")
         }
     }
@@ -464,10 +493,16 @@ private void dispatchSensorData(List sensorList) {
         String uuid = sensorData.uuid as String
         String dni = "${DNI_PREFIX}${uuid}"
         ChildDeviceWrapper child = getChildDevice(dni)
-        if (child) {
-            logTrace "dispatching data to ${dni}"
-            child.updateSensorData(sensorData.findAll { k, v -> !SENSOR_SECRET_FIELDS.contains(k) })
+        if (!child) return
+        String key = "${app.id}:${uuid}".toString()
+        String ts = sensorData.lastSampleTimeStamp as String
+        if (ts && LAST_SAMPLE.get(key) == ts) {
+            logTrace "no new sample for ${dni} since ${ts}"
+            return
         }
+        logTrace "dispatching data to ${dni}"
+        child.updateSensorData(sensorData.findAll { k, v -> !SENSOR_SECRET_FIELDS.contains(k) })
+        if (ts) LAST_SAMPLE.put(key, ts)
     }
 }
 
@@ -539,7 +574,7 @@ void handleFirmwareResponse(resp, data) {
 
 void refreshSensor(String dni) {
     logDebug "refresh requested by ${dni}, triggering bulk poll"
-    pollSensors()
+    pollSensors(true)
 }
 
 // --- Sensor Configuration ---
@@ -591,7 +626,7 @@ private void storeSensorConfigs(List sensorList) {
         }
         configs[uuid] = config
     }
-    state.sensorConfigs = configs
+    if (configs != state.sensorConfigs) state.sensorConfigs = configs
 }
 
 void updateSensorConfig(String uuid, Map overrides) {
