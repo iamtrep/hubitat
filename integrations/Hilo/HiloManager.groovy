@@ -43,7 +43,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 
 @Field static final String AUTH_URL = "https://connexion.hiloenergie.com/HiloDirectoryB2C.onmicrosoft.com/B2C_1A_SIGN_IN/oauth2/v2.0/"
 @Field static final String CLIENT_ID = "1ca9f585-4a55-4085-8e30-9746a65fa561"
@@ -66,6 +66,8 @@ definition(
 @Field static final int PEAK_LOOKBACK_DAYS = 45
 
 @Field static final long TOKEN_REFRESH_BUFFER_MS = 300_000L
+// The meter's live stream goes silent about 57 min after it opens; a fresh token reopens it first.
+@Field static final int STREAM_TOKEN_SECS = 3000
 @Field static final int HTTP_TIMEOUT = 20
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 // How long the app page redraws itself while waiting for the device it asked for.
@@ -779,6 +781,14 @@ void initialize() {
     schedulePolling()
     runIn(5, "poll")
     if (settings.wcEnable) peakInitialize()
+    subscribe(location, "systemStart", "hubStarted")
+    runIn(2, "pushStreamToken")
+}
+
+// systemStart arrives about two minutes into uptime; the jitter keeps the first token refresh
+// and stream connect off the moment every other integration starts.
+void hubStarted(evt) {
+    runIn(1 + new Random().nextInt(60), "pushStreamToken")
 }
 
 // A code push doesn't run updated(); entry points call this so the first one after a
@@ -888,11 +898,12 @@ void logout() {
 
 // ── Tokens ────────────────────────────────────────────────────────────
 
-// Called by the child before each stream connect, and by the polls. Returns null when
+// Called by the polls. Returns null when
 // no token can be had; the reason is already logged.
-String hiloAccessToken() {
+// fresh: refresh even when the token in memory is still valid.
+String hiloAccessToken(boolean fresh = false) {
     List cached = ACCESS.get(app.id.toString())
-    if (cached && (cached[1] as long) - now() > TOKEN_REFRESH_BUFFER_MS) return cached[0] as String
+    if (!fresh && cached && (cached[1] as long) - now() > TOKEN_REFRESH_BUFFER_MS) return cached[0] as String
     String refresh = decryptState("refreshTokenEnc")
     if (!refresh) return null
     Map tokens = tokenRequest([grant_type: "refresh_token", client_id: CLIENT_ID, refresh_token: refresh, scope: SCOPE])
@@ -903,6 +914,17 @@ String hiloAccessToken() {
     }
     storeTokens(tokens)
     return tokens.access_token as String
+}
+
+// Refreshes the token in this app's own run and hands it to the meter, which reopens its live
+// stream with it. The meter never asks: a child calling into this single-threaded app waits for
+// as long as the app is busy, and the platform counts that wait as the child's own hub load.
+void pushStreamToken() {
+    runIn(STREAM_TOKEN_SECS, "pushStreamToken")
+    ChildDeviceWrapper meter = meterChild()
+    if (!meter) return
+    String token = hiloAccessToken(true)
+    if (token) meter.streamToken(token)
 }
 
 // Sync: the caller needs the token before it can do anything else.
@@ -991,7 +1013,6 @@ private boolean ensureChild() {
     }
     meter.updateDataValue("locationHiloId", state.locationHiloId as String)
     meter.setLanguage(uiLang())
-    meter.startLiveStream()
     return true
 }
 
