@@ -31,6 +31,10 @@ import java.util.concurrent.ConcurrentHashMap
 // Device ids whose stored version and watch list have been checked since the last code push.
 @Field static final ConcurrentHashMap<String, Boolean> versionChecked = new ConcurrentHashMap<>()
 
+// Failed connects in a row, keyed by device id. Memory only, since parse() never touches state;
+// a reboot or code push starts the count again.
+@Field static final ConcurrentHashMap<String, Integer> dropCounts = new ConcurrentHashMap<>()
+
 // Time of the radio's own last close, keyed by device id. The status report of a close can come
 // after the next connect has started, so a drop reported within OWN_CLOSE_WINDOW_MS of our own
 // close is that close, not a drop.
@@ -71,8 +75,20 @@ static Map toFrame(Map msg, Set<String> watch) {
             payload: msg.payload, lqi: msg.lastHopLqi, rssi: msg.lastHopRssi, time: msg.time]
 }
 
-// Seconds between a drop and the next connect.
+// Seconds before the next connect: RECONNECT_S after a first drop, doubling with each failed
+// connect in a row up to RECONNECT_MAX_S. The count resets on the first message after a connect,
+// not on open: a socket that opens and drops at once still backs off.
 @Field static final int RECONNECT_S = 10
+@Field static final int RECONNECT_MAX_S = 300
+// The drop in a row that logs a warning; the others log at debug level.
+@Field static final int DROPS_BEFORE_WARN = 3
+
+@CompileStatic
+static int reconnectDelay(int drops) {
+    if (drops <= 1) return RECONNECT_S
+    long d = (long) RECONNECT_S << Math.min(drops - 1, 20)
+    return (int) Math.min(d, (long) RECONNECT_MAX_S)
+}
 
 // What a webSocketStatus string means: "open", "drop" (failure or closed: reconnect, whether or not
 // anything is watched) or "none".
@@ -117,6 +133,8 @@ void initialize() {
         state.version = CODE_VERSION
     }
     if (settings?.debugEnable) runIn(1800, "logsOff", [overwrite: true])
+    // A fresh start (reboot, code push, updated() or the app's reopen) reconnects without the wait.
+    dropCounts.remove(device.id.toString())
     // Idempotent: a socket that is open or about to connect is left alone. Two connects close
     // together once left the status "connected" on a socket that delivered no frames. The memory
     // map is empty after a reboot or code push, so the socket is opened then. updated() closes
@@ -130,7 +148,7 @@ void initialize() {
 void uninstalled() {
     disconnectSocket()
     String id = device.id.toString()
-    [watchLists, versionChecked, socketStates, ownCloseAt].each { it.remove(id) }
+    [watchLists, versionChecked, socketStates, ownCloseAt, dropCounts].each { it.remove(id) }
 }
 
 void logsOff() {
@@ -189,8 +207,7 @@ void connectSocket() {
         interfaces.webSocket.connect("ws://127.0.0.1:8080/zigbeeLogsocket")
     } catch (Exception e) {
         setStatus("failed")
-        logWarn "connect failed: ${e.message}"
-        handleDrop("Lost the Zigbee log connection")
+        handleDrop("Lost the Zigbee log connection", "connect failed: ${e.message}")
     }
 }
 
@@ -220,15 +237,22 @@ void webSocketStatus(String status) {
         return
     }
     setStatus("failed")
-    logWarn "socket dropped (${status}); reconnecting in ${RECONNECT_S} s"
-    handleDrop("Lost the Zigbee log connection")
+    handleDrop("Lost the Zigbee log connection", "socket dropped (${status})")
 }
 
-// Reconnects after RECONNECT_S. The app hears of it only when it is waiting on replies. Runs in the
+// Reconnects after reconnectDelay(). The app hears of it only when it is waiting on replies. Runs in the
 // radio's own executions (socket callbacks, connectSocket from initialize or a scheduled retry),
 // never inside an app call: setWatch and sendFrames no longer touch the socket.
-private void handleDrop(String reason) {
-    runIn(RECONNECT_S, "connectSocket", [overwrite: true])
+private void handleDrop(String reason, String detail) {
+    String id = device.id.toString()
+    int drops = ((dropCounts[id] ?: 0) as int) + 1
+    dropCounts[id] = drops
+    int delay = reconnectDelay(drops)
+    String m = "${detail}; reconnecting in ${delay} s (attempt ${drops})"
+    if (drops == DROPS_BEFORE_WARN) logWarn m + "; later attempts log at debug level"
+    else if (drops < DROPS_BEFORE_WARN) logCfg m
+    else logNet m
+    runIn(delay, "connectSocket", [overwrite: true])
     // unknown after a code push: tell the app anyway, which does nothing when nothing is pending
     Set<String> w = watchSet()
     if (w != null && w.isEmpty()) return
@@ -243,6 +267,9 @@ void parse(String description) {
     // parse() never reads state (see watchLists): the stored version and watch list are checked
     // once, in a run of their own
     if (versionChecked.putIfAbsent(device.id.toString(), true) == null) runInMillis(50, "afterReload")
+    // The first message after a connect ends the backoff.
+    Integer drops = dropCounts.remove(device.id.toString())
+    if (drops != null && drops >= DROPS_BEFORE_WARN) logCfg "reconnected after ${drops} failed attempts"
     String trimmed = description?.trim()
     if (!trimmed?.startsWith("{")) return
     Map msg
