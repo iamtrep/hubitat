@@ -94,6 +94,10 @@ metadata {
 @Field static final int BACKOFF_MAX_SECS = 300
 // Failed reconnects in a row before the device reports offline.
 @Field static final int STREAM_OFFLINE_AFTER = 3
+// After a boot, the first connect waits until a random point in the hub's first STARTUP_SPREAD_SECS
+// past STARTUP_MIN_SECS of uptime, away from the startup rush of other integrations.
+@Field static final int STARTUP_MIN_SECS = 300
+@Field static final int STARTUP_SPREAD_SECS = 300
 // No power update for this long while the stream should be open: reconnect.
 @Field static final long STALE_DATA_MS = 300_000L
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
@@ -123,9 +127,17 @@ void initialize() {
     state.remove("reconnectDelay")
     state.remove("streamFailures")
     if (liveEnabled()) {
-        runIn(2, "connectStream")
+        runIn(startDelay(), "connectStream")
         schedule("${new Random().nextInt(60)} */5 * ? * *", "checkStream")
     }
+}
+
+// Seconds before the first connect: 2, or past the startup window after a boot.
+private int startDelay() {
+    long up = location.hub.uptime as long
+    if (up >= STARTUP_MIN_SECS + STARTUP_SPREAD_SECS) return 2
+    long at = STARTUP_MIN_SECS + new Random().nextInt(STARTUP_SPREAD_SECS)
+    return Math.max(2L, at - up) as int
 }
 
 void deviceTypeUpdated() { logDebug "driver change detected" }
@@ -204,8 +216,11 @@ void stopLiveStream() {
 void connectStream() {
     if (!liveEnabled()) return
     String hiloId = device.getDataValue("locationHiloId")
-    String token = parent?.hiloAccessToken()
-    if (!hiloId || !token) { streamFailed(hiloId ? "no access token" : "no Hilo location"); return }
+    if (!hiloId) { streamFailed("no Hilo location"); return }
+    // Without a valid token in memory, the manager refreshes it in its own run and calls
+    // startLiveStream() when it has one; checkStream() retries if it never does.
+    String token = parent?.cachedAccessToken()
+    if (!token) { logDebug "waiting for the manager to refresh the access token"; return }
     closeStream()
     String url = GRAPHQL_URL + "?query=" + enc(SUBSCRIPTION) + "&variables=" + enc(JsonOutput.toJson([locationHiloId: hiloId]))
     logNet "connecting to Hilo"

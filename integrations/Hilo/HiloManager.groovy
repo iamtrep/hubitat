@@ -905,6 +905,19 @@ String hiloAccessToken() {
     return tokens.access_token as String
 }
 
+// For the meter: the token in memory, or null after scheduling a refresh in this app's own run,
+// so the meter never waits on Hilo's token service through this call.
+String cachedAccessToken() {
+    List cached = ACCESS.get(app.id.toString())
+    if (cached && (cached[1] as long) - now() > TOKEN_REFRESH_BUFFER_MS) return cached[0] as String
+    runIn(1, "refreshForMeter")
+    return null
+}
+
+void refreshForMeter() {
+    if (hiloAccessToken()) meterChild()?.startLiveStream()
+}
+
 // Sync: the caller needs the token before it can do anything else.
 // Returns the token response, or [error: text, rejected: true when Hilo refused the grant].
 private Map tokenRequest(Map body) {
