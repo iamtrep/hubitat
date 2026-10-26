@@ -189,6 +189,9 @@ cases:
       - { device: test-sht-temp1, command: setTemperature, args: [21] }
       - { device: test-sht-temp2, command: setTemperature, args: [21] }
       - { button: btnCheck }
+      # The app turns heaters off once the thermostat reports idle, up to ~1 s later;
+      # the off resets the plug's power, so wait for it before the power reading.
+      - { await: { device: test-sht-heater1, attribute: switch, value: "off", timeout_seconds: 10 } }
     command_spacing_seconds: 1
     actions:
       - { device: test-sht-heater1, command: setPower, args: [1500] }
