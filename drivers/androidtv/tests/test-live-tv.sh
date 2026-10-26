@@ -2,6 +2,7 @@
 # Copyright (c) 2026 PJ
 # SPDX-License-Identifier: MIT
 # TEST-LIVE: needs a reachable hub with the Android TV Remote Tester installed and its TV selected
+# TEST-EXCLUDE: needs a TV or a running mock beside the hub; run it directly when one is up
 #
 # Runs the Android TV Remote Tester through its endpoints and prints one line per test.
 # A test where the driver didn't act on what the box sent is [FAIL]; one where only the box differs
