@@ -11,7 +11,8 @@
 # Attributes, Discover Attributes, Read Reporting Configuration of OnOff, and one
 # write: StartUpOnOff (0006/4003) is read and the value just read is written back
 # through the confirmation page, which must show the write's frame (skipped with a
-# warning when the device lacks it). The Leave button is pressed but never
+# warning when the device lacks it; a device without On/Off skips its cases and
+# discovers Basic instead). The Leave button is pressed but never
 # confirmed: the test checks that nothing is sent. A monitor device is
 # created for the device, polled (neighbour and routing tables) and checked, then
 # removed through its confirmation page; none is left behind. The test then checks
@@ -331,10 +332,17 @@ r = run_case(f"zbw:endpoints:{ieee}", "endpoints")
 if ok_result(r, "endpoints"):
     eps = r["data"].get("endpoints") or []
     check("01" in eps, f"endpoints {eps} include 01", f"endpoints {eps} lack 01")
+# A router without On/Off (a presence sensor, say) skips the On/Off cases and
+# discovers Basic instead.
+has_onoff = True
 r = run_case(f"zbw:simple:{ieee}:01", "simple:01")
 if ok_result(r, "simple:01"):
     ins = r["data"].get("inClusters") or []
-    check("0006" in ins, f"endpoint 01 in-clusters include 0006 ({' '.join(ins)})", f"in-clusters {ins} lack 0006")
+    has_onoff = "0006" in ins
+    if has_onoff:
+        ok(f"endpoint 01 in-clusters include 0006 ({' '.join(ins)})")
+    else:
+        warn(f"in-clusters {ins} lack 0006 On/Off: its cases are skipped")
 
 section("Read Attributes 0000/0004,0005")
 r = run_case(f"zbw:read:{ieee}:01:0000:0004,0005", "read:01:0000")
@@ -346,20 +354,30 @@ if ok_result(r, "read:01:0000"):
         check(got == data.get(key), f"attribute 0x000{attr} = {got!r} matches the device's {key}",
               f"attribute 0x000{attr} = {got!r}, device data {key} = {data.get(key)!r}")
 
-section("Discover Attributes 0006")
-r = run_case(f"zbw:discover:{ieee}:01:0006", "discover:01:0006")
-if ok_result(r, "discover:01:0006"):
-    attrs = r["data"].get("attrs") or []
-    check({"id": 0, "type": 0x10} in attrs, f"attributes include OnOff 0x0000 boolean ({len(attrs)} found)",
-          f"attributes {attrs} lack id 0 type 0x10")
+if has_onoff:
+    section("Discover Attributes 0006")
+    r = run_case(f"zbw:discover:{ieee}:01:0006", "discover:01:0006")
+    if ok_result(r, "discover:01:0006"):
+        attrs = r["data"].get("attrs") or []
+        check({"id": 0, "type": 0x10} in attrs, f"attributes include OnOff 0x0000 boolean ({len(attrs)} found)",
+              f"attributes {attrs} lack id 0 type 0x10")
+else:
+    section("Discover Attributes 0000")
+    r = run_case(f"zbw:discover:{ieee}:01:0000", "discover:01:0000")
+    if ok_result(r, "discover:01:0000"):
+        attrs = r["data"].get("attrs") or []
+        check({"id": 0, "type": 0x20} in attrs, f"attributes include ZCLVersion 0x0000 uint8 ({len(attrs)} found)",
+              f"attributes {attrs} lack id 0 type 0x20")
 
 section("StartUpOnOff 0006/4003: read, write the value read, read again")
 def read_4003():
     r = run_case(f"zbw:read:{ieee}:01:0006:4003", "read:01:0006")
     if not ok_result(r, "read:01:0006"): return None, None
     return r, next((x for x in r["data"].get("records") or [] if x.get("attr") == 0x4003), None)
-r, rec = read_4003()
-if r is not None:
+r, rec = read_4003() if has_onoff else (None, None)
+if not has_onoff:
+    info("no On/Off cluster: skipped")
+elif r is not None:
     if rec is None:
         fail(f"read 0006/4003: no record for 0x4003 in {r['data'].get('records')}")
     elif rec.get("status") != 0:
@@ -647,7 +665,7 @@ if SLOW:
         report = (iv.get("data") or {}).get("report") or ""
         check(iv.get("status") == "ok", f"interview finished: {iv['data'].get('done')} steps in {time.time() - t0:.0f} s",
               f"interview stopped: {iv.get('error')}")
-        check("0x0006 On/Off" in report and "0x0000 Basic" in report, "the report names the On/Off and Basic clusters",
+        check(("0x0006 On/Off" in report or not has_onoff) and "0x0000 Basic" in report, "the report names the On/Off and Basic clusters",
               f"report lacks On/Off or Basic:\n{report}")
         check(re.search(r"^Manufacturer: (?!not read)", report, re.M) is not None and re.search(r"^Model: (?!not read)", report, re.M) is not None,
               "the report gives the manufacturer and model", f"report lacks manufacturer or model:\n{report}")
@@ -690,7 +708,7 @@ if SLOW:
         masked = ieee[:6] + "X" * 10
         check(masked in text and ieee not in text, f"the saved report shows the IEEE as {masked}", "the saved report lacks the masked IEEE or shows the full one")
         check(DEVICE_LABEL not in text, "the saved report does not name the device (aliases on)", "the device label is in the saved report")
-        check("[details=\"Attributes" in text and "0x0006 On/Off" in text, "the saved report lists the attributes",
+        check("[details=\"Attributes" in text and ("0x0006 On/Off" in text or "0x0000 Basic" in text), "the saved report lists the attributes",
               "the saved report lacks the attribute list")
         page = json.dumps(request("GET", f"/installedapp/configure/json/{iid}/devicePage"))
         m = re.search(r"<textarea id='zbwReport'[^>]*>(.*?)</textarea>", page, re.S)
