@@ -160,9 +160,9 @@ void connect() {
         String host = hubAddress ? "${hubAddress}" : "127.0.0.1:8080"
         String uri = "ws://${host}/logsocket"
         Map opts = [pingInterval: (pingInterval ?: 30).toInteger()]
-        // A hub with hub security closes an unauthenticated logsocket right after the handshake
-        // (2.5.3.107), loopback included. Log in on every connect so an expired session heals
-        // on the next reconnect.
+        // A hub with hub security may close an unauthenticated logsocket right after the
+        // handshake, loopback included. Log in on every connect so an expired session heals on
+        // the next reconnect.
         if (hubUsername) {
             String cookie = login(host)
             if (cookie == null) {
@@ -371,7 +371,7 @@ private String login(String host) {
         return null
     }
     logNet "Hub login: HTTP ${status}, redirect ${location}, session cookie ${cookie ? 'received' : 'not set'}"
-    // Success is a redirect away from /login (302 to /, 2.5.3.107). A rejected login answers
+    // Success is a redirect away from /login (302 to /). A rejected login answers
     // 200 with the login page again, and still sets an unauthenticated session cookie.
     if (status < 300 || status >= 400 || location?.contains("/login")) {
         logWarn "Hub login to ${host} was rejected (HTTP ${status}); check the hub username and password, or clear the username if that hub has no hub security"
