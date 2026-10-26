@@ -17,7 +17,9 @@ The parent app (`Log Monitor`) does the filtering, deduplication, rate limiting,
 ### Bridges (log sources)
 - Up to **5 bridges**, each connected to one hub's `/logsocket`
 - The local hub is reached on `127.0.0.1:8080`; a remote hub on `ws://{ip}/logsocket`, port 80
-- Reconnects after a drop, waiting 5, 10, 20, then 40 s between attempts; configurable ping interval; a manual disconnect stays disconnected
+- Reconnects after a drop, waiting 5 s and doubling up to 5 minutes between attempts; the wait starts over once a connection has stayed up for 30 s. Configurable ping interval; a manual disconnect stays disconnected
+- Reconnects after 30 minutes without a log line (configurable), since a socket can stay open and deliver nothing
+- Logs in to a hub that has hub security, with a username and password stored encrypted on the bridge device
 - Waits 60 s before connecting when the hub has been up for less than 60 s, so it doesn't connect before the hub's websocket service is ready
 - Decodes HTML entities in log text and names, including the double encoding remote hubs often send
 - The main page shows each bridge's connection status and how many log lines it has received
@@ -134,13 +136,16 @@ Set on the bridge device's page:
 
 | Setting | Default | Description |
 |---|---|---|
+| Hub username | _(blank)_ | Only for a hub with hub security. Clearing it also removes the stored password |
+| Hub password | _(blank)_ | Stored encrypted and never shown again; enter it only to change it |
 | Auto-reconnect on disconnect | on | Reconnect after a drop, with the waits above |
+| Reconnect after minutes without a log line | 30 | 0 turns it off. A quiet hub may reconnect once per period, which is harmless |
 | WebSocket ping interval | 30 s | Keepalive ping, 10–300 s |
 | Enable info logging | on | Connect and disconnect messages |
 | Enable debug logging | off | Connection details; turns itself off after 30 minutes |
 | Enable trace logging | off | One line per log line received (very verbose); turns itself off after 30 minutes |
 
-The bridge device has **Connect**, **Disconnect** and **Reconnect** commands. Its `connectionStatus` attribute is `initializing`, `connecting`, `connected`, `reconnecting`, `disconnected` or `error`.
+The bridge device has **Connect**, **Disconnect** and **Reconnect** commands. Its `connectionStatus` attribute is `initializing`, `connecting`, `connected`, `reconnecting`, `disconnected`, `login failed` or `error`. `login failed` means the hub rejected the username or password, or the hub has no hub security and the username should be cleared.
 
 ### Filter
 
