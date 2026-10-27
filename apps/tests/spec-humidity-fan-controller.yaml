@@ -17,6 +17,9 @@
 #     per 5 minutes per episode, a physical off is honored, a fan the app doesn't
 #     own is left alone, another app releasing a shared fan is re-asserted, and
 #     the physical-run floor arms, defers a humidity off and clears on a hand off
+#   - smoke detectors (0.11.0): smoke turns off a fan the app owns, at once even
+#     during the physical-run floor, blocks re-assertion, and its clear turns the
+#     fan back on while humidity is high
 #
 # The 1-minute timers (max fan run time, run-floor expiry) are in
 # test-humidity-fan-controller-slow.sh, behind RUN_SLOW_TESTS=1. The re-assert
@@ -54,6 +57,7 @@ inputs:
   - { name: test-hfc-ref,      driver: Virtual Humidity Sensor, role: referenceHumiditySensors }
   - { name: test-hfc-restrict, driver: Virtual Switch,          role: restrictionSwitchesMustBeOff }
   - { name: test-hfc-motion,   driver: Virtual Motion Sensor,   role: occupancySensors }
+  - { name: test-hfc-smoke,    driver: Virtual Smoke Detector,  role: smokeDetectors }
 
 outputs:
   - { name: test-hfc-fan,   driver: Virtual Switch with Physical Events, role: fanSwitch }
@@ -65,6 +69,7 @@ maker_api:
 cases:
   - name: baseline-normal
     setup:
+      - { device: test-hfc-smoke,    command: clear }
       - { device: test-hfc-bath,     command: setHumidity, args: [45] }
       - { device: test-hfc-ref,      command: setHumidity, args: [50] }
       - { device: test-hfc-restrict, command: "off" }
@@ -401,4 +406,69 @@ cases:
     assert_logs:
       - { pattern: "deferred off \\(humidity normalized\\) abandoned", level: info }
 
-runtime_budget_seconds: 120
+  # ── Smoke detectors (0.11.0) ─────────────────────────────────────────
+  # From here: NORMAL, fan off, smoke clear.
+
+  - name: smoke-turns-off-an-owned-fan
+    setup:
+      - { device: test-hfc-bath, command: setHumidity, args: [75] }
+      - await: { device: test-hfc-fan, attribute: switch, value: "on", timeout_seconds: 6 }
+    actions:
+      - { device: test-hfc-smoke, command: detected }
+    wait_seconds: 2
+    assert:
+      - { device: test-hfc-fan,   attribute: switch, value: "off" }
+      - { device: test-hfc-hi-sw, attribute: switch, value: "on" }
+    assert_logs:
+      - { pattern: "Smoke or CO detected - turning off fan", level: info }
+
+  # A fire rule turns fans on and off; the app leaves the fan alone while smoke lasts.
+  - name: no-reassertion-during-smoke
+    command_spacing_seconds: 1.0
+    actions:
+      - { device: test-hfc-fan, command: "on" }
+      - { device: test-hfc-fan, command: "off" }
+    wait_seconds: 2
+    assert:
+      - { device: test-hfc-fan, attribute: switch, value: "off" }
+    assert_logs:
+      - { pattern: "turning it back on", negate: true }
+
+  - name: smoke-clear-while-high-turns-the-fan-on
+    actions:
+      - { device: test-hfc-smoke, command: clear }
+    wait_seconds: 2
+    assert:
+      - { device: test-hfc-fan, attribute: switch, value: "on" }
+    assert_logs:
+      - { pattern: "Restriction lifted while humidity is high", level: info }
+
+  # Smoke skips the physical-run floor: the off is not deferred.
+  - name: smoke-overrides-the-run-floor
+    setup:
+      - { device: test-hfc-bath, command: setHumidity, args: [30] }
+      - await: { device: test-hfc-hi-sw, attribute: switch, value: "off", timeout_seconds: 8 }
+      - await: { device: test-hfc-fan, attribute: switch, value: "off", timeout_seconds: 6 }
+    actions:
+      - { device: test-hfc-fan, command: physicalOn }
+      - { device: test-hfc-bath, command: setHumidity, args: [75] }
+      - await: { device: test-hfc-hi-sw, attribute: switch, value: "on", timeout_seconds: 6 }
+      - { device: test-hfc-smoke, command: detected }
+    command_spacing_seconds: 1.0
+    wait_seconds: 2
+    assert:
+      - { device: test-hfc-fan, attribute: switch, value: "off" }
+    assert_logs:
+      - { pattern: "Smoke or CO detected - turning off fan", level: info }
+      - { pattern: "deferred", negate: true }
+
+  - name: cleanup-smoke
+    actions:
+      - { device: test-hfc-smoke, command: clear }
+      - { device: test-hfc-bath,  command: setHumidity, args: [30] }
+      - await: { device: test-hfc-hi-sw, attribute: switch, value: "off", timeout_seconds: 8 }
+    wait_seconds: 1
+    assert:
+      - { device: test-hfc-fan, attribute: switch, value: "off" }
+
+runtime_budget_seconds: 150

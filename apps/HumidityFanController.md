@@ -25,7 +25,7 @@ The app compares the bathroom humidity with a reference humidity, usually a near
 
 **Physical activation.** Optionally, a fan turned on at the wall switch runs for at least a set time, then turns off. Humidity and restriction requests to turn it off wait until that time has passed. Pressing the wall switch again turns it off at once.
 
-**Restrictions.** While any "must be off" switch is on, or any "must be on" switch is off, the app pauses. A fan the app turned on is turned off, and it turns back on when the restriction clears if the bathroom is still high.
+**Restrictions.** While any "must be off" switch is on, or any "must be on" switch is off, the app pauses. A fan the app turned on is turned off, and it turns back on when the restriction clears if the bathroom is still high. Smoke and CO detectors work the same way while any of them detects, except that the app turns its fan off at once, even during the run time after a wall-switch press, and never turns a fan back on while the alarm lasts.
 
 **High humidity switch.** An optional virtual switch is on while the bathroom is high (from activation until the fan's off delay ends) and off otherwise.
 
@@ -93,6 +93,8 @@ The app compares the bathroom humidity with a reference humidity, usually a near
 |---|---|
 | Restriction Switches (Must Be OFF) | Pause while any of these is on |
 | Restriction Switches (Must Be ON) | Pause while any of these is off |
+| Smoke Detectors | Pause while any detects smoke |
+| CO Detectors | Pause while any detects CO |
 
 Info, debug and trace logging can be turned on separately; debug and trace logging turn themselves off after 30 minutes. The top of the app's page shows the current humidity state and the time left on a pending change.
 
