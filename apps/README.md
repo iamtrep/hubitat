@@ -37,6 +37,7 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 | [LocationEventMapper/](./LocationEventMapper/) | TBD |
 | [LogMonitor/](./LogMonitor/) | Monitor hub logs with multiple filters and output actions |
 | [MultiHubInventory/](./MultiHubInventory/) | Read-only cross-hub device inventory, aggregated from each hub's Hub Inspector audit API |
+| [PowerStateMonitor/](./PowerStateMonitor/) | Publishes a load's operating state, read from its power meter with surges filtered out |
 | [sensors/](./sensors/) |  |
 | [SwitchedHeaterThermostat/](./SwitchedHeaterThermostat/) | Heater switches driven by a Virtual Thermostat and temperature sensors, with alerts |
 | [tests/](./tests/) |  |
