@@ -14,12 +14,17 @@ import groovy.transform.Field
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "1.0.5"
+@Field static final String CODE_VERSION = "1.0.6"
 @Field static final int STARTUP_DELAY_SECS = 60
 // Set by disconnect() so the socket-closed callback doesn't reconnect. Not atomicState: in a
 // driver, a state write-back at method exit overwrites atomicState keys written after the
 // method's first state access. False (the default) after a reboot is correct.
 @Field static final ConcurrentHashMap<String, Boolean> INTENTIONAL_DISCONNECT = new ConcurrentHashMap<>()
+// When this driver last closed its own socket, keyed by device id. The close callback can arrive
+// after connect() has cleared INTENTIONAL_DISCONNECT; treated as a drop, it schedules a connect
+// that closes the new socket, whose callback schedules another, and so on (seen for hours).
+@Field static final ConcurrentHashMap<String, Long> OWN_CLOSE_AT = new ConcurrentHashMap<>()
+@Field static final long OWN_CLOSE_WINDOW_MS = 5000L
 // Keyed by device id: @Field static is shared by every bridge device of this type.
 @Field static final ConcurrentHashMap<String, AtomicInteger> LOGS_RECEIVED = new ConcurrentHashMap<>()
 // Reset only once a connection has stayed open STABLE_SECS: a hub that closes right after the
@@ -106,6 +111,7 @@ void uninstalled() {
     logDebug "uninstalled()"
     disconnect()
     RECONNECT_ATTEMPTS.remove(device.id as String)
+    OWN_CLOSE_AT.remove(device.id as String)
     PASSWORD_CACHE.remove(device.id as String)
     LAST_MESSAGE.remove(device.id as String)
 }
@@ -120,9 +126,11 @@ void initialize() {
 
     // Close any open socket first: connecting over an open one makes the old socket's close
     // callback schedule a reconnect, which closes the new one, and so on. The flag stays set
-    // until connect() so that late callback is ignored.
+    // until connect(), and OWN_CLOSE_AT covers a callback that comes after it.
     INTENTIONAL_DISCONNECT.put(device.id.toString(), true)
+    OWN_CLOSE_AT.put(device.id.toString(), now())
     try { interfaces.webSocket.close() } catch (Exception ignored) { }
+    state.wsConnected = false
     reconnectAttempts().set(0)
     logsReceived().set(0)
 
@@ -152,6 +160,12 @@ private void checkVersion(boolean reinit = true) {
 void connect() {
     logNet "Connecting to logsocket..."
     unschedule("connect")
+    // A connect left over from before the socket opened: connecting again would close it.
+    // reconnect() and initialize() clear wsConnected when they want a fresh socket.
+    if (state.wsConnected) {
+        logNet "Already connected; skipping the connect"
+        return
+    }
 
     try {
         INTENTIONAL_DISCONNECT.put(device.id.toString(), false)
@@ -189,6 +203,7 @@ void connect() {
 void disconnect() {
     logNet "Disconnecting WebSocket..."
     INTENTIONAL_DISCONNECT.put(device.id.toString(), true)
+    OWN_CLOSE_AT.put(device.id.toString(), now())
     unschedule("connect")
 
     try {
@@ -234,6 +249,10 @@ void webSocketStatus(String message) {
             scheduleReconnect()
         }
     } else if (message.contains("status: open")) {
+        // The old socket's close is reported before the new one opens; a close from here on
+        // is this socket's (a secured hub can close right after the handshake).
+        OWN_CLOSE_AT.remove(device.id.toString())
+        unschedule("connect")
         state.wsConnected = true
         state.lastConnectionTime = now()
         LAST_MESSAGE.put(device.id as String, now())
@@ -241,6 +260,11 @@ void webSocketStatus(String message) {
         sendEvent(name: "connectionStatus", value: "connected")
         logInfo "WebSocket connected"
     } else if (message.contains("status: closing") || message.contains("status: closed")) {
+        Long ownClose = OWN_CLOSE_AT.get(device.id.toString())
+        if (ownClose != null && now() - ownClose < OWN_CLOSE_WINDOW_MS) {
+            logNet "Ignoring the report of our own close (${message})"
+            return
+        }
         state.wsConnected = false
         unschedule("connectionStable")
         sendEvent(name: "connectionStatus", value: "disconnected")
