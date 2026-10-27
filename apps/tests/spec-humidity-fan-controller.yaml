@@ -11,9 +11,16 @@
 #   - cancel-pending-activation:   PENDING_HIGH → NORMAL bounce
 #   - absolute-high-bypass:        skips activationDelay when bath > absoluteHigh
 #   - countermand-pending-on:      v0.6.1 fix — external OFF resolves a pending
-#                                  ON cleanly, no spurious "Fan failed to turn on"
+#                                  ON cleanly, no spurious "Fan failed to turn on";
+#                                  since 0.10.0 the digital off is re-asserted
+#   - fan-switch handling (0.10.0): a digital off while HIGH is re-asserted once
+#     per 5 minutes per episode, a physical off is honored, a fan the app doesn't
+#     own is left alone, another app releasing a shared fan is re-asserted, and
+#     the physical-run floor arms, defers a humidity off and clears on a hand off
 #
-# Gap: max-fan-run-time-expiry (60s minimum — needs slow-test variant).
+# The 1-minute timers (max fan run time, run-floor expiry) are in
+# test-humidity-fan-controller-slow.sh, behind RUN_SLOW_TESTS=1. The re-assert
+# decision itself is unit-tested in test-humidity-fan-controller-core.groovy.
 #
 # Test-friendly timing: activationDelay=2s, deactivationDelay=2s,
 # maxFanRunTime=0. Reference baseline = 50%, bathroom triggers:
@@ -39,6 +46,8 @@ app:
     maxFanRunTime: 0
     excessiveChangeThreshold: 50    # high enough to not disturb existing-case Δs (max 30); new case uses Δ=60
     occupancyWindowSeconds: 5    # shortened from 600 default for testable gate-expiry timing
+    physicalRunTimerEnabled: true
+    physicalRunTimerMinutes: 1   # only a physical on arms it; expiry is in the slow test
 
 inputs:
   - { name: test-hfc-bath,     driver: Virtual Humidity Sensor, role: bathroomHumiditySensors }
@@ -47,7 +56,7 @@ inputs:
   - { name: test-hfc-motion,   driver: Virtual Motion Sensor,   role: occupancySensors }
 
 outputs:
-  - { name: test-hfc-fan,   driver: Virtual Switch, role: fanSwitch }
+  - { name: test-hfc-fan,   driver: Virtual Switch with Physical Events, role: fanSwitch }
   - { name: test-hfc-hi-sw, driver: Virtual Switch, role: highHumiditySwitch }
 
 maker_api:
@@ -140,7 +149,8 @@ cases:
   #   bath=75 → rise during deactivation → back to HIGH → turnOnFan →
   #             pendingCommand="on", fanSwitch.on() is a dedup (fan already on)
   #   fan.off → fanSwitchHandler must treat as countermand: clear
-  #             pendingCommand, clear fanTurnedOnByApp, no spurious error
+  #             pendingCommand, no spurious error. The off is digital and
+  #             humidity is HIGH, so since 0.10.0 the fan is turned back on.
   #
   # Before v0.6.1, verifyFanOn fired 5s later and emitted a spurious
   # "Fan failed to turn on" error + notification.
@@ -152,10 +162,11 @@ cases:
     command_spacing_seconds: 1.0
     wait_seconds: 2
     assert:
-      - { device: test-hfc-fan,   attribute: switch, value: "off" }
+      - { device: test-hfc-fan,   attribute: switch, value: "on" }
       - { device: test-hfc-hi-sw, attribute: switch, value: "on" }
     assert_logs:
       - { pattern: "Pending ON countermanded by external OFF event", level: info }
+      - { pattern: "turning it back on", level: info }
       - { pattern: "Fan failed to turn on", level: error, negate: true }
 
   - name: restriction-blocks-activation
@@ -227,6 +238,7 @@ cases:
     setup:
       - { device: test-hfc-bath,   command: setHumidity, args: [40] }
       - { device: test-hfc-motion, command: inactive }
+      - await: { device: test-hfc-hi-sw, attribute: switch, value: "off", timeout_seconds: 8 }
       - { device: test-hfc-fan,    command: "off" }
       - { device: test-hfc-hi-sw,  command: "off" }
     setup_wait_seconds: 4
@@ -260,6 +272,7 @@ cases:
       - { device: test-hfc-bath,     command: setHumidity, args: [30] }
       - { device: test-hfc-ref,      command: setHumidity, args: [50] }
       - { device: test-hfc-restrict, command: "off" }
+      - await: { device: test-hfc-hi-sw, attribute: switch, value: "off", timeout_seconds: 8 }
       - { device: test-hfc-fan,      command: "off" }
       - { device: test-hfc-hi-sw,    command: "off" }
     setup_wait_seconds: 4
@@ -273,4 +286,119 @@ cases:
       - { pattern: "Excessive humidity change", level: info }
       - { pattern: "bypassing activation delay", level: info }
 
-runtime_budget_seconds: 70
+  # ── Fan-switch handling (0.10.0) ─────────────────────────────────────
+  # From here: state HIGH, fan on and owned, a new episode (no re-assertion yet).
+
+  # Another source turns the fan off digitally while humidity is high.
+  - name: digital-off-while-high-is-reasserted
+    actions:
+      - { device: test-hfc-fan, command: "off" }
+    wait_seconds: 2
+    assert:
+      - { device: test-hfc-fan,   attribute: switch, value: "on" }
+      - { device: test-hfc-hi-sw, attribute: switch, value: "on" }
+    assert_logs:
+      - { pattern: "turned off by another source while humidity is high", level: info }
+
+  # A second digital off within 5 minutes of the re-assertion is left off,
+  # so the app can't fight another automation.
+  - name: second-digital-off-is-throttled
+    actions:
+      - { device: test-hfc-fan, command: "off" }
+    wait_seconds: 2
+    assert:
+      - { device: test-hfc-fan,   attribute: switch, value: "off" }
+      - { device: test-hfc-hi-sw, attribute: switch, value: "on" }
+    assert_logs:
+      - { pattern: "turned off again within 5 minutes of being turned back on - left off", level: warn }
+    allow_log_patterns:
+      - "turned off again within 5 minutes"
+
+  # The app no longer owns the fan: another source turning it on then off is
+  # left alone, even while humidity is high.
+  - name: digital-off-of-an-unowned-fan-is-left-alone
+    command_spacing_seconds: 1.0
+    actions:
+      - { device: test-hfc-fan, command: "on" }
+      - { device: test-hfc-fan, command: "off" }
+    wait_seconds: 2
+    assert:
+      - { device: test-hfc-fan, attribute: switch, value: "off" }
+    assert_logs:
+      - { pattern: "turning it back on", negate: true }
+
+  # A hand at the wall is honored while humidity is high. The setup toggles the
+  # restriction so the app turns the fan on again and owns it.
+  - name: physical-off-while-high-is-honored
+    setup:
+      - { device: test-hfc-restrict, command: "on" }
+      - { device: test-hfc-restrict, command: "off" }
+      - await: { device: test-hfc-fan, attribute: switch, value: "on", timeout_seconds: 6 }
+    actions:
+      - { device: test-hfc-fan, command: physicalOff }
+    wait_seconds: 2
+    assert:
+      - { device: test-hfc-fan,   attribute: switch, value: "off" }
+      - { device: test-hfc-hi-sw, attribute: switch, value: "on" }
+    assert_logs:
+      - { pattern: "Fan turned off externally - clearing app control flag", level: info }
+      - { pattern: "turning it back on", negate: true }
+
+  # The IAQ case: another app has the fan on, humidity goes HIGH (the app
+  # takes the fan), then the other app releases it with a digital off. A new
+  # episode, so the throttle from the cases above no longer applies.
+  - name: another-app-releasing-a-shared-fan-is-reasserted
+    setup:
+      - { device: test-hfc-bath, command: setHumidity, args: [30] }
+      - await: { device: test-hfc-hi-sw, attribute: switch, value: "off", timeout_seconds: 8 }
+      - { device: test-hfc-fan,  command: "on" }
+    actions:
+      - { device: test-hfc-bath, command: setHumidity, args: [75] }
+      - await: { device: test-hfc-hi-sw, attribute: switch, value: "on", timeout_seconds: 6 }
+      - { device: test-hfc-fan,  command: "off" }
+    wait_seconds: 2
+    assert:
+      - { device: test-hfc-fan,   attribute: switch, value: "on" }
+      - { device: test-hfc-hi-sw, attribute: switch, value: "on" }
+    assert_logs:
+      - { pattern: "turned off by another source while humidity is high", level: info }
+      - { pattern: "Fan failed to turn on", level: error, negate: true }
+
+  # Physical-run floor: a hand turning the fan on arms the 1-minute floor.
+  - name: physical-on-arms-the-run-floor
+    setup:
+      - { device: test-hfc-bath, command: setHumidity, args: [30] }
+      - await: { device: test-hfc-hi-sw, attribute: switch, value: "off", timeout_seconds: 8 }
+      - await: { device: test-hfc-fan, attribute: switch, value: "off", timeout_seconds: 6 }
+    actions:
+      - { device: test-hfc-fan, command: physicalOn }
+    wait_seconds: 1
+    assert:
+      - { device: test-hfc-fan, attribute: switch, value: "on" }
+    assert_logs:
+      - { pattern: "Physical activation detected", level: info }
+
+  # While the floor runs, a humidity episode's off is deferred.
+  - name: run-floor-defers-the-humidity-off
+    actions:
+      - { device: test-hfc-bath, command: setHumidity, args: [75] }
+      - await: { device: test-hfc-hi-sw, attribute: switch, value: "on", timeout_seconds: 6 }
+      - { device: test-hfc-bath, command: setHumidity, args: [30] }
+      - await: { device: test-hfc-hi-sw, attribute: switch, value: "off", timeout_seconds: 8 }
+    wait_seconds: 1
+    assert:
+      - { device: test-hfc-fan, attribute: switch, value: "on" }
+    assert_logs:
+      - { pattern: "deferred — physical-run floor", level: info }
+
+  # A hand turning the fan off clears the floor and abandons the deferred off.
+  - name: physical-off-clears-the-run-floor
+    actions:
+      - { device: test-hfc-fan, command: physicalOff }
+    wait_seconds: 1
+    assert:
+      - { device: test-hfc-fan, attribute: switch, value: "off" }
+    assert_logs:
+      - { pattern: "deferred off \\(humidity normalized\\) abandoned", level: info }
+
+runtime_budget_seconds: 120

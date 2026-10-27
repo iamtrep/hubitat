@@ -15,7 +15,7 @@
 #   bash apps/tests/test-humidity-fan-controller.sh @hubname                    # specific hub
 #   bash apps/tests/test-humidity-fan-controller.sh @hubname 247                # specific hub + explicit instance id
 #
-# Runtime budget: ~70s. Tests exceeding this must opt into RUN_SLOW_TESTS=1 per TESTING.md §1.1.
+# Runtime budget: ~120s. Tests exceeding this must opt into RUN_SLOW_TESTS=1 per TESTING.md §1.1.
 #
 
 set -euo pipefail
@@ -58,8 +58,8 @@ APP_INSTANCE_LABEL    = "test-hfc-app"
 MAKER_API_LABEL       = "test-hfc-maker"
 INPUT_DEVICE_LABELS   = ["test-hfc-bath", "test-hfc-ref", "test-hfc-restrict", "test-hfc-motion"]
 OUTPUT_DEVICE_LABELS  = ["test-hfc-fan", "test-hfc-hi-sw"]
-CASES                 = [{'name': 'baseline-normal', 'setup': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [45]}, {'device': 'test-hfc-ref', 'command': 'setHumidity', 'args': [50]}, {'device': 'test-hfc-restrict', 'command': 'off'}, {'device': 'test-hfc-fan', 'command': 'off'}, {'device': 'test-hfc-hi-sw', 'command': 'off'}], 'wait_seconds': 4, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'off'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'off'}]}, {'name': 'activate-via-offset', 'actions': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [75]}], 'wait_seconds': 4, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'on'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'on'}]}, {'name': 'cancel-pending-deactivation', 'actions': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [60]}, {'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [75]}], 'command_spacing_seconds': 1.0, 'wait_seconds': 2, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'on'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'on'}], 'assert_logs': [{'pattern': 'Humidity rose during deactivation delay', 'level': 'info'}]}, {'name': 'deactivate-via-snapshot', 'actions': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [60]}, {'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [60]}], 'command_spacing_seconds': 1.0, 'wait_seconds': 4, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'off'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'off'}]}, {'name': 'cancel-pending-activation', 'actions': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [75]}, {'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [45]}], 'command_spacing_seconds': 1.0, 'wait_seconds': 2, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'off'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'off'}], 'assert_logs': [{'pattern': 'Humidity dropped during activation delay', 'level': 'info'}]}, {'name': 'absolute-high-bypass', 'actions': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [75]}, {'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [95]}], 'command_spacing_seconds': 1.0, 'wait_seconds': 0.5, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'on'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'on'}], 'assert_logs': [{'pattern': 'bypassing activation delay', 'level': 'info'}]}, {'name': 'countermand-pending-on', 'actions': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [60]}, {'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [75]}, {'device': 'test-hfc-fan', 'command': 'off'}], 'command_spacing_seconds': 1.0, 'wait_seconds': 2, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'off'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'on'}], 'assert_logs': [{'pattern': 'Pending ON countermanded by external OFF event', 'level': 'info'}, {'pattern': 'Fan failed to turn on', 'level': 'error', 'negate': True}]}, {'name': 'restriction-blocks-activation', 'setup': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [45]}, {'device': 'test-hfc-restrict', 'command': 'on'}], 'setup_wait_seconds': 3, 'actions': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [75]}], 'wait_seconds': 4, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'off'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'on'}]}, {'name': 'restriction-lifted-while-high', 'actions': [{'device': 'test-hfc-restrict', 'command': 'off'}], 'wait_seconds': 3, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'on'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'on'}], 'assert_logs': [{'pattern': 'Restriction lifted while humidity is high', 'level': 'info'}]}, {'name': 'cleanup-to-baseline', 'actions': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [45]}], 'wait_seconds': 4, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'off'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'off'}]}, {'name': 'fast-climb-bypasses-activation-delay', 'setup': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [40]}, {'device': 'test-hfc-ref', 'command': 'setHumidity', 'args': [50]}, {'device': 'test-hfc-restrict', 'command': 'off'}, {'device': 'test-hfc-fan', 'command': 'off'}, {'device': 'test-hfc-hi-sw', 'command': 'off'}, {'device': 'test-hfc-motion', 'command': 'active'}], 'setup_wait_seconds': 4, 'actions': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [50]}, {'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [65]}, {'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [75]}], 'command_spacing_seconds': 0.7, 'wait_seconds': 1, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'on'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'on'}], 'assert_logs': [{'pattern': 'Fast humidity climb detected', 'level': 'info'}, {'pattern': 'bypassing activation delay', 'level': 'info'}]}, {'name': 'occupancy-gate-blocks-fast-climb', 'setup': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [40]}, {'device': 'test-hfc-motion', 'command': 'inactive'}, {'device': 'test-hfc-fan', 'command': 'off'}, {'device': 'test-hfc-hi-sw', 'command': 'off'}], 'setup_wait_seconds': 4, 'actions': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [50]}, {'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [65]}, {'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [75]}], 'command_spacing_seconds': 0.7, 'wait_seconds': 1, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'off'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'off'}], 'assert_logs': [{'pattern': 'Fast humidity climb detected', 'level': 'info', 'negate': True}]}, {'name': 'excessive-change-bypasses-from-normal', 'setup': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [30]}, {'device': 'test-hfc-ref', 'command': 'setHumidity', 'args': [50]}, {'device': 'test-hfc-restrict', 'command': 'off'}, {'device': 'test-hfc-fan', 'command': 'off'}, {'device': 'test-hfc-hi-sw', 'command': 'off'}], 'setup_wait_seconds': 4, 'actions': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [92]}], 'wait_seconds': 0.5, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'on'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'on'}], 'assert_logs': [{'pattern': 'Excessive humidity change', 'level': 'info'}, {'pattern': 'bypassing activation delay', 'level': 'info'}]}]
-RUNTIME_BUDGET_SECONDS = 70
+CASES                 = [{'name': 'baseline-normal', 'setup': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [45]}, {'device': 'test-hfc-ref', 'command': 'setHumidity', 'args': [50]}, {'device': 'test-hfc-restrict', 'command': 'off'}, {'device': 'test-hfc-fan', 'command': 'off'}, {'device': 'test-hfc-hi-sw', 'command': 'off'}], 'wait_seconds': 4, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'off'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'off'}]}, {'name': 'activate-via-offset', 'actions': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [75]}], 'wait_seconds': 4, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'on'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'on'}]}, {'name': 'cancel-pending-deactivation', 'actions': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [60]}, {'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [75]}], 'command_spacing_seconds': 1.0, 'wait_seconds': 2, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'on'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'on'}], 'assert_logs': [{'pattern': 'Humidity rose during deactivation delay', 'level': 'info'}]}, {'name': 'deactivate-via-snapshot', 'actions': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [60]}, {'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [60]}], 'command_spacing_seconds': 1.0, 'wait_seconds': 4, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'off'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'off'}]}, {'name': 'cancel-pending-activation', 'actions': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [75]}, {'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [45]}], 'command_spacing_seconds': 1.0, 'wait_seconds': 2, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'off'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'off'}], 'assert_logs': [{'pattern': 'Humidity dropped during activation delay', 'level': 'info'}]}, {'name': 'absolute-high-bypass', 'actions': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [75]}, {'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [95]}], 'command_spacing_seconds': 1.0, 'wait_seconds': 0.5, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'on'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'on'}], 'assert_logs': [{'pattern': 'bypassing activation delay', 'level': 'info'}]}, {'name': 'countermand-pending-on', 'actions': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [60]}, {'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [75]}, {'device': 'test-hfc-fan', 'command': 'off'}], 'command_spacing_seconds': 1.0, 'wait_seconds': 2, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'on'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'on'}], 'assert_logs': [{'pattern': 'Pending ON countermanded by external OFF event', 'level': 'info'}, {'pattern': 'turning it back on', 'level': 'info'}, {'pattern': 'Fan failed to turn on', 'level': 'error', 'negate': True}]}, {'name': 'restriction-blocks-activation', 'setup': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [45]}, {'device': 'test-hfc-restrict', 'command': 'on'}], 'setup_wait_seconds': 3, 'actions': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [75]}], 'wait_seconds': 4, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'off'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'on'}]}, {'name': 'restriction-lifted-while-high', 'actions': [{'device': 'test-hfc-restrict', 'command': 'off'}], 'wait_seconds': 3, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'on'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'on'}], 'assert_logs': [{'pattern': 'Restriction lifted while humidity is high', 'level': 'info'}]}, {'name': 'cleanup-to-baseline', 'actions': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [45]}], 'wait_seconds': 4, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'off'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'off'}]}, {'name': 'fast-climb-bypasses-activation-delay', 'setup': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [40]}, {'device': 'test-hfc-ref', 'command': 'setHumidity', 'args': [50]}, {'device': 'test-hfc-restrict', 'command': 'off'}, {'device': 'test-hfc-fan', 'command': 'off'}, {'device': 'test-hfc-hi-sw', 'command': 'off'}, {'device': 'test-hfc-motion', 'command': 'active'}], 'setup_wait_seconds': 4, 'actions': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [50]}, {'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [65]}, {'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [75]}], 'command_spacing_seconds': 0.7, 'wait_seconds': 1, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'on'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'on'}], 'assert_logs': [{'pattern': 'Fast humidity climb detected', 'level': 'info'}, {'pattern': 'bypassing activation delay', 'level': 'info'}]}, {'name': 'occupancy-gate-blocks-fast-climb', 'setup': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [40]}, {'device': 'test-hfc-motion', 'command': 'inactive'}, {'await': {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'off', 'timeout_seconds': 8}}, {'device': 'test-hfc-fan', 'command': 'off'}, {'device': 'test-hfc-hi-sw', 'command': 'off'}], 'setup_wait_seconds': 4, 'actions': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [50]}, {'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [65]}, {'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [75]}], 'command_spacing_seconds': 0.7, 'wait_seconds': 1, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'off'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'off'}], 'assert_logs': [{'pattern': 'Fast humidity climb detected', 'level': 'info', 'negate': True}]}, {'name': 'excessive-change-bypasses-from-normal', 'setup': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [30]}, {'device': 'test-hfc-ref', 'command': 'setHumidity', 'args': [50]}, {'device': 'test-hfc-restrict', 'command': 'off'}, {'await': {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'off', 'timeout_seconds': 8}}, {'device': 'test-hfc-fan', 'command': 'off'}, {'device': 'test-hfc-hi-sw', 'command': 'off'}], 'setup_wait_seconds': 4, 'actions': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [92]}], 'wait_seconds': 0.5, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'on'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'on'}], 'assert_logs': [{'pattern': 'Excessive humidity change', 'level': 'info'}, {'pattern': 'bypassing activation delay', 'level': 'info'}]}, {'name': 'digital-off-while-high-is-reasserted', 'actions': [{'device': 'test-hfc-fan', 'command': 'off'}], 'wait_seconds': 2, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'on'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'on'}], 'assert_logs': [{'pattern': 'turned off by another source while humidity is high', 'level': 'info'}]}, {'name': 'second-digital-off-is-throttled', 'actions': [{'device': 'test-hfc-fan', 'command': 'off'}], 'wait_seconds': 2, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'off'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'on'}], 'assert_logs': [{'pattern': 'turned off again within 5 minutes of being turned back on - left off', 'level': 'warn'}], 'allow_log_patterns': ['turned off again within 5 minutes']}, {'name': 'digital-off-of-an-unowned-fan-is-left-alone', 'command_spacing_seconds': 1.0, 'actions': [{'device': 'test-hfc-fan', 'command': 'on'}, {'device': 'test-hfc-fan', 'command': 'off'}], 'wait_seconds': 2, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'off'}], 'assert_logs': [{'pattern': 'turning it back on', 'negate': True}]}, {'name': 'physical-off-while-high-is-honored', 'setup': [{'device': 'test-hfc-restrict', 'command': 'on'}, {'device': 'test-hfc-restrict', 'command': 'off'}, {'await': {'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'on', 'timeout_seconds': 6}}], 'actions': [{'device': 'test-hfc-fan', 'command': 'physicalOff'}], 'wait_seconds': 2, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'off'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'on'}], 'assert_logs': [{'pattern': 'Fan turned off externally - clearing app control flag', 'level': 'info'}, {'pattern': 'turning it back on', 'negate': True}]}, {'name': 'another-app-releasing-a-shared-fan-is-reasserted', 'setup': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [30]}, {'await': {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'off', 'timeout_seconds': 8}}, {'device': 'test-hfc-fan', 'command': 'on'}], 'actions': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [75]}, {'await': {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'on', 'timeout_seconds': 6}}, {'device': 'test-hfc-fan', 'command': 'off'}], 'wait_seconds': 2, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'on'}, {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'on'}], 'assert_logs': [{'pattern': 'turned off by another source while humidity is high', 'level': 'info'}, {'pattern': 'Fan failed to turn on', 'level': 'error', 'negate': True}]}, {'name': 'physical-on-arms-the-run-floor', 'setup': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [30]}, {'await': {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'off', 'timeout_seconds': 8}}, {'await': {'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'off', 'timeout_seconds': 6}}], 'actions': [{'device': 'test-hfc-fan', 'command': 'physicalOn'}], 'wait_seconds': 1, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'on'}], 'assert_logs': [{'pattern': 'Physical activation detected', 'level': 'info'}]}, {'name': 'run-floor-defers-the-humidity-off', 'actions': [{'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [75]}, {'await': {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'on', 'timeout_seconds': 6}}, {'device': 'test-hfc-bath', 'command': 'setHumidity', 'args': [30]}, {'await': {'device': 'test-hfc-hi-sw', 'attribute': 'switch', 'value': 'off', 'timeout_seconds': 8}}], 'wait_seconds': 1, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'on'}], 'assert_logs': [{'pattern': 'deferred — physical-run floor', 'level': 'info'}]}, {'name': 'physical-off-clears-the-run-floor', 'actions': [{'device': 'test-hfc-fan', 'command': 'physicalOff'}], 'wait_seconds': 1, 'assert': [{'device': 'test-hfc-fan', 'attribute': 'switch', 'value': 'off'}], 'assert_logs': [{'pattern': 'deferred off \\(humidity normalized\\) abandoned', 'level': 'info'}]}]
+RUNTIME_BUDGET_SECONDS = 120
 
 # ── Stdin args ────────────────────────────────────────────────────────
 hub_name_arg, instance_id_arg, config_file, cookie_jar_path, project_root = sys.argv[1:6]
@@ -207,7 +207,7 @@ ok(f"Maker API: '{MAKER_API_LABEL}' id={maker_id}")
 def maker_req(url):
     """Build a request that carries the token in the Authorization header rather
     than in the URL, keeping it out of hub and proxy access logs. The platform
-    matches the scheme case-sensitively: it must be exactly "Bearer"."""
+    accepts the scheme in any case from 2.5.2.120 (exactly "Bearer" before)."""
     return urllib.request.Request(url, headers={"Authorization": f"Bearer {access_token}"})
 
 # ── Step 4: Resolve device labels to IDs ─────────────────────────────
@@ -223,14 +223,13 @@ def maker_get(path, timeout=15):
 
 def maker_send(device_id, command, args=None, timeout=15):
     """Drive a device via Maker API. Returns True on HTTP 200.
-    `args` is an optional list of command arguments — joined as URL
-    path segments. Hubitat Maker API supports a single secondary value
-    after the command for most parameterized commands (e.g.
-    /devices/{id}/setLevel/50 or /devices/{id}/setTemperature/22.5)."""
+    `args` is an optional list of command arguments, sent as one secondary
+    path segment joined by commas (e.g. /devices/{id}/setLevel/50 or
+    /devices/{id}/holdProfile/Home,next). Maker API answers 404 when the
+    arguments are separate path segments."""
     path = f"/devices/{device_id}/{command}"
     if args:
-        for a in args:
-            path += f"/{urllib.parse.quote(str(a), safe='')}"
+        path += "/" + ",".join(urllib.parse.quote(str(a), safe='') for a in args)
     url = f"{api_base}{path}"
     try:
         with urllib.request.urlopen(maker_req(url), timeout=timeout) as r:
@@ -255,6 +254,98 @@ def app_button(button_name, app_id=None, timeout=15):
             return r.status == 200
     except Exception:
         return False
+
+def _unset(v):
+    return v is None or v == "[]" or v == ""
+
+def _page_with_input(target, name):
+    """Config JSON of the page that declares input `name`: the main page, or a
+    page an href on the main page links to. Returns (cfg, error)."""
+    main = fetch(f"/installedapp/configure/json/{target}")
+    if not main or "configPage" not in main:
+        return None, f"could not read app {target} config"
+    def declares(cfg):
+        return name in {i["name"] for sec in cfg["configPage"].get("sections", []) for i in sec.get("input", [])}
+    if declares(main):
+        return main, None
+    for sec in main["configPage"].get("sections", []):
+        for b in sec.get("body", []):
+            if b.get("element") == "href" and b.get("page") and not b.get("url"):
+                sub = fetch(f"/installedapp/configure/json/{target}/{b['page']}")
+                if sub and "configPage" in sub and declares(sub):
+                    return sub, None
+    return None, f"app {target} has no input '{name}' on its main page or the pages it links to"
+
+def app_settings(changes, app_id=None, timeout=15):
+    """Save settings on an installed app's page (runs updated()). The input may
+    live on the main page or on a page the main page links to. Applies
+    `changes` one at a time, in order, so an input that only renders once an
+    earlier one is set (e.g. trace under debug) can follow it. Every other
+    setting on that page is echoed unchanged. Returns an error string, or None
+    on success."""
+    target = app_id if app_id is not None else instance_id
+    for name, want in changes.items():
+        cfg, err = _page_with_input(target, name)
+        if err:
+            return err
+        page, current = cfg["configPage"], cfg.get("settings") or {}
+        inputs = [i for sec in page.get("sections", []) for i in sec.get("input", [])]
+        sub_page = page.get("name", "mainPage") != "mainPage"
+        fields = [("_action_update", "Done"), ("formAction", "update"), ("id", str(target)),
+                  ("version", str(cfg["app"].get("version", 1))), ("appTypeId", ""),
+                  ("appTypeName", ""), ("currentPage", page.get("name", "mainPage")),
+                  ("pageBreadcrumbs", '["mainPage"]' if sub_page else "[]")]
+        for sec in page.get("sections", []):
+            for b in sec.get("body", []):
+                if b.get("element") == "label":
+                    fields += [(f"{b['name']}.type", "text"), (b["name"], cfg["app"].get("label") or "")]
+        for i in inputs:
+            n, typ = i["name"], i.get("type", "")
+            if typ in ("button", "paragraph", "href"):
+                continue
+            fields += [(f"{n}.type", typ), (f"{n}.multiple", "true" if i.get("multiple") else "false")]
+            value = want if n == name else current.get(n)
+            if isinstance(value, dict):
+                value = list(value.keys())
+            if typ.startswith(("capability.", "device.")):
+                ids = [str(v) for v in (value or [])] if not _unset(value) else []
+                if ids:
+                    fields.append((f"settings[{n}]", ",".join(ids)))
+                fields += [("deviceList", n), ("", "")]
+                continue
+            if _unset(value):
+                continue
+            if isinstance(value, list):                 # enum multiple: JSON array string
+                fields.append((f"settings[{n}]", json.dumps([str(v) for v in value])))
+                continue
+            if typ == "bool":
+                fields.append((f"checkbox[{n}]", "on"))
+                value = "true" if str(value).lower() == "true" else "false"
+            fields.append((f"settings[{n}]", str(value)))
+        fields += [("referrer", f"http://{hub_ip}/installedapp/list"),
+                   ("url", f"http://{hub_ip}/installedapp/configure/{target}/{page.get('name')}"),
+                   ("_cancellable", "false")]
+        req = urllib.request.Request(f"http://{hub_ip}/installedapp/update/json",
+                                     data=urllib.parse.urlencode(fields).encode())
+        req.add_header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+        try:
+            with opener.open(req, timeout=timeout) as r:
+                resp = json.loads(r.read().decode())
+        except Exception as e:
+            return f"save of '{name}' failed: {e}"
+        if not isinstance(resp, dict) or resp.get("status") != "success":
+            return f"save of '{name}' rejected: {resp}"
+        after = (fetch(f"/installedapp/configure/json/{target}") or {}).get("settings") or {}
+        got = after.get(name)
+        if isinstance(want, list):
+            if isinstance(got, str):
+                try: got = json.loads(got)
+                except ValueError: pass
+            if sorted(map(str, got or [])) != sorted(map(str, want)):
+                return f"'{name}' did not land: wanted {want}, hub has {got}"
+        elif str(got).lower() != str(want).lower():
+            return f"'{name}' did not land: wanted {want}, hub has {after.get(name)}"
+    return None
 
 devices_resp = maker_get("/devices")
 if not isinstance(devices_resp, list):
@@ -313,10 +404,34 @@ for case in CASES:
     spacing = float(case.get("command_spacing_seconds", 0))
 
     def run_step(step, kind):
-        # Two step shapes:
+        # Five step shapes:
         #   - device command: { device: <label>, command: <name>, args: [...] }
         #   - app button:     { button: <name> [, target_app: <label or id>] }
-        # target_app defaults to the app under test.
+        #   - app settings:   { settings: { <input>: <value>, ... } }  (saved in order)
+        #   - hub mode:       { mode: <mode name> }  (via Maker API)
+        #   - await state:    { await: { device: <label>, attribute: <name>, value: <v>, timeout_seconds: 10 } }
+        # target_app defaults to the app under test. An await polls until the
+        # attribute holds the value, for an app reply whose delay varies.
+        if "await" in step:
+            a = step["await"]
+            label, attr, want = a["device"], a["attribute"], str(a["value"])
+            deadline = time.time() + float(a.get("timeout_seconds", 10))
+            got = current_attribute(label, attr)
+            while str(got) != want and time.time() < deadline:
+                time.sleep(0.25)
+                got = current_attribute(label, attr)
+            if str(got) == want:
+                info(f"{kind}: {label}.{attr} = {got}")
+            else:
+                warn(f"{kind}: {label}.{attr} still {got!r}, not {want!r}, after {a.get('timeout_seconds', 10)}s")
+            return
+        if "settings" in step:
+            err = app_settings(step["settings"])
+            if err:
+                warn(f"{kind}: <app> settings {step['settings']} ({err})")
+            else:
+                info(f"{kind}: <app> settings {step['settings']}")
+            return
         if "button" in step:
             btn = step["button"]
             target = step.get("target_app")  # default → app under test
@@ -330,6 +445,22 @@ for case in CASES:
                 warn(f"{kind}: {label} ← {arrow} (HTTP non-200)")
             else:
                 info(f"{kind}: {label} ← {arrow}")
+            return
+        if "mode" in step:
+            want = step["mode"]
+            modes = maker_get("/modes")
+            if not isinstance(modes, list):
+                warn(f"{kind}: could not list hub modes ({modes})")
+                return
+            mid = next((str(m.get("id")) for m in modes if m.get("name") == want), None)
+            if mid is None:
+                warn(f"{kind}: hub mode {want!r} not found")
+            else:
+                res = maker_get(f"/modes/{mid}")
+                if isinstance(res, dict) and "_error" in res:
+                    warn(f"{kind}: hub mode ← {want} failed ({res['_error']})")
+                else:
+                    info(f"{kind}: hub mode ← {want}")
             return
         # Otherwise: device command
         label = step["device"]
