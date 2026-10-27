@@ -439,6 +439,18 @@ check('step: first install, recent active waits', step(null, 'active', t0, t0 + 
 check('step: no date counts from now', step('vacant', 'active', null, t0), [at: t0 + 5 * M])
 check('step: any other reading is vacant', step('vacant', 'unknown', t0, t0), [cancel: true])
 
+// ── week timeline ──
+wkSun = [:]; (-1..7).each { d -> wkSun += sunFor(core.addDays('2026-10-05', d, TZ)) }
+wk = core.weekSegments(tickedNormal, ctxAt('2026-10-05', '12:00', [sun: wkSun]), '2026-10-05')
+check('week: seven days', wk.size(), 7)
+check('week: Monday starts in the previous night period', [wk[0].segs[0].period, wk[0].segs[0].from], ['Night', 0.0])
+check('week: Monday periods in order', wk[0].segs*.period, ['Night', 'Wake', 'Leave', 'Night'])
+check('week: Wake starts at 06:30', wk[0].segs[1].from, 390.0)
+check('week: last segment ends at midnight', wk[0].segs[-1].to, 1440.0)
+check('week: occupied tick carried', wk[0].segs.find { it.period == 'Leave' }.useOccupied, true)
+check('week: Saturday uses the weekend group', wk[5].segs*.group.unique() - ['Weekdays'], ['Weekend'])
+check('week: fall-back day still spans 1440 minutes', core.weekSegments(tickedNormal, ctxAt('2026-10-26', '12:00'), '2026-10-26')[6].segs[-1].to, 1440.0)
+
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)

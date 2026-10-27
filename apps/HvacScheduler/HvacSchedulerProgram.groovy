@@ -36,32 +36,66 @@ preferences {
     page(name: "profilesPage")
     page(name: "schedulesPage")
     page(name: "optionsPage")
+    page(name: "advancedPage")
 }
 
 // ── UI ────────────────────────────────────────────────────────────────
 
 @Field static final String PRI = "p-button bg-hubitat-primary-green text-white"
 @Field static final String SEC = "p-button p-button-outlined"
+@Field static final String DANGER = "p-button p-button-outlined p-button-danger"
 @Field static final Map KIND_OPTS = [sunrise: "Sunrise", sunset: "Sunset", time: "A specific time", var: "Time from a hub variable"]
 @Field static final List<String> DAY_ABBR = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 @Field static final List<String> DAY_NAME = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
-@Field static final String DAY_CELL = 'min-width:44px;justify-content:center;font-size:20px;line-height:1'
+@Field static final String PILL_ON = 'min-height:36px;min-width:52px;justify-content:center;border-radius:18px;background:#2e8b2e;color:#fff;font-weight:500;font-size:14px'
+@Field static final String PILL_OFF = 'min-height:36px;min-width:52px;justify-content:center;border-radius:18px;border:1px solid rgba(128,128,128,.55);color:inherit;opacity:.8;font-size:14px'
 @Field static final String TSP_CSS = """<style>
-.tsp-t{border-collapse:collapse;width:100%;font-size:15px}
-.tsp-t th{text-align:left;font-weight:500;opacity:.7;border-bottom:1px solid rgba(128,128,128,.4);padding:10px 12px;white-space:nowrap;font-size:14px}
-.tsp-t td{border-bottom:1px solid rgba(128,128,128,.25);padding:4px 12px;vertical-align:middle}
-.tsp-t.tsp-dg th,.tsp-t.tsp-dg td{text-align:center}
-.tsp-t .tsp-l{text-align:left!important;font-weight:500}
-.tsp-tw{overflow-x:auto}
+.mdl-grid>.mdl-cell.app-ui-field,.mdl-grid>.mdl-cell.capability,.mdl-grid>.mdl-cell:has(>button.app-ui-navigation-control){margin-left:8px!important;margin-right:8px!important;padding-right:0!important}
+.mdl-grid>.mdl-cell:has(>a.app-ui-navigation-control){margin-left:8px!important;margin-right:8px!important;width:calc(100% - 16px)!important}
+.mdl-grid:has(>.mdl-cell:only-child>div>style:only-child){display:none}
+.mdl-cell:has(>button.p-button){align-self:flex-end;margin-bottom:8px}
+.app-ui-field .safariOnly>.mdl-cell:first-child{margin-left:0!important}
 .tsp-heat{color:var(--hubitat-validation-color, #d32f2f);font-weight:500}.tsp-cool{color:var(--hubitat-link-color, #1a77c9);font-weight:500}.tsp-dim{opacity:.65}
 .tsp-sel{background:rgba(61,127,31,.1)}
-.tsp-now{font-size:12px;font-weight:700;color:var(--hubitat-success-color, #356700);margin-left:6px}
+.tsp-now{font-size:11px;font-weight:700;letter-spacing:.05em;color:var(--hubitat-success-color, #356700);border:1px solid currentColor;border-radius:3px;padding:0 4px;margin-left:8px}
 .tsp-note{font-size:14px;opacity:.75;margin:4px 0}
-.tsp-big{font-size:24px;font-weight:500}
-.tsp-h{font-size:16px;font-weight:700;margin:12px 0 6px;padding-bottom:6px;border-bottom:1px solid rgba(128,128,128,.3)}
-.tsp-edit{background:rgba(128,128,128,.08);border-radius:4px}
+.tsp-small{font-size:12px}
+.tsp-mono{font-variant-numeric:tabular-nums}
+.tsp-big{font-size:24px;font-weight:500;margin:2px 0 6px}
+.tsp-cap{font-size:12px;letter-spacing:.06em;text-transform:uppercase;opacity:.75;font-weight:500;margin-bottom:4px}
+.tsp-nowcard>div{margin:2px 0}
+.tsp-panel{border:1px solid rgba(128,128,128,.35);border-radius:6px;padding:14px 16px}
+.tsp-tstat{margin:6px 0 10px}
+.tsp-kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;font-size:14px;margin-top:4px}
+.tsp-swatch{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px}
+.tsp-rows{border-top:1px solid rgba(128,128,128,.35)}
+.tsp-row{display:grid;gap:12px;align-items:center;min-height:46px;padding:0 12px;border-bottom:1px solid rgba(128,128,128,.25);color:inherit!important;cursor:pointer;font-size:14px}
+.tsp-row:hover{background:rgba(128,128,128,.08)}
+.tsp-rowh{min-height:32px;font-size:12px;opacity:.7;cursor:default}.tsp-rowh:hover{background:none}
+.tsp-pills,.tsp-ctl{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.tsp-ctl{gap:4px 36px}
+.tsp-pills>.form-group,.tsp-ctl>.form-group{display:none}
+.tsp-swrow{display:flex;align-items:center;gap:10px;color:inherit!important;min-height:36px;cursor:pointer;font-size:15px}
+.tsp-sw{position:relative;display:inline-block;flex:0 0 auto;width:38px;height:22px;border-radius:11px;background:rgba(128,128,128,.55)}
+.tsp-sw>span{position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff}
+.tsp-sw.on{background:#2e8b2e}.tsp-sw.on>span{left:19px}
+.tsp-tlhead{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px 14px;margin-bottom:8px}
+.tsp-legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;opacity:.85}
+.tsp-tl{display:grid;grid-template-columns:36px minmax(0,1fr);gap:5px 8px;align-items:center}
+.tsp-tlax{position:relative;height:14px;font-size:11px;opacity:.7}.tsp-tlax span{position:absolute;top:0}
+.tsp-tlday{font-size:12px;opacity:.8}.tsp-today{font-weight:700;opacity:1;color:var(--hubitat-success-color, #356700)}
+.tsp-tlrow{position:relative;height:24px;background:rgba(128,128,128,.15);border-radius:3px;overflow:hidden}
+.tsp-tlb{position:absolute;top:0;bottom:0;box-sizing:border-box;border-right:1px solid rgba(0,0,0,.3);color:#fff;font-size:11.5px;font-weight:500;display:flex;align-items:center;padding-left:6px;overflow:hidden;white-space:nowrap}
+.tsp-tlnow{position:absolute;top:-2px;bottom:-2px;width:2px;background:#4caf50;box-shadow:0 0 0 1px rgba(0,0,0,.45)}
+@media (max-width:640px){.tsp-swrow{min-height:44px}.tsp-hide-sm{display:none}.tsp-prow{grid-template-columns:56px minmax(0,1fr) minmax(0,1.4fr) 12px!important}
+.tsp-frow,.tsp-mrow{grid-template-columns:minmax(0,1fr) minmax(0,1.3fr) 12px!important}.tsp-tlb span{display:none}.tsp-tlrow{height:16px}}
 </style>"""
+
+// While an editor fills the page, the page's own Done button would leave without saving: hide it.
+String pageCss(boolean editing) {
+    return editing ? TSP_CSS.replace('</style>', "#fieldsetAppButtons button[value='Done']{display:none!important}</style>") : TSP_CSS
+}
 
 String esc(Object s) { s == null ? '' : s.toString().replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace("'", '&#39;') }
 
@@ -125,16 +159,8 @@ void uiErr(String text) { state.uiError = [page: state.uiPage ?: 'mainPage', tex
 String pageForButton(String btn) {
     if (btn ==~ /epf~\d+/ || btn.startsWith('btnProfile')) return 'profilesPage'
     if (btn ==~ /eov~\d+/ || btn.startsWith('btnOverride') || btn == 'btnOccSave') return 'optionsPage'
+    if (btn in ['btnApply', 'btnAdvance', 'btnEco', 'btnPause', 'btnResume', 'btnHold', 'btnImportDismiss']) return 'mainPage'
     return 'schedulesPage'
-}
-
-// "Name · 21.0" for a profile reference, or the custom values.
-String refLabel(Map cfg, String profile, Map custom) {
-    if (custom) return "Custom · ${heatSpan(custom.heat)}${custom.cool != null ? ' / ' + coolSpan(custom.cool) : ''}"
-    Map p = (cfg.profiles as List<Map>).find { it.name == profile }
-    if (!p) return esc(profile)
-    String h = p.heatVar ? esc(p.heatVar) : heatSpan(p.heat)
-    return "${esc(profile)}${h ? ' · ' + h : ''}"
 }
 
 String usage(String profile, Map cfg = null) {
@@ -196,7 +222,7 @@ Map mainPage() {
     dynamicPage(name: "mainPage", install: true, uninstall: true) {
         section {
             paragraph TSP_CSS
-            input "thermostats", "capability.thermostat", title: "Select Thermostats", multiple: true, required: true, submitOnChange: true
+            if (!installed || !thermostats) input "thermostats", "capability.thermostat", title: "Select Thermostats", multiple: true, required: true, submitOnChange: true
         }
         Map rep = state.importReport as Map
         if (rep) section("Imported") {
@@ -211,64 +237,60 @@ Map mainPage() {
             Map ctx = buildCtx(cfg)
             Map target = (rt.lastTarget ?: [layer: 'none']) as Map
             Map sm = statusMap(cfg, rt, target, ctx)
-            section("Now") {
-                paragraph nowHtml(cfg, rt, target, ctx, sm), width: 7
-                paragraph thermostatTable(), width: 5
+            Map sched = (cfg.schedules as List<Map>).find { it.name == cfg.active }
+            Map nx = sched?.type == 'time' ? nextTransitionOf(sched, ctx) : null
+            section {
+                paragraph nowHtml(cfg, rt, target, ctx, sm), width: 8
+                paragraph thermostatPanel(), width: 4
+                if (sched?.type == 'time') paragraph timelineHtml(cfg, sched, ctx)
             }
             section("Control") {
-                Map sched = (cfg.schedules as List<Map>).find { it.name == cfg.active }
-                Map nx = sched?.type == 'time' ? nextTransitionOf(sched, ctx) : null
-                input "btnApply", "button", title: "Apply now", width: 2, inputClass: PRI
-                if (nx) input "btnAdvance", "button", title: "Advance to ${esc(nx.custom ? 'custom values' : nx.profile)}", width: 3, inputClass: SEC
-                input "btnEco", "button", title: rt.eco ? "Turn eco off" : "Turn eco on", width: 2, inputClass: SEC
-                input "btnPause", "button", title: rt.paused ? "Resume" : "Pause", width: 2, inputClass: SEC
-                if (rt.hold) input "btnResume", "button", title: "End hold", width: 2, inputClass: SEC
-                Map holdOpts = (cfg.profiles as List<Map>).collectEntries { [(it.name): it.name] } + [custom: "Custom setpoints"]
-                input "holdSel", "enum", title: "Hold", options: holdOpts, width: 3, submitOnChange: true, required: false
-                if (holdSel == 'custom') {
-                    input "holdHeat", "decimal", title: "Heating setpoint (${unit()})", width: 2, submitOnChange: true, required: false
-                    input "holdCool", "decimal", title: "Cooling setpoint (${unit()})", width: 2, submitOnChange: true, required: false
-                }
-                String nxText = nx ? "Next transition (${hhmmOf(nx.at as long, ctx.tz as TimeZone)})" : "Next transition"
-                input "holdUntil", "enum", title: "Until", width: 3, submitOnChange: true, defaultValue: "next",
+                String err = errorPara('mainPage')
+                if (err) paragraph err
+                paragraph "<div class='tsp-ctl'>" +
+                          switchButton("btnPause", "Running", !rt.paused, "off pauses the program") +
+                          switchButton("btnEco", "Eco", rt.eco as boolean, "heat ${fmtT((cfg.eco as Map).offset)} ${unit()} lower, cool ${fmtT((cfg.eco as Map).offset)} ${unit()} higher") +
+                          "</div>", width: 9
+                input "btnApply", "button", title: "Apply now", width: 3, inputClass: SEC
+                Map holdOpts = (cfg.profiles as List<Map>).collectEntries { Map p -> [(p.name): profileText(cfg, p.name as String)] } + [custom: "Custom setpoints"]
+                input "holdSel", "enum", title: "Hold", options: holdOpts, width: 4, submitOnChange: true, required: false
+                String nxText = nx ? "Next period (${nx.period} at ${hhmmOf(nx.at as long, ctx.tz as TimeZone)})" : "Next period"
+                input "holdUntil", "enum", title: "Until", width: 4, submitOnChange: true, defaultValue: "next",
                       options: [next: nxText, minutes: "For a duration", at: "A date and time", indefinite: "Resumed by hand"]
-                if (holdUntil == 'minutes') input "holdMinutes", "number", title: "Minutes", width: 2, submitOnChange: true, required: false
-                if (holdUntil == 'at') {
-                    input "holdDate", "date", title: "Date", width: 2, submitOnChange: true, required: false
-                    input "holdTime", "time", title: "Time", width: 2, submitOnChange: true, required: false
+                input "btnHold", "button", title: "Hold", width: 2, inputClass: PRI
+                if (rt.hold) input "btnResume", "button", title: "Resume schedule", width: 2, inputClass: SEC
+                else if (nx) input "btnAdvance", "button", title: "Skip to ${esc(nx.period)}", width: 2, inputClass: SEC
+                if (holdSel == 'custom') {
+                    input "holdHeat", "decimal", title: "Heating setpoint (${unit()})", width: 3, submitOnChange: true, required: false
+                    input "holdCool", "decimal", title: "Cooling setpoint (${unit()})", width: 3, submitOnChange: true, required: false
                 }
-                input "btnHold", "button", title: "Start hold", width: 2, inputClass: SEC
+                if (holdUntil == 'minutes') input "holdMinutes", "number", title: "Minutes", width: 3, submitOnChange: true, required: false
+                if (holdUntil == 'at') {
+                    input "holdDate", "date", title: "Date", width: 3, submitOnChange: true, required: false
+                    input "holdTime", "time", title: "Time", width: 3, submitOnChange: true, required: false
+                }
             }
         }
         section("Setup") {
             Map cfg = uiCfg()
-            href "profilesPage", title: "Profiles", description: esc((cfg.profiles as List<Map>)*.name.join(', '))
-            href "schedulesPage", title: "Schedules", description: esc((cfg.schedules as List<Map>).collect { it.name == cfg.active ? "${it.name} (active)" : it.name }.join(', '))
-            href "optionsPage", title: "Overrides and options", description: esc(optionsSummary(cfg))
-            ChildDeviceWrapper d = installed ? getChildDevice("tsp-${app.id}") : null
-            if (d) href "programDevice", title: "Program device", description: esc(d.displayName), url: "/device/edit/${d.id}", style: "external"
+            href "schedulesPage", title: "Schedule", description: esc((cfg.schedules as List<Map>).collect { Map s -> s.name == cfg.active ? "${s.name} (active)${s.type == 'time' ? ': ' + (s.groups as List<Map>)*.name.join(', ') : ''}" : s.name }.join(' · ')), width: 6
+            String occ = occupiedProfile(cfg)
+            href "profilesPage", title: "Comfort", description: esc((cfg.profiles as List<Map>)*.name.join(', ') + (occ ? " · occupied: ${occ}" : '')), width: 6
+            href "optionsPage", title: "When it changes", description: esc(optionsSummary(cfg)), width: 6
+            href "advancedPage", title: "Thermostats and advanced", description: esc(((thermostats ?: [])*.displayName.join(', ') ?: 'No thermostats') + " · write checks ${settings.verifyWrites != false ? 'on' : 'off'}"), width: 6
         }
         section {
             label title: "Program name", required: true
-        }
-        if (debugEnable) {
-            section("Testing") {
-                input "testClock", "text", title: "Test clock (yyyy-MM-dd HH:mm, blank = real time)", required: false
-                input "btnEvaluate", "button", title: "Evaluate now"
-                input "btnStart", "button", title: "Run the hub-start handler"
-                input "testConfigJson", "textarea", title: "Configuration JSON", required: false
-                input "btnLoadConfig", "button", title: "Load configuration"
-            }
         }
     }
 }
 
 String optionsSummary(Map cfg) {
-    List<String> parts = (cfg.overrides as List<Map>).collect { "${modeName(it.modeId)} mode uses ${it.profile}".toString() }
-    String occ = occupiedProfile(cfg)
-    if (occ) parts << "occupied uses ${occ} (${occupancySensor.displayName})".toString()
-    parts << "eco ${fmtT(settings.ecoOffset != null ? settings.ecoOffset : 2.0)} ${unit()}".toString()
-    parts << (settings.whilePaused == 'off' ? "when paused, turn thermostats off" : "when paused, leave thermostats alone")
+    List<String> parts = (cfg.overrides as List<Map>).collect { "${modeName(it.modeId)} mode → ${it.profile}".toString() }
+    if (occupancySensor) parts << "occupancy from ${occupancySensor.displayName}".toString()
+    int pauses = ((pauseWhenOn ?: []) as List).size() + ((pauseWhenOff ?: []) as List).size()
+    boolean limits = settings.restrictDays || settings.restrictModes || (settings.restrictFrom && settings.restrictFrom != 'any')
+    parts << (pauses || limits ? "pause conditions set" : "no pause conditions")
     return parts.join(' · ')
 }
 
@@ -278,104 +300,228 @@ String nowHtml(Map cfg, Map rt, Map target, Map ctx, Map sm) {
     String prof = target.profile == 'custom' ? 'Custom setpoints' : (target.profile ?: '')
     StringBuilder h = new StringBuilder()
     boolean good = status in ['schedule', 'mode', 'hold'] && rt.lastApply == 'ok'
-    h << "<div class='p-message ${good ? 'p-message-success' : 'p-message-warn'} p-3 border-round'>"
+    h << "<div class='p-message ${good ? 'p-message-success' : 'p-message-warn'} p-3 border-round tsp-nowcard'>"
+    h << "<div class='tsp-cap'>Now</div>"
     if (target.layer in ['schedule', 'mode', 'hold']) {
         h << "<div class='tsp-big'>${esc(prof)} · ${heatSpan(target.heat)}${target.cool != null ? ' / ' + coolSpan(target.cool) : ''} ${unit()}</div>"
-    } else h << "<div class='tsp-big'>${status == 'paused' ? 'Paused' : (status == 'restricted' ? 'Restricted' : 'Nothing scheduled')}</div>"
+    } else h << "<div class='tsp-big'>${status == 'paused' ? 'Paused' : (status == 'restricted' ? 'Paused by a condition' : 'Nothing scheduled')}</div>"
     Map sched = (cfg.schedules as List<Map>).find { it.name == cfg.active }
+    Map cur = sched?.type == 'time' ? currentTransition(sched, ctx) : null
     String why
-    if (status == 'paused') why = "The program device switch is off. While paused: ${(cfg.options as Map).whilePaused == 'off' ? 'thermostats off' : 'thermostats left as they are'}."
-    else if (status == 'restricted') why = "A restriction is active. While paused: ${(cfg.options as Map).whilePaused == 'off' ? 'thermostats off' : 'thermostats left as they are'}."
+    if (status == 'paused') why = "The program is switched off. While paused: ${(cfg.options as Map).whilePaused == 'off' ? 'thermostats off' : 'thermostats left as they are'}."
+    else if (status == 'restricted') why = "A pause condition is met. While paused: ${(cfg.options as Map).whilePaused == 'off' ? 'thermostats off' : 'thermostats left as they are'}."
     else if (target.layer == 'hold') {
         Map hold = rt.hold as Map
-        String until = hold.end == 'next' ? 'the next transition' : (hold.end == 'indefinite' ? 'resumed by hand' : "${isoDate(hold.until as long, tz)} ${hhmmOf(hold.until as long, tz)}")
-        why = "Hold until ${until}"
-    } else if (target.layer == 'mode') why = "Mode override: ${modeName(target.overrideModeId)}"
-    else if (sched?.type == 'mode') why = target.layer == 'none' ? "${sched.name} schedule has no row for ${modeName(ctx.modeId)}: thermostats left as they are" : "${sched.name} schedule, hub mode ${modeName(ctx.modeId)}"
-    else {
-        Map cur = sched ? currentTransition(sched, ctx) : null
-        why = cur ? "${sched.name} schedule, ${cur.group}, ${cur.period} since ${hhmmOf(cur.at as long, tz)}" : "${cfg.active} schedule has no period yet"
+        String until = hold.end == 'next' ? 'the next period' : (hold.end == 'indefinite' ? 'resumed by hand' : "${isoDate(hold.until as long, tz)} ${hhmmOf(hold.until as long, tz)}")
+        why = "Held until ${until}"
+    } else if (target.layer == 'mode') why = "The hub is in ${modeName(target.overrideModeId)} mode"
+    else if (sched?.type == 'mode') why = target.layer == 'none' ? "${sched.name} has no row for ${modeName(ctx.modeId)}: thermostats left as they are" : "${sched.name} schedule, hub mode ${modeName(ctx.modeId)}"
+    else why = cur ? "${cur.group} · ${cur.period} since ${hhmmOf(cur.at as long, tz)}" : "${cfg.active} has no period yet"
+    Map occ = rt.occ as Map
+    if (occupancySensor && occ && target.occupied && cur) {
+        Map pv = cur.custom ? valuesOf(cur.custom as Map, ctx) : profileValues(cfg, cur.profile as String, ctx)
+        h << "<div>Occupied since ${hhmmOf(occ.since as long, tz)} (${esc(occupancySensor.displayName)}), so ${esc(cur.period)} uses ${esc((cfg.occupancy as Map)?.profile)} instead of ${esc(cur.custom ? 'its own values' : cur.profile)}${pv ? " (${fmtT(pv.heat)}${pv.cool != null ? ' / ' + fmtT(pv.cool) : ''})" : ''}</div>"
+    } else if (occupancySensor && occ) {
+        h << "<div>${occ.state == 'occupied' ? 'Occupied' : 'Vacant'} since ${hhmmOf(occ.since as long, tz)} (${esc(occupancySensor.displayName)})</div>"
     }
     h << "<div>${esc(why)}</div>"
-    Map occ = rt.occ as Map
-    if (occupancySensor && occ) {
-        String occLine = "${occ.state == 'occupied' ? 'Occupied' : 'Vacant'} since ${hhmmOf(occ.since as long, tz)} (${occupancySensor.displayName})"
-        if (target.occupied) occLine += ": ${(cfg.occupancy as Map)?.profile} in effect"
-        h << "<div>${esc(occLine)}</div>"
-    }
     if (status == 'manual') {
         List names = (thermostats ?: []).findAll { (rt.manual as List).contains(it.id as String) }*.displayName
-        h << "<div>Changed by hand on ${esc(names.join(', '))}; the next program write replaces it</div>"
+        h << "<div>Changed by hand on ${esc(names.join(', '))}; the program's next write replaces it</div>"
     }
     Map nx = sched?.type == 'time' ? nextTransitionOf(sched, ctx) : null
     if (nx) {
         Map v = nx.custom ? valuesOf(nx.custom as Map, ctx) : profileValues(cfg, nx.profile as String, ctx)
-        h << "<div style='margin-top:8px'>Next: <strong>${esc(nx.custom ? 'custom values' : nx.profile)}</strong> at ${hhmmOf(nx.at as long, tz)}"
-        if (v) h << " (${heatSpan(v.heat)}${v.cool != null ? ' / ' + coolSpan(v.cool) : ''} ${unit()})"
+        h << "<div style='margin-top:8px'>Next: <strong>${esc(nx.period)}</strong> at ${hhmmOf(nx.at as long, tz)} · ${esc(nx.custom ? 'custom values' : nx.profile)}"
+        if (v) h << " ${heatSpan(v.heat)}${v.cool != null ? ' / ' + coolSpan(v.cool) : ''}"
         h << "</div>"
     }
-    String off = "${fmtT((cfg.eco as Map).offset)} ${unit()}"
-    String eco = rt.eco ? "Eco offset on (${off})" : "Eco offset off (${off} when on)"
-    String chk = rt.verify ? "write check pending" : (rt.lastApply == 'ok' ? "last writes confirmed" : (rt.lastApply == 'partial' ? "some writes not confirmed" : "writes not confirmed"))
-    if (rt.checkedAt && !rt.verify) chk += " at ${hhmmOf(rt.checkedAt as long, tz)}"
-    h << "<div>${esc(eco)} · ${esc(chk)}</div></div>"
-    return h.toString()
+    if (rt.eco) h << "<div>Eco is on: ${fmtT((cfg.eco as Map).offset)} ${unit()} applied</div>"
+    return h.append("</div>").toString()
 }
 
-String thermostatTable() {
-    StringBuilder h = new StringBuilder("<div class='tsp-tw'><table class='tsp-t'><thead><tr><th>Thermostat</th><th>Mode</th><th>Heat</th><th>Cool</th><th>Temp</th><th>State</th></tr></thead><tbody>")
+// One block per thermostat; a setpoint the thermostat's mode doesn't use is dimmed.
+String thermostatPanel() {
+    StringBuilder h = new StringBuilder("<div class='tsp-panel'><div class='tsp-cap'>Thermostat${(thermostats ?: []).size() > 1 ? 's' : ''}</div>")
     (thermostats ?: []).each { d ->
-        h << "<tr><td>${esc(d.displayName)}</td><td>${esc(d.currentValue('thermostatMode'))}</td><td>${heatSpan(d.currentValue('heatingSetpoint'))}</td>"
-        h << "<td>${coolSpan(d.currentValue('coolingSetpoint'))}</td><td>${fmtT(d.currentValue('temperature'))}</td><td>${esc(d.currentValue('thermostatOperatingState'))}</td></tr>"
+        String mode = d.currentValue('thermostatMode') as String
+        boolean heatUsed = mode in ['heat', 'emergency heat', 'auto'], coolUsed = mode in ['cool', 'auto']
+        h << "<div class='tsp-tstat'><div style='font-weight:500'>${esc(d.displayName)}</div><div class='tsp-kv'>"
+        h << "<span class='tsp-dim'>Mode</span><span>${esc(mode)} · ${esc(d.currentValue('thermostatOperatingState'))}</span>"
+        h << "<span class='tsp-dim'>Room</span><span>${fmtT(d.currentValue('temperature'))} ${unit()}</span>"
+        h << "<span class='tsp-dim'>Heating to</span><span>${heatUsed ? heatSpan(d.currentValue('heatingSetpoint')) : "<span class='tsp-dim'>${fmtT(d.currentValue('heatingSetpoint'))} · not used in ${esc(mode)}</span>"}</span>"
+        h << "<span class='tsp-dim'>Cooling to</span><span>${coolUsed ? coolSpan(d.currentValue('coolingSetpoint')) : "<span class='tsp-dim'>${fmtT(d.currentValue('coolingSetpoint'))} · not used in ${esc(mode)}</span>"}</span>"
+        h << "</div></div>"
     }
-    return h.append("</tbody></table></div>").toString()
+    Map rt = state.rt as Map
+    String chk = rt?.verify ? "Write check pending" : (rt?.lastApply == 'ok' ? "Last writes confirmed" : (rt?.lastApply == 'partial' ? "Some writes not confirmed" : "Writes not confirmed"))
+    if (rt?.checkedAt && !rt?.verify) chk += " at ${hhmmOf(rt.checkedAt as long, location.timeZone)}"
+    return h.append("<div class='tsp-note'>${esc(chk)}</div></div>").toString()
 }
+
+// ── Shared UI pieces ──
+
+@Field static final List<String> PROFILE_COLORS = ['#b9773a', '#56739b', '#59716b', '#8a5a9b', '#9b5656', '#5d8a3a', '#3a8a8a', '#7a7a3a']
+
+String profileColor(Map cfg, String name) {
+    int i = (cfg.profiles as List<Map>).findIndexOf { it.name == name }
+    return i < 0 ? '#777777' : PROFILE_COLORS[i % PROFILE_COLORS.size()]
+}
+
+// Current heating and cooling values of a profile, hub variables resolved.
+Map profileNow(Map cfg, String name) {
+    Map p = (cfg.profiles as List<Map>).find { it.name == name }
+    if (!p) return null
+    return [heat: p.heatVar ? getGlobalVar(p.heatVar as String)?.value : p.heat, cool: p.coolVar ? getGlobalVar(p.coolVar as String)?.value : p.cool]
+}
+
+String profileText(Map cfg, String name) {
+    Map v = profileNow(cfg, name)
+    if (!v) return name
+    List<String> parts = []
+    if (v.heat != null) parts << "heat ${fmtT(v.heat)}".toString()
+    if (v.cool != null) parts << "cool ${fmtT(v.cool)}".toString()
+    return parts ? "${name} · ${parts.join(' / ')}" : name
+}
+
+// A swatch, the name and both setpoints, for tables and rows.
+String profileHtml(Map cfg, String name, Map custom) {
+    if (custom) return "Custom ${heatSpan(custom.heat)}${custom.cool != null ? ' / ' + coolSpan(custom.cool) : ''}"
+    Map v = profileNow(cfg, name)
+    if (!v) return esc(name)
+    String sw = "<span class='tsp-swatch' style='background:${profileColor(cfg, name)}'></span>"
+    String vals = [v.heat != null ? heatSpan(v.heat) : null, v.cool != null ? coolSpan(v.cool) : null].findAll { it }.join(' / ')
+    return "${sw}${esc(name)}${vals ? " <span style='white-space:nowrap'>${vals}</span>" : ''}"
+}
+
+// A whole row that acts as a button: the same markup as cellButton, holding grid cells.
+String rowButton(String name, String cells, String cols, String cls = '') {
+    return "<div class='form-group'><input type='hidden' name='${name}.type' value='button'></div>" +
+           "<div><div class='app-button-link tsp-row ${cls}' role='button' tabindex='0' style='grid-template-columns:${cols}' onclick='buttonClick(this); return false;'>${cells}</div></div>" +
+           "<input type='hidden' name='settings[${name}]' value=''>"
+}
+
+String rowHeader(String cells, String cols, String cls = '') { return "<div class='tsp-row tsp-rowh ${cls}' style='grid-template-columns:${cols}'>${cells}</div>" }
+
+String setpointsHtml(Map v) {
+    if (!v) return ''
+    return [v.heat != null ? heatSpan(v.heat) : null, v.cool != null ? coolSpan(v.cool) : null].findAll { it }.join(' / ')
+}
+
+// A switch that shows its state; clicking it runs the button.
+String switchButton(String name, String label, boolean on, String note) {
+    return "<div class='form-group'><input type='hidden' name='${name}.type' value='button'></div>" +
+           "<div><div class='app-button-link tsp-swrow' role='switch' aria-checked='${on}' tabindex='0' onclick='buttonClick(this); return false;'>" +
+           "<span class='tsp-sw${on ? ' on' : ''}'><span></span></span><span>${esc(label)}</span>${note ? "<span class='tsp-dim tsp-small'>· ${esc(note)}</span>" : ''}</div></div>" +
+           "<input type='hidden' name='settings[${name}]' value=''>"
+}
+
+// The week of the active time schedule: one row per day, a block per period, occupied periods striped.
+String timelineHtml(Map cfg, Map sched, Map ctx) {
+    TimeZone tz = ctx.tz as TimeZone
+    String today = isoDate(ctx.now as long, tz)
+    String monday = addDays(today, 1 - isoDow(today, tz), tz)
+    Map wctx = ctx + [sun: weekSun(monday, tz)]
+    List<Map> days = weekSegments(sched, wctx, monday)
+    String occ = occupiedProfile(cfg)
+    StringBuilder h = new StringBuilder("<div class='tsp-panel'><div class='tsp-tlhead'><span style='font-weight:500'>This week</span><span class='tsp-legend'>")
+    List<String> used = days.collectMany { (it.segs as List<Map>).findAll { !it.custom }.collect { it.profile as String } }.unique()
+    used.each { String n -> h << "<span><span class='tsp-swatch' style='background:${profileColor(cfg, n)}'></span>${esc(n)}</span>" }
+    if (occ && days.any { (it.segs as List<Map>).any { it.useOccupied } })
+        h << "<span><span class='tsp-swatch' style='background:repeating-linear-gradient(135deg,#777 0 3px,${profileColor(cfg, occ)} 3px 6px)'></span>${esc(occ)} while occupied</span>"
+    h << "</span></div><div class='tsp-tl'><span></span><div class='tsp-tlax'>"
+    [0, 6, 12, 18, 24].each { int t -> h << "<span style='left:${t * 100 / 24}%;transform:translateX(${t == 0 ? '0' : (t == 24 ? '-100%' : '-50%')})'>${String.format('%02d', t)}</span>" }
+    h << "</div>"
+    days.eachWithIndex { Map d, int i ->
+        boolean isToday = d.iso == today
+        h << "<span class='tsp-tlday${isToday ? ' tsp-today' : ''}'>${DAY_ABBR[i]}</span><div class='tsp-tlrow'>"
+        (d.segs as List<Map>).each { Map s ->
+            double from = s.from as double, to = s.to as double
+            String base = s.custom ? '#777777' : profileColor(cfg, s.profile as String)
+            boolean striped = occ && s.useOccupied
+            String bg = striped ? "repeating-linear-gradient(135deg,${base} 0 6px,${profileColor(cfg, occ)} 6px 12px)" : base
+            String name = s.custom ? 'Custom' : s.profile as String
+            String title = "${s.period} ${minHhmm(from)}–${minHhmm(to)} · ${name}${striped ? ' (' + occ + ' while occupied)' : ''}"
+            String text = (to - from) >= 240 ? name : ''
+            h << "<div class='tsp-tlb' title='${esc(title)}' style='left:${from * 100 / 1440}%;width:${(to - from) * 100 / 1440}%;background:${bg}'><span>${esc(text)}</span></div>"
+        }
+        if (isToday) {
+            long dayStart = atLocal(today, '00:00', tz)
+            h << "<div class='tsp-tlnow' style='left:${((ctx.now as long) - dayStart) / 600.0 / 1440}%'></div>"
+        }
+        h << "</div>"
+    }
+    return h.append("</div></div>").toString()
+}
+
+String minHhmm(double m) { int v = Math.round(m) as int; return v >= 1440 ? '24:00' : String.format('%02d:%02d', v.intdiv(60), v % 60) }
+
+Map weekSun(String monday, TimeZone tz) {
+    Map sun = [:]
+    (-1..7).each { int d ->
+        String iso = addDays(monday, d, tz)
+        Map s = getSunriseAndSunset(date: new Date(atLocal(iso, "12:00", tz)))
+        sun[iso] = [rise: (s.sunrise as Date)?.getTime(), set: (s.sunset as Date)?.getTime()]
+    }
+    return sun
+}
+
+// ── Comfort page (profiles) ──
 
 Map profilesPage() {
-    dynamicPage(name: "profilesPage", title: "Profiles") {
+    dynamicPage(name: "profilesPage", title: "Comfort") {
         Map cfg = uiCfg()
         Map ui = uiState()
         List<Map> profiles = cfg.profiles as List<Map>
+        boolean editing = ui.profile != null && (ui.profile as int) < profiles.size()
         section {
-            paragraph TSP_CSS + "<p class='tsp-note'>Schedules, mode overrides and holds use these by name. A blank value leaves the thermostat as it is.</p>"
+            paragraph pageCss(editing)
             String err = errorPara('profilesPage')
             if (err) paragraph err
-            StringBuilder t = new StringBuilder("<div class='tsp-tw'><table class='tsp-t'><thead><tr><th>Profile</th><th>Heat</th><th>Cool</th><th>Fan</th><th>Mode</th><th>Used in</th></tr></thead><tbody>")
-            profiles.eachWithIndex { Map p, int i ->
-                String u = usage(p.name as String, cfg)
-                String heat = p.heatVar ? "${esc(p.heatVar)} (${fmtT(getGlobalVar(p.heatVar as String)?.value)} ${unit()})" : (p.heat != null ? "${fmtT(p.heat)} ${unit()}" : '')
-                String cool = p.coolVar ? "${esc(p.coolVar)} (${fmtT(getGlobalVar(p.coolVar as String)?.value)} ${unit()})" : (p.cool != null ? "${fmtT(p.cool)} ${unit()}" : '')
-                t << "<tr${ui.profile == i ? " class='tsp-sel'" : ''}><td>${cellButton("epf~${i}", p.name as String)}</td>"
-                t << "<td>${heat ? "<span class='tsp-heat'>${heat}</span>" : "<span class='tsp-dim'>unchanged</span>"}</td>"
-                t << "<td>${cool ? "<span class='tsp-cool'>${cool}</span>" : "<span class='tsp-dim'>unchanged</span>"}</td>"
-                t << "<td>${p.fan ? esc(p.fan) : "<span class='tsp-dim'>unchanged</span>"}</td><td>${p.mode ? esc(p.mode) : "<span class='tsp-dim'>unchanged</span>"}</td>"
-                t << "<td>${u ? esc(u) : "<span class='tsp-dim'>Not used</span>"}</td></tr>"
-            }
-            paragraph t.append("</tbody></table></div>").toString()
-            input "btnProfileAdd", "button", title: "Add profile", width: 3, inputClass: SEC
         }
-        if (ui.profile != null && (ui.profile as int) < profiles.size()) {
+        if (editing) {
             Map p = profiles[ui.profile as int]
-            section("Edit profile: ${esc(p.name)}", sectionClass: "tsp-edit") {
-                input "edName", "text", title: "Name", width: 3, submitOnChange: true, required: false
+            section("Edit profile: ${esc(p.name)}") {
+                input "edName", "text", title: "Name", width: 6, submitOnChange: true, required: false
+                paragraph "", width: 6
+                input "edUseVars", "bool", title: "Take setpoints from hub variables", width: 12, submitOnChange: true
                 if (edUseVars) {
                     List<String> nv = varNamesOfType(['bigdecimal', 'integer'])
-                    input "edHeatVar", "enum", title: "Heating setpoint variable", options: nv, width: 3, submitOnChange: true, required: false
-                    input "edCoolVar", "enum", title: "Cooling setpoint variable", options: nv, width: 3, submitOnChange: true, required: false
+                    input "edHeatVar", "enum", title: "Heating setpoint variable", options: nv, width: 6, submitOnChange: true, required: false
+                    input "edCoolVar", "enum", title: "Cooling setpoint variable", options: nv, width: 6, submitOnChange: true, required: false
                 } else {
-                    input "edHeat", "decimal", title: "Heating setpoint (${unit()})", width: 2, submitOnChange: true, required: false
-                    input "edCool", "decimal", title: "Cooling setpoint (${unit()})", width: 2, submitOnChange: true, required: false
+                    input "edHeat", "decimal", title: "Heating setpoint (${unit()})", width: 6, submitOnChange: true, required: false
+                    input "edCool", "decimal", title: "Cooling setpoint (${unit()})", width: 6, submitOnChange: true, required: false
                 }
                 input "edFan", "enum", title: "Fan mode", options: [unchanged: "Leave unchanged", auto: "auto", circulate: "circulate", on: "on"],
-                      defaultValue: "unchanged", width: 2, submitOnChange: true
+                      defaultValue: "unchanged", width: 6, submitOnChange: true
                 input "edMode", "enum", title: "Thermostat mode", options: [unchanged: "Leave unchanged", heat: "heat", cool: "cool", auto: "auto", off: "off"],
-                      defaultValue: "unchanged", width: 2, submitOnChange: true
-                input "edUseVars", "bool", title: "Take setpoints from hub variables", submitOnChange: true
+                      defaultValue: "unchanged", width: 6, submitOnChange: true
+                String u = usage(p.name as String, cfg)
+                paragraph "<p class='tsp-note'>${u ? 'Used by ' + esc(u) + '.' : 'Not used yet.'} A blank value leaves the thermostat as it is.</p>"
                 input "btnProfileSave", "button", title: "Save", width: 2, inputClass: PRI
                 input "btnProfileCancel", "button", title: "Cancel", width: 2, inputClass: SEC
-                String u = usage(p.name as String, cfg)
-                input "btnProfileDelete", "button", title: u ? "Delete (in use)" : "Delete", width: 3, inputClass: SEC, disabled: u as boolean
+                paragraph "", width: 5
+                input "btnProfileDelete", "button", title: u ? "Delete (in use)" : "Delete", width: 3, inputClass: u ? SEC : DANGER, disabled: u as boolean
             }
+            return
+        }
+        section("Profiles") {
+            String cols = "minmax(0,1.2fr) minmax(0,1.3fr) minmax(0,1fr) minmax(0,2fr) 16px"
+            StringBuilder t = new StringBuilder("<div class='tsp-rows'>")
+            t << rowHeader("<span>Profile</span><span>Heat / cool</span><span class='tsp-hide-sm'>Fan · mode</span><span class='tsp-hide-sm'>Used by</span><span></span>", cols, 'tsp-frow')
+            profiles.eachWithIndex { Map p, int i ->
+                String u = usage(p.name as String, cfg)
+                String hc = setpointsHtml(profileNow(cfg, p.name as String))
+                String vars = [p.heatVar, p.coolVar].findAll { it }.collect { esc(it) }.join(', ')
+                t << rowButton("epf~${i}", "<span><span class='tsp-swatch' style='background:${profileColor(cfg, p.name as String)}'></span>${esc(p.name)}</span>" +
+                    "<span>${hc ?: "<span class='tsp-dim'>unchanged</span>"}${vars ? "<div class='tsp-dim tsp-small'>from ${vars}</div>" : ''}</span>" +
+                    "<span class='tsp-hide-sm'>${esc(p.fan ?: '–')} · ${esc(p.mode ?: '–')}</span>" +
+                    "<span class='tsp-hide-sm ${u ? '' : 'tsp-dim'}'>${esc(u ?: 'Not used')}</span><span class='tsp-dim'>›</span>", cols, 'tsp-frow')
+            }
+            paragraph t.append("</div>").toString()
+            input "btnProfileAdd", "button", title: "+ Add profile", width: 3, inputClass: SEC
+            paragraph "<p class='tsp-note'>Schedules, mode overrides, holds and occupancy use these by name, so editing one changes every place that uses it.</p>"
         }
     }
 }
@@ -388,109 +534,155 @@ int uiSchedIndex(Map cfg) {
     return a < 0 ? 0 : a
 }
 
+// ── Schedule page ──
+
 Map schedulesPage() {
-    dynamicPage(name: "schedulesPage", title: "Schedules") {
+    dynamicPage(name: "schedulesPage", title: "Schedule") {
         Map cfg = uiCfg()
         Map ui = uiState()
         List<Map> scheds = cfg.schedules as List<Map>
         int si = uiSchedIndex(cfg)
         Map s = scheds[si]
+        boolean editing = ui.schedule == si && ((s.type == 'time' && ((ui.group != null && ui.period != null) || ui.groupName != null)) || (s.type == 'mode' && ui.row != null))
         section {
-            paragraph TSP_CSS
+            paragraph pageCss(editing)
             String err = errorPara('schedulesPage')
             if (err) paragraph err
+        }
+        // Editing one item takes the whole page; Save or Cancel brings the list back.
+        if (ui.schedule == si && s.type == 'time' && ui.group != null && ui.period != null && (ui.group as int) < (s.groups as List).size()) { periodEditor(cfg, s, ui); return }
+        if (ui.schedule == si && s.type == 'mode' && ui.row != null) { rowEditor(cfg, s, ui); return }
+        if (ui.schedule == si && s.type == 'time' && ui.groupName != null) { groupNameEditor(s, ui); return }
+        section {
             scheds.eachWithIndex { Map x, int i ->
                 input "esc~${i}", "button", title: esc(x.name == cfg.active ? "${x.name} · active" : x.name), width: 2, inputClass: i == si ? PRI : SEC
             }
-            input "btnScheduleNew", "button", title: "New schedule", width: 2, inputClass: SEC
+            input "btnScheduleNew", "button", title: "+ New schedule", width: 2, inputClass: SEC
         }
-        section {
-            input "edSchedName", "text", title: "Schedule name", defaultValue: s.name, width: 3, submitOnChange: true, required: false
-            input "edSchedType", "enum", title: "Schedule by", options: [time: "Time of day", mode: "Hub mode"], defaultValue: s.type, width: 3, submitOnChange: true, required: false
+        Map ctx = buildCtx(coreConfig())
+        if (s.type == 'time') {
+            section { paragraph timelineHtml(cfg, s, ctx) }
+            timeScheduleSections(cfg, s, si, ui, ctx)
+        } else modeScheduleSections(cfg, s, si, ui)
+        section("Schedule settings", hideable: true, hidden: !(settings.edSchedName || settings.edSchedType)) {
+            input "edSchedName", "text", title: "Schedule name", defaultValue: s.name, width: 6, submitOnChange: true, required: false
+            input "edSchedType", "enum", title: "Schedule by", options: [time: "Time of day", mode: "Hub mode"], defaultValue: s.type, width: 6, submitOnChange: true, required: false
             if ((settings.edSchedName && settings.edSchedName != s.name) || (settings.edSchedType && settings.edSchedType != s.type))
                 input "btnScheduleSave", "button", title: "Save name and type", width: 3, inputClass: PRI
             input "btnScheduleCopy", "button", title: "Copy to a new schedule", width: 3, inputClass: SEC
-        }
-        if (s.type == 'time') timeScheduleSections(cfg, s, si, ui)
-        else modeScheduleSections(cfg, s, si, ui)
-        section {
             if (s.name != cfg.active) input "btnScheduleActivate", "button", title: "Make ${esc(s.name)} the active schedule", width: 4, inputClass: PRI
-            input "btnScheduleDelete", "button", title: "Delete schedule", width: 3, inputClass: SEC, disabled: s.name == cfg.active
+            if (s.name != cfg.active) input "btnScheduleDelete", "button", title: "Delete schedule", width: 3, inputClass: DANGER
+            else paragraph "<p class='tsp-note'>The active schedule can't be deleted; make another one active first.</p>"
         }
     }
 }
 
-void timeScheduleSections(Map cfg, Map s, int si, Map ui) {
+@Field static final String PERIOD_COLS = "64px minmax(0,1fr) minmax(0,1.6fr) minmax(0,1fr) 16px"
+
+void timeScheduleSections(Map cfg, Map s, int si, Map ui, Map ctx) {
     List<Map> groups = s.groups as List<Map>
-    section("Day groups") {
-        StringBuilder t = new StringBuilder("<div class='tsp-tw' style='max-width:720px'><table class='tsp-t tsp-dg'><thead><tr><th class='tsp-l'>Group</th>")
-        DAY_ABBR.each { t << "<th>${it}</th>" }
-        t << "</tr></thead><tbody>"
-        groups.eachWithIndex { Map g, int gi ->
-            t << "<tr><td class='tsp-l'>${cellButton("egn~${gi}", g.name as String)}</td>"
-            (1..7).each { int d ->
-                boolean on = (g.days as List).collect { it as int }.contains(d)
-                t << "<td>${cellButton("edg~${gi}~${d}", on ? '&#9745;' : '&#9744;', true, DAY_CELL)}</td>"
-            }
-            t << "</tr>"
-        }
-        t << "<tr><td class='tsp-l tsp-dim'>New group</td>"
-        (1..7).each { int d -> t << "<td>${cellButton("edg~new~${d}", '+', false, DAY_CELL)}</td>" }
-        paragraph t.append("</tbody></table></div><p class='tsp-note'>Each day is in one group. Taking a day out of its group starts a new group with a copy of its periods.</p>").toString()
-        if (ui.groupName != null && ui.schedule == si) {
-            input "edGroupName", "text", title: "Group name", width: 3, submitOnChange: true, required: false
-            input "btnGroupSave", "button", title: "Save", width: 2, inputClass: PRI
-            input "btnGroupCancel", "button", title: "Cancel", width: 2, inputClass: SEC
-        }
-    }
-    Map ctx = buildCtx(coreConfig())
     Map cur = s.name == cfg.active ? currentTransition(s, ctx) : null
     String occ = occupiedProfile(cfg)
-    section {
-        groups.eachWithIndex { Map g, int gi ->
-            StringBuilder t = new StringBuilder("<div class='tsp-h'>${esc(g.name)}</div><div class='tsp-tw'><table class='tsp-t'><thead><tr><th>Period</th><th>Starts</th><th>Profile</th>${occ ? '<th>While occupied</th>' : ''}</tr></thead><tbody>")
-            (g.periods as List<Map>).eachWithIndex { Map p, int pi ->
-                boolean sel = ui.group == gi && ui.period == pi
-                boolean now = cur && cur.group == g.name && cur.period == p.name
-                t << "<tr${sel ? " class='tsp-sel'" : ''}><td>${cellButton("epd~${gi}~${pi}", p.name as String)}${now ? "<span class='tsp-now'>NOW</span>" : ''}</td>"
-                t << "<td>${esc(startLabel(p.start as Map))}</td><td>${refLabel(cfg, p.profile as String, p.custom as Map)}</td>"
-                if (occ) t << "<td${p.useOccupied ? '' : " class='tsp-dim'"}>${p.useOccupied ? esc(occ) : '—'}</td>"
-                t << "</tr>"
+    groups.eachWithIndex { Map g, int gi ->
+        section(esc(g.name as String)) {
+            StringBuilder pills = new StringBuilder("<div class='tsp-pills'>")
+            (1..7).each { int d ->
+                boolean on = (g.days as List).collect { it as int }.contains(d)
+                pills << cellButton("edg~${gi}~${d}", DAY_ABBR[d - 1], false, on ? PILL_ON : PILL_OFF)
             }
-            if (!g.periods) t << "<tr><td colspan='${occ ? 4 : 3}' class='tsp-dim'>No periods: thermostats left as they are</td></tr>"
-            t << "</tbody></table></div>${cellButton("apd~${gi}", "Add period")}"
-            paragraph t.toString(), width: 6
+            pills << "<span class='tsp-small tsp-dim' style='align-self:center'>${cellButton("egn~${gi}", 'Rename', false, 'min-height:32px')}</span></div>"
+            paragraph pills.toString()
+            StringBuilder t = new StringBuilder("<div class='tsp-rows'>")
+            t << rowHeader("<span>Starts</span><span>Period</span><span>Profile</span><span class='tsp-hide-sm'>While occupied</span><span></span>", PERIOD_COLS, 'tsp-prow')
+            (g.periods as List<Map>).eachWithIndex { Map p, int pi ->
+                boolean now = cur && cur.group == g.name && cur.period == p.name
+                t << rowButton("epd~${gi}~${pi}", "<span class='tsp-mono'>${esc(startLabel(p.start as Map))}</span>" +
+                    "<span>${esc(p.name)}${now ? "<span class='tsp-now'>NOW</span>" : ''}</span>" +
+                    "<span>${profileHtml(cfg, p.profile as String, p.custom as Map)}</span>" +
+                    "<span class='tsp-hide-sm${occ && p.useOccupied ? '' : ' tsp-dim'}'>${occ && p.useOccupied ? esc(occ) : '–'}</span><span class='tsp-dim'>›</span>", PERIOD_COLS, 'tsp-prow')
+            }
+            if (!g.periods) t << "<div class='tsp-note' style='padding:10px 12px'>No periods: thermostats left as they are</div>"
+            t << "</div>${cellButton("apd~${gi}", "+ Add period")}"
+            paragraph t.toString()
         }
     }
-    if (ui.group != null && ui.period != null && ui.schedule == si && (ui.group as int) < groups.size()) {
-        Map g = groups[ui.group as int]
-        boolean isNew = (ui.period as int) < 0
-        String pname = isNew ? 'new period' : (g.periods as List<Map>)[ui.period as int]?.name
-        section("Edit period: ${esc(g.name)} · ${esc(pname)}", sectionClass: "tsp-edit") {
-            input "edName", "text", title: "Period name", width: 3, submitOnChange: true, required: false
-            input "edKind", "enum", title: "Starts at", options: KIND_OPTS, defaultValue: "time", width: 3, submitOnChange: true
-            String kind = settings.edKind ?: 'time'
-            if (kind == 'time') input "edAt", "time", title: "Time", width: 2, submitOnChange: true, required: false
-            if (kind in ['sunrise', 'sunset']) input "edOffset", "number", title: "Offset in minutes (+/−)", width: 2, submitOnChange: true, required: false
-            if (kind == 'var') input "edVar", "enum", title: "Hub variable", options: varNamesOfType(['datetime']), width: 3, submitOnChange: true, required: false
-            Map popts = (cfg.profiles as List<Map>).collectEntries { [(it.name): it.name] } + [custom: "Custom values for this period"]
-            input "edProfile", "enum", title: "Profile", options: popts, width: 3, submitOnChange: true, required: false
-            if (settings.edProfile == 'custom') {
-                input "edHeat", "decimal", title: "Heating setpoint (${unit()})", width: 2, submitOnChange: true, required: false
-                input "edCool", "decimal", title: "Cooling setpoint (${unit()})", width: 2, submitOnChange: true, required: false
-            }
-            if (occ) input "edUseOccupied", "bool", title: "Use the occupied profile (${esc(occ)}) while occupied", width: 6, submitOnChange: true, required: false
-            if (kind in ['sunrise', 'sunset']) {
-                Map ctx2 = buildCtx(coreConfig())
-                String today = isoDate(ctx2.now as long, ctx2.tz as TimeZone)
-                Long base = startOf([kind: kind, offset: 0], today, ctx2)
-                Long at = startOf([kind: kind, offset: (settings.edOffset ?: 0) as int], today, ctx2)
-                if (base != null) paragraph "<p class='tsp-note'>Today ${kind} is at ${hhmmOf(base, ctx2.tz as TimeZone)}, so this period starts at ${hhmmOf(at, ctx2.tz as TimeZone)}.</p>"
-            }
-            input "btnPeriodSave", "button", title: "Save", width: 2, inputClass: PRI
-            input "btnPeriodCancel", "button", title: "Cancel", width: 2, inputClass: SEC
-            if (!isNew) input "btnPeriodRemove", "button", title: "Remove period", width: 3, inputClass: SEC
+    section {
+        paragraph "<p class='tsp-note'>Click a day to move it into that group. Click a day a group already has to give it a group of its own, with a copy of its periods.</p>"
+    }
+}
+
+void groupNameEditor(Map s, Map ui) {
+    Map g = (s.groups as List<Map>)[ui.groupName as int]
+    section("Rename group: ${esc(g?.name)}") {
+        input "edGroupName", "text", title: "Group name", width: 6, submitOnChange: true, required: false
+        paragraph "", width: 6
+        input "btnGroupSave", "button", title: "Save", width: 2, inputClass: PRI
+        input "btnGroupCancel", "button", title: "Cancel", width: 2, inputClass: SEC
+    }
+}
+
+void periodEditor(Map cfg, Map s, Map ui) {
+    Map g = (s.groups as List<Map>)[ui.group as int]
+    boolean isNew = (ui.period as int) < 0
+    String pname = isNew ? 'new period' : (g.periods as List<Map>)[ui.period as int]?.name
+    section("${isNew ? 'Add a period to' : 'Edit period:'} ${esc(g.name)}${isNew ? '' : ' · ' + esc(pname)}") {
+        input "edName", "text", title: "Period name", width: 6, submitOnChange: true, required: false
+        paragraph "", width: 6
+        input "edKind", "enum", title: "Starts at", options: KIND_OPTS, defaultValue: "time", width: 6, submitOnChange: true
+        paragraph "", width: 6
+        String kind = settings.edKind ?: 'time'
+        // The platform's time widget is taller than a drop-down; on its own row nothing sits beside it.
+        if (kind == 'time') { input "edAt", "time", title: "Time", width: 6, submitOnChange: true, required: false; paragraph "", width: 6 }
+        if (kind in ['sunrise', 'sunset']) input "edOffset", "number", title: "Offset in minutes (+/−)", width: 6, submitOnChange: true, required: false
+        if (kind == 'var') input "edVar", "enum", title: "Hub variable", options: varNamesOfType(['datetime']), width: 6, submitOnChange: true, required: false
+        if (kind in ['sunrise', 'sunset']) {
+            Map ctx2 = buildCtx(coreConfig())
+            String today = isoDate(ctx2.now as long, ctx2.tz as TimeZone)
+            Long base = startOf([kind: kind, offset: 0], today, ctx2)
+            Long at = startOf([kind: kind, offset: (settings.edOffset ?: 0) as int], today, ctx2)
+            if (base != null) paragraph "<p class='tsp-note'>Today ${kind} is at ${hhmmOf(base, ctx2.tz as TimeZone)}, so this period starts at ${hhmmOf(at, ctx2.tz as TimeZone)}.</p>"
         }
+        Map popts = (cfg.profiles as List<Map>).collectEntries { Map p -> [(p.name): profileText(cfg, p.name as String)] } + [custom: "Custom values for this period"]
+        input "edProfile", "enum", title: "Profile", options: popts, width: 6, submitOnChange: true, required: false
+        if (settings.edProfile == 'custom') {
+            input "edHeat", "decimal", title: "Heating setpoint (${unit()})", width: 3, submitOnChange: true, required: false
+            input "edCool", "decimal", title: "Cooling setpoint (${unit()})", width: 3, submitOnChange: true, required: false
+        } else paragraph "", width: 6
+        occupiedToggle(cfg)
+        editorButtons("btnPeriodSave", "btnPeriodCancel", isNew ? null : "btnPeriodRemove", "Remove period")
+    }
+}
+
+void rowEditor(Map cfg, Map s, Map ui) {
+    List<Map> rows = (s.rows ?: []) as List<Map>
+    boolean isNew = (ui.row as int) < 0
+    String title = isNew ? 'new row' : (rows[ui.row as int]?.modes as List)?.collect { modeName(it) }?.join(', ')
+    section("${isNew ? 'Add a row' : 'Edit row: ' + esc(title)}") {
+        input "edModes", "mode", title: "While the hub mode is", multiple: true, width: 6, submitOnChange: true, required: false
+        Map popts = (cfg.profiles as List<Map>).collectEntries { Map p -> [(p.name): profileText(cfg, p.name as String)] } + [custom: "Custom values for this row"]
+        input "edProfile", "enum", title: "Profile", options: popts, width: 6, submitOnChange: true, required: false
+        if (settings.edProfile == 'custom') {
+            input "edHeat", "decimal", title: "Heating setpoint (${unit()})", width: 3, submitOnChange: true, required: false
+            input "edCool", "decimal", title: "Cooling setpoint (${unit()})", width: 3, submitOnChange: true, required: false
+        }
+        occupiedToggle(cfg)
+        editorButtons("btnRowSave", "btnRowCancel", isNew ? null : "btnRowRemove", "Remove row")
+    }
+}
+
+void occupiedToggle(Map cfg) {
+    String occ = occupiedProfile(cfg)
+    if (!occ) return
+    input "edUseOccupied", "bool", title: "Use ${esc(occ)} while someone is here", width: 12, submitOnChange: true, required: false
+    paragraph "<p class='tsp-note'>When ${esc(occupancySensor.displayName)} sees motion for ${settings.occupiedAfter != null ? settings.occupiedAfter : 5} min, this period takes ${esc(profileText(cfg, occ))} where it is more comfortable, until ${settings.vacantAfter != null ? settings.vacantAfter : 30} min without motion.</p>"
+}
+
+void editorButtons(String save, String cancel, String remove, String removeTitle) {
+    input save, "button", title: "Save", width: 2, inputClass: PRI
+    input cancel, "button", title: "Cancel", width: 2, inputClass: SEC
+    if (remove) {
+        paragraph "", width: 5
+        input remove, "button", title: removeTitle, width: 3, inputClass: DANGER
     }
 }
 
@@ -505,117 +697,103 @@ String startLabel(Map st) {
 
 void modeScheduleSections(Map cfg, Map s, int si, Map ui) {
     List<Map> rows = (s.rows ?: []) as List<Map>
+    String occ = occupiedProfile(cfg)
+    String cols = "minmax(0,1.4fr) minmax(0,1.6fr) minmax(0,1fr) 16px"
     section("By hub mode") {
-        String occ = occupiedProfile(cfg)
-        StringBuilder t = new StringBuilder("<div class='tsp-tw' style='max-width:760px'><table class='tsp-t'><thead><tr><th>When the hub mode is</th><th>Profile</th>${occ ? '<th>While occupied</th>' : ''}</tr></thead><tbody>")
+        StringBuilder t = new StringBuilder("<div class='tsp-rows'>")
+        t << rowHeader("<span>When the hub mode is</span><span>Profile</span><span class='tsp-hide-sm'>While occupied</span><span></span>", cols, 'tsp-mrow')
         rows.eachWithIndex { Map r, int i ->
             String modes = (r.modes as List).collect { modeName(it) }.join(', ')
-            t << "<tr${ui.row == i ? " class='tsp-sel'" : ''}><td>${cellButton("emr~${i}", modes ?: '(no mode)')}</td><td>${refLabel(cfg, r.profile as String, r.custom as Map)}</td>"
-            if (occ) t << "<td${r.useOccupied ? '' : " class='tsp-dim'"}>${r.useOccupied ? esc(occ) : '—'}</td>"
-            t << "</tr>"
+            t << rowButton("emr~${i}", "<span>${esc(modes ?: '(no mode)')}</span><span>${profileHtml(cfg, r.profile as String, r.custom as Map)}</span>" +
+                "<span class='tsp-hide-sm${occ && r.useOccupied ? '' : ' tsp-dim'}'>${occ && r.useOccupied ? esc(occ) : '–'}</span><span class='tsp-dim'>›</span>", cols, 'tsp-mrow')
         }
         List covered = rows.collectMany { (it.modes as List).collect { m -> m as Long } }
         location.modes.findAll { !covered.contains(it.id as Long) }.each { m ->
-            t << "<tr><td class='tsp-dim'>${esc(m.name)}</td><td class='tsp-dim'${occ ? " colspan='2'" : ''}>No row: thermostats left as they are</td></tr>"
+            t << "<div class='tsp-row tsp-dim' style='grid-template-columns:${cols}'><span>${esc(m.name)}</span><span>No row: thermostats left as they are</span><span></span><span></span></div>"
         }
-        paragraph t.append("</tbody></table></div>").toString()
-        input "btnRowAdd", "button", title: "Add row", width: 2, inputClass: SEC
+        paragraph t.append("</div>").toString()
+        input "btnRowAdd", "button", title: "+ Add row", width: 2, inputClass: SEC
         paragraph "<p class='tsp-note'>A row can cover several modes. Mode overrides still apply on top of this schedule.</p>"
     }
-    if (ui.row != null && ui.schedule == si) {
-        boolean isNew = (ui.row as int) < 0
-        String title = isNew ? 'new row' : (rows[ui.row as int]?.modes as List)?.collect { modeName(it) }?.join(', ')
-        section("Edit row: ${esc(title)}", sectionClass: "tsp-edit") {
-            input "edModes", "mode", title: "Modes", multiple: true, width: 4, submitOnChange: true, required: false
-            Map popts = (cfg.profiles as List<Map>).collectEntries { [(it.name): it.name] } + [custom: "Custom values for this row"]
-            input "edProfile", "enum", title: "Profile", options: popts, width: 4, submitOnChange: true, required: false
-            if (settings.edProfile == 'custom') {
-                input "edHeat", "decimal", title: "Heating setpoint (${unit()})", width: 2, submitOnChange: true, required: false
-                input "edCool", "decimal", title: "Cooling setpoint (${unit()})", width: 2, submitOnChange: true, required: false
+}
+
+// ── When it changes page ──
+
+Map optionsPage() {
+    dynamicPage(name: "optionsPage", title: "When it changes") {
+        applyLiveSettings()
+        Map cfg = uiCfg()
+        Map ui = uiState()
+        List<Map> ovs = cfg.overrides as List<Map>
+        section {
+            paragraph pageCss(ui.override != null) + "<p class='tsp-note'>What moves the program off its schedule. Changes on this page apply as soon as you make them.</p>"
+            String err = errorPara('optionsPage')
+            if (err) paragraph err
+        }
+        if (ui.override != null) {
+            section((ui.override as int) < 0 ? "Add a mode override" : "Edit mode override: ${esc(modeName(ovs[ui.override as int]?.modeId))}") {
+                input "edOvMode", "mode", title: "While the hub mode is", width: 6, submitOnChange: true, required: false
+                input "edProfile", "enum", title: "Use profile", options: (cfg.profiles as List<Map>).collectEntries { Map p -> [(p.name): profileText(cfg, p.name as String)] }, width: 6, submitOnChange: true, required: false
+                paragraph "<p class='tsp-note'>Overrides apply on top of any schedule. A hold set to end at the next period also ends when an override starts or ends.</p>"
+                editorButtons("btnOverrideSave", "btnOverrideCancel", (ui.override as int) >= 0 ? "btnOverrideRemove" : null, "Remove override")
             }
-            String occ = occupiedProfile(cfg)
-            if (occ) input "edUseOccupied", "bool", title: "Use the occupied profile (${esc(occ)}) while occupied", width: 6, submitOnChange: true, required: false
-            input "btnRowSave", "button", title: "Save", width: 2, inputClass: PRI
-            input "btnRowCancel", "button", title: "Cancel", width: 2, inputClass: SEC
-            if (!isNew) input "btnRowRemove", "button", title: "Remove row", width: 3, inputClass: SEC
+            return
+        }
+        section("Hub mode") {
+            String cols = "minmax(0,1fr) minmax(0,1.6fr) 16px"
+            StringBuilder t = new StringBuilder("<div class='tsp-rows'>")
+            t << rowHeader("<span>While the hub mode is</span><span>Use</span><span></span>", cols)
+            ovs.eachWithIndex { Map o, int i ->
+                t << rowButton("eov~${i}", "<span>${esc(modeName(o.modeId))}</span><span>${profileHtml(cfg, o.profile as String, null)}</span><span class='tsp-dim'>›</span>", cols)
+            }
+            if (!ovs) t << "<div class='tsp-note' style='padding:10px 12px'>No overrides</div>"
+            paragraph t.append("</div>").toString()
+            input "btnOverrideAdd", "button", title: "+ Add a mode", width: 3, inputClass: SEC
+        }
+        section("Someone is here") {
+            Map occ = (state.rt as Map)?.occ as Map
+            if (occupancySensor && occ) paragraph "<p class='tsp-note'>${occ.state == 'occupied' ? 'Occupied' : 'Vacant'} since ${hhmmOf(occ.since as long, location.timeZone)}</p>"
+            input "occupancySensor", "capability.motionSensor", title: "Motion sensor", required: false, submitOnChange: true, width: 6
+            if (occupancySensor) {
+                String cur = (cfg.occupancy as Map)?.profile as String
+                input "occProfileSel", "enum", title: "While occupied, use", options: [none: "Nothing (occupancy off)"] + (cfg.profiles as List<Map>).collectEntries { Map p -> [(p.name): profileText(cfg, p.name as String)] },
+                      defaultValue: cur ?: 'none', width: 6, submitOnChange: true, required: false
+                input "occupiedAfter", "number", title: "Occupied after (minutes of motion)", defaultValue: 5, range: "0..1440", width: 6, submitOnChange: true
+                input "vacantAfter", "number", title: "Vacant after (minutes without motion)", defaultValue: 30, range: "0..1440", width: 6, submitOnChange: true
+                List<String> users = occupiedUsers(cfg)
+                paragraph "<p class='tsp-note'>${users ? 'Used by ' + esc(users.join(', ')) + '.' : 'No period uses it yet: turn it on in a period on the Schedule page.'} It never lowers a period's comfort. To use several sensors, combine them first with Zone Motion Controller or Sensor Aggregator.</p>"
+            }
+        }
+        section("Pause") {
+            input "pauseWhenOn", "capability.switch", title: "Pause while any of these is on", multiple: true, required: false, submitOnChange: true, width: 6
+            input "pauseWhenOff", "capability.switch", title: "Pause while any of these is off", multiple: true, required: false, submitOnChange: true, width: 6
+            restrictTimeInputs("restrictFrom", "Only run from")
+            if (settings.restrictFrom && settings.restrictFrom != 'any') restrictTimeInputs("restrictTo", "until")
+            input "restrictDays", "enum", title: "Only run on these days", multiple: true, required: false, width: 6, submitOnChange: true,
+                  options: ["1": "Monday", "2": "Tuesday", "3": "Wednesday", "4": "Thursday", "5": "Friday", "6": "Saturday", "7": "Sunday"]
+            input "restrictModes", "mode", title: "Only run in these modes", multiple: true, required: false, width: 6, submitOnChange: true
+            input "whilePaused", "enum", title: "While paused", options: ["leave": "Leave the thermostats as they are", "off": "Turn the thermostats off"], defaultValue: "leave", width: 6, submitOnChange: true
+            input "onResume", "enum", title: "When the pause ends", options: ["restore": "Restore the mode and apply the schedule", "leaveOff": "Leave the thermostats off"], defaultValue: "restore", width: 6, submitOnChange: true
         }
     }
 }
 
-Map optionsPage() {
-    dynamicPage(name: "optionsPage", title: "Overrides and options") {
-        Map cfg = uiCfg()
-        Map ui = uiState()
-        List<Map> ovs = cfg.overrides as List<Map>
-        section("Mode overrides") {
-            StringBuilder t = new StringBuilder(TSP_CSS + "<div class='tsp-tw'><table class='tsp-t'><thead><tr><th>While the hub mode is</th><th>Use profile</th></tr></thead><tbody>")
-            ovs.eachWithIndex { Map o, int i ->
-                t << "<tr${ui.override == i ? " class='tsp-sel'" : ''}><td>${cellButton("eov~${i}", modeName(o.modeId))}</td><td>${refLabel(cfg, o.profile as String, null)}</td></tr>"
-            }
-            if (!ovs) t << "<tr><td colspan='2' class='tsp-dim'>No overrides</td></tr>"
-            paragraph t.append("</tbody></table></div>").toString()
-            String err = errorPara('optionsPage')
-            if (err) paragraph err
-            input "btnOverrideAdd", "button", title: "Add override", width: 3, inputClass: SEC
-            paragraph "<p class='tsp-note'>Overrides apply on top of any schedule. A hold set to end at the next transition also ends when an override starts or ends.</p>"
-            if (ui.override != null) {
-                input "edOvMode", "mode", title: "While the hub mode is", width: 4, submitOnChange: true, required: false
-                input "edProfile", "enum", title: "Use profile", options: (cfg.profiles as List<Map>)*.name, width: 4, submitOnChange: true, required: false
-                input "btnOverrideSave", "button", title: "Save", width: 2, inputClass: PRI
-                input "btnOverrideCancel", "button", title: "Cancel", width: 2, inputClass: SEC
-                if ((ui.override as int) >= 0) input "btnOverrideRemove", "button", title: "Remove override", width: 3, inputClass: SEC
-            }
-        }
-        section("Occupancy") {
-            input "occupancySensor", "capability.motionSensor", title: "Occupancy sensor", required: false, submitOnChange: true, width: 4
-            if (occupancySensor) {
-                input "occupiedAfter", "number", title: "Occupied after (minutes active)", defaultValue: 5, range: "0..1440", width: 4
-                input "vacantAfter", "number", title: "Vacant after (minutes inactive)", defaultValue: 30, range: "0..1440", width: 4
-                String occ = (cfg.occupancy as Map)?.profile as String
-                input "edOccProfile", "enum", title: "While occupied, use profile", options: [none: "None"] + (cfg.profiles as List<Map>).collectEntries { [(it.name): it.name] },
-                      defaultValue: occ ?: 'none', width: 4, submitOnChange: true, required: false
-                if (settings.edOccProfile != null && settings.edOccProfile != (occ ?: 'none')) input "btnOccSave", "button", title: "Save", width: 2, inputClass: PRI
-            }
-            paragraph "<p class='tsp-note'>One motion sensor. To use several, or presence sensors, combine them first with Zone Motion Controller or Sensor Aggregator and pick that device. " +
-                      "Tick the periods that use the occupied profile on the Schedules page. Occupancy never lowers a period's comfort, and does nothing during a hold, a mode override or a pause.</p>"
-        }
-        section("Eco offset") {
-            input "ecoOffset", "decimal", title: "Offset (${unit()})", defaultValue: 2.0, width: 3
-            if (app.getInstallationState() == "COMPLETE") input "btnEco", "button", title: (state.rt as Map)?.eco ? "Turn eco off" : "Turn eco on", width: 3, inputClass: SEC
-            input "ecoOnOverrides", "bool", title: "Also apply eco on top of mode overrides", defaultValue: true
-            paragraph "<p class='tsp-note'>Heating setpoint minus the offset, cooling setpoint plus the offset. Changing the offset while eco is on recalculates from the schedule.</p>"
-        }
-        section("Pause and restrictions") {
-            paragraph "<p class='tsp-note'>The ${esc(app.label)} scheduler device switch pauses the program when off. These optional restrictions pause it too.</p>"
-            input "pauseWhenOn", "capability.switch", title: "Pause while any of these is on", multiple: true, required: false
-            input "pauseWhenOff", "capability.switch", title: "Pause while any of these is off", multiple: true, required: false
-            restrictTimeInputs("restrictFrom", "Only between")
-            if (settings.restrictFrom && settings.restrictFrom != 'any') restrictTimeInputs("restrictTo", "and")
-            input "restrictDays", "enum", title: "Only on days", multiple: true, required: false, width: 4,
-                  options: ["1": "Monday", "2": "Tuesday", "3": "Wednesday", "4": "Thursday", "5": "Friday", "6": "Saturday", "7": "Sunday"]
-            input "restrictModes", "mode", title: "Only in modes", multiple: true, required: false, width: 4
-            input "whilePaused", "enum", title: "While paused", options: ["leave": "Leave thermostats as they are", "off": "Turn thermostats off"], defaultValue: "leave", width: 6
-            input "onResume", "enum", title: "When the pause ends", options: ["restore": "Restore the thermostat mode and apply the schedule", "leaveOff": "Leave thermostats off"], defaultValue: "restore", width: 6
-        }
-        section("Writing to thermostats") {
-            input "separation", "decimal", title: "Required heat/cool separation (${unit()})", defaultValue: 2.0, width: 4
-            input "verifyWrites", "bool", title: "Check each write and report thermostats that do not take the new value (resending is Hubitat's Command Retry)", defaultValue: true
-            input "applyOnStart", "bool", title: "Apply the schedule after a hub restart", defaultValue: true
-        }
-        section("Logging") {
-            input "txtEnable", "bool", title: "Info logging", defaultValue: true
-            input "debugEnable", "bool", title: "Debug logging (turns off after 30 minutes)", defaultValue: false, submitOnChange: true
-            if (debugEnable) input "traceEnable", "bool", title: "Trace logging", defaultValue: false
-        }
+List<String> occupiedUsers(Map cfg) {
+    List<String> out = []
+    (cfg.schedules as List<Map>).each { Map s ->
+        (s.groups as List<Map>)?.each { Map g -> (g.periods as List<Map>).findAll { it.useOccupied }.each { out << "${g.name} · ${it.name}".toString() } }
+        (s.rows as List<Map>)?.findAll { it.useOccupied }?.each { out << "${s.name} · ${(it.modes as List).collect { m -> modeName(m) }.join(', ')}".toString() }
     }
+    return out
 }
 
 void restrictTimeInputs(String n, String title) {
     input n, "enum", title: title, options: [any: "Any time", time: "A specific time", sunrise: "Sunrise", sunset: "Sunset"],
           defaultValue: "any", width: 3, submitOnChange: true
     String k = settings[n] as String
-    if (k == 'time') input "${n}At", "time", title: "Time", width: 3, required: false
-    if (k in ['sunrise', 'sunset']) input "${n}Offset", "number", title: "Offset in minutes (+/−)", width: 3, required: false
+    if (k == 'time') input "${n}At", "time", title: "Time", width: 3, required: false, submitOnChange: true
+    else if (k in ['sunrise', 'sunset']) input "${n}Offset", "number", title: "Offset in minutes (+/−)", width: 3, required: false, submitOnChange: true
+    else paragraph "", width: 3
 }
 
 Map restrictTime(String n) {
@@ -630,6 +808,83 @@ String hhmmSetting(Object v) {
     String s = v.toString()
     if (s ==~ /\d{1,2}:\d{2}/) return s.length() == 4 ? "0${s}" : s
     return hhmmOf(timeToday(s, location.timeZone).getTime(), location.timeZone)
+}
+
+// ── Thermostats and advanced page ──
+
+Map advancedPage() {
+    dynamicPage(name: "advancedPage", title: "Thermostats and advanced") {
+        applyLiveSettings()
+        section {
+            paragraph TSP_CSS + "<p class='tsp-note'>Changes on this page apply as soon as you make them.</p>"
+            input "thermostats", "capability.thermostat", title: "Thermostats", multiple: true, required: true, submitOnChange: true
+            ChildDeviceWrapper d = app.getInstallationState() == "COMPLETE" ? getChildDevice("tsp-${app.id}") : null
+            if (d) href "programDevice", title: "Program device", description: esc(d.displayName), url: "/device/edit/${d.id}", style: "external"
+        }
+        section("Eco") {
+            input "ecoOffset", "decimal", title: "Eco offset (${unit()})", defaultValue: 2.0, width: 6, submitOnChange: true
+            input "ecoOnOverrides", "bool", title: "Also apply eco on top of mode overrides", defaultValue: true, width: 6, submitOnChange: true
+            paragraph "<p class='tsp-note'>Eco lowers the heating setpoint and raises the cooling setpoint by the offset. Changing the offset while eco is on recalculates from the schedule.</p>"
+        }
+        section("Writing to thermostats") {
+            input "separation", "decimal", title: "Required heat/cool separation (${unit()})", defaultValue: 2.0, width: 6, submitOnChange: true
+            paragraph "", width: 6
+            input "verifyWrites", "bool", title: "Check each write and report thermostats that do not take the new value (resending is Hubitat's Command Retry)", defaultValue: true, submitOnChange: true
+            input "applyOnStart", "bool", title: "Apply the schedule after a hub restart", defaultValue: true, submitOnChange: true
+        }
+        section("Logging") {
+            input "txtEnable", "bool", title: "Info logging", defaultValue: true, submitOnChange: true
+            input "debugEnable", "bool", title: "Debug logging (turns off after 30 minutes)", defaultValue: false, submitOnChange: true
+            if (debugEnable) input "traceEnable", "bool", title: "Trace logging", defaultValue: false, submitOnChange: true
+        }
+        if (debugEnable) {
+            section("Testing") {
+                input "testClock", "text", title: "Test clock (yyyy-MM-dd HH:mm, blank = real time)", required: false
+                input "btnEvaluate", "button", title: "Evaluate now"
+                input "btnStart", "button", title: "Run the hub-start handler"
+                input "testConfigJson", "textarea", title: "Configuration JSON", required: false
+                input "btnLoadConfig", "button", title: "Load configuration"
+            }
+        }
+    }
+}
+
+// Settings changed on a page apply on the next render, without waiting for Done: the occupied
+// profile picker writes the configuration, and any other change re-subscribes and re-evaluates.
+@Field static final List<String> LIVE_KEYS = ['thermostats', 'occupancySensor', 'occupiedAfter', 'vacantAfter', 'pauseWhenOn', 'pauseWhenOff',
+    'restrictFrom', 'restrictFromAt', 'restrictFromOffset', 'restrictTo', 'restrictToAt', 'restrictToOffset', 'restrictDays', 'restrictModes',
+    'whilePaused', 'onResume', 'ecoOffset', 'ecoOnOverrides', 'separation', 'verifyWrites', 'applyOnStart']
+
+String liveSig() {
+    return LIVE_KEYS.collect { String k ->
+        Object v = settings[k]
+        String s = v instanceof Collection ? (v as Collection).collect { it instanceof DeviceWrapper ? (it as DeviceWrapper).id.toString() : it.toString() }.sort().join(',')
+                 : (v instanceof DeviceWrapper ? (v as DeviceWrapper).id.toString() : v?.toString())
+        "${k}=${s}"
+    }.join('|')
+}
+
+void applyLiveSettings() {
+    if (app.getInstallationState() != "COMPLETE") return
+    String sel = settings.occProfileSel as String
+    if (sel != null) {
+        Map c = cfgCopy()
+        String cur = (c.occupancy as Map)?.profile as String
+        app.removeSetting("occProfileSel")
+        if ((sel == 'none' ? null : sel) != cur) {
+            if (sel == 'none') c.remove('occupancy') else c.occupancy = [profile: sel]
+            saveConfig(c)
+        }
+    }
+    String sig = liveSig()
+    if (state.liveSig == sig) return
+    boolean first = state.liveSig == null
+    state.liveSig = sig
+    if (first) return
+    logCfg "settings changed"
+    resubscribe()
+    occupancySeed()
+    evaluate("settings changed", false)
 }
 
 // ── UI edits (buttons) ────────────────────────────────────────────────
@@ -961,6 +1216,7 @@ void initialize() {
     if ((state.rt as Map).verify) runIn(30, "verifyWrites")
     occupancySeed()
     subscribeAll()
+    state.liveSig = liveSig()
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
     evaluate("initialize", false)
 }
@@ -1621,6 +1877,37 @@ Map nextTransitionOf(Map sched, Map ctx) {
         if (ahead) return ahead.first()
     }
     return null
+}
+
+// The week from mondayIso: per day, the periods in effect from midnight to midnight, in minutes.
+@CompileStatic
+List<Map> weekSegments(Map sched, Map ctx, String mondayIso) {
+    TimeZone tz = ctx.tz as TimeZone
+    List<Map> out = []
+    for (int d = 0; d < 7; d++) {
+        String iso = addDays(mondayIso, d, tz)
+        long start = atLocal(iso, '00:00', tz), end = atLocal(addDays(iso, 1, tz), '00:00', tz)
+        Map atStart = new LinkedHashMap(ctx)
+        atStart.put('now', start)
+        Map cur = currentTransition(sched, atStart)
+        long from = start
+        List<Map> segs = []
+        for (Map tr in transitionsForDay(sched, iso, ctx).findAll { Map x -> (x.at as long) > start }) {
+            if (cur) segs << weekSeg(cur, from, tr.at as long, start, end)
+            cur = tr
+            from = tr.at as long
+        }
+        if (cur) segs << weekSeg(cur, from, end, start, end)
+        out << [iso: iso, segs: segs]
+    }
+    return out
+}
+
+@CompileStatic
+Map weekSeg(Map t, long from, long to, long start, long end) {
+    double span = (end - start) as double
+    return [from: (from - start) * 1440.0d / span, to: (to - start) * 1440.0d / span, period: t.period, group: t.group,
+            profile: t.profile, custom: t.custom, useOccupied: t.useOccupied == true]
 }
 
 @CompileStatic

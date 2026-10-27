@@ -27,7 +27,9 @@ A program controls one or more thermostats that share a schedule, usually one zo
 
 ## Programs
 
-The program's main page shows what is in effect and why, the next transition, a table of the thermostats, and the controls: **Apply now**, **Advance**, eco on or off, **Pause** or **Resume**, **End hold**, and a hold picker. Three pages hold the setup: **Profiles**, **Schedules**, and **Overrides and options**.
+The program's main page shows what is in effect and why, the next period, the thermostats (a setpoint the thermostat's mode doesn't use is dimmed), and the week of the active schedule as a timeline. Its controls are the **Running** and **Eco** switches, **Apply now**, a hold (profile, until, **Hold**), and **Skip to** the next period or **Resume schedule**. Four pages hold the setup: **Schedule**, **Comfort** (the profiles), **When it changes** (mode overrides, occupancy and pause conditions) and **Thermostats and advanced**.
+
+Clicking a period, profile or override opens its editor in place of the list, with **Save** and **Cancel**. Settings on *When it changes* and *Thermostats and advanced* apply as soon as they change, without **Done**.
 
 A new program starts with the profiles Home, Sleep and Away, one schedule, Normal, with Wake at 06:30 (Home) and Night at 22:00 (Sleep) every day, and an override from the Away mode to the Away profile.
 
@@ -41,7 +43,7 @@ Setpoints use the hub's temperature scale. Valid values are 0 to 40 °C or 32 to
 
 A program can have several schedules, for example Normal and Vacation. One is active, and the `setSchedule` command switches it. Each schedule is one of two types:
 
-- **Time of day:** day groups, each with its own periods. Every day belongs to exactly one group. A period starts at a fixed time, at sunrise or sunset with an offset in minutes, or at the time held in a DateTime hub variable, and uses a profile or its own custom setpoints. Before the first period of a day, the previous day's last period is in effect. Taking a day out of its group starts a new group with a copy of its periods.
+- **Time of day:** day groups, each with its own periods. Every day belongs to exactly one group. A period starts at a fixed time, at sunrise or sunset with an offset in minutes, or at the time held in a DateTime hub variable, and uses a profile or its own custom setpoints. Before the first period of a day, the previous day's last period is in effect. On the *Schedule* page each group shows the seven days as buttons: clicking a day moves it into that group, and clicking a day the group already has gives it a group of its own with a copy of its periods.
 - **Hub mode:** rows that map one or more hub modes to a profile or custom setpoints. A mode with no row leaves the thermostats as they are. Modes are matched by id, so renaming a mode keeps its row.
 
 ### Mode overrides
@@ -54,7 +56,7 @@ Eco lowers the heating setpoint and raises the cooling setpoint by the offset (d
 
 ### Occupancy
 
-A program can take one motion sensor as its occupancy sensor, on the *Overrides and options* page. The zone counts as occupied once the sensor has been active for **Occupied after** minutes (default 5) and as vacant once it has been inactive for **Vacant after** minutes (default 30). To use several sensors, or presence sensors, combine them first with Zone Motion Controller or Sensor Aggregator and pick that device.
+A program can take one motion sensor as its occupancy sensor, on the *When it changes* page. The zone counts as occupied once the sensor has been active for **Occupied after** minutes (default 5) and as vacant once it has been inactive for **Vacant after** minutes (default 30). To use several sensors, or presence sensors, combine them first with Zone Motion Controller or Sensor Aggregator and pick that device.
 
 **While occupied, use profile** names the profile people want when they are there, for example *Present* at 20 °C. Each time period and each hub-mode row has a **Use the occupied profile while occupied** option. While the zone is occupied, a period with that option on takes the occupied profile's heating setpoint when it is higher than its own, and its cooling setpoint when it is lower. Fan and thermostat modes stay the period's. The period's own values apply when the zone is vacant, so a program whose sensor stops reporting keeps to its schedule.
 
