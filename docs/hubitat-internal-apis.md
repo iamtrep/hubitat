@@ -326,6 +326,10 @@ From 2.5.2.133 the Hub Variables page is a native page at `/hub/variables`, and 
 - A device's invokable commands are listed in `GET /device/fullJson/{id}` in the top-level `commands[]` (each has `name`, `parameters`) *(probed 2.5.2.135)*.
 - This is the **web-UI invocation channel**; its script-instance/binding lifecycle could differ from app- or Maker-API-driven calls. For production-representative behavior — and any test that cares about cross-invocation state — prefer the Maker API route `GET /apps/api/{appId}/devices/{deviceId}/{command}?access_token={token}`. (The two channels matched for command dispatch and binding persistence on firmware 2.5.0.143 — see [`hubitat-platform-notes.md`](hubitat-platform-notes.md).) *(probed 2.5.0.143)*
 
+## Disable or enable a device
+
+- `POST /device/disable` with a JSON body `{"id": <deviceId>, "disable": true|false}` is the Devices page's disable toggle *(source: vue-hub2.min.js, 2.5.2.139)*. It answered `{"result":false}` when it re-enabled a device, so read `disabled` from `GET /device/fullJson/{id}` to know the outcome *(probed 2.5.2.139, C-7, one call)*.
+
 ## App instance status
 
 - `GET /installedapp/statusJson/{id}` is the App Status page as JSON: `installedApp` (`id`, `appTypeId`, `label`, `parentAppId`, `disabled`, `singleThreaded`, `restrictedModes`, `version`, …), `appSettings[]` (`name`, `type`, `value`, `multiple`, `deviceIdsForDeviceList`), `eventSubscriptions[]` (`name`, `handler`, `filter`, `subscriptionData`, `typeName`; `null`, not `[]`, when the app has none), `scheduledJobs[]` (`handler`, `schedule`, `nextRunTime`, `prevRunTime`, `status`), `appState[]` (`name`, `type`, `value`), `childAppCount`, `childDeviceCount`, `childDevices[]`, plus `tempSettings[]` and `tempState[]` *(probed 2.5.2.135)*. A `childDevices[]` entry carries only `id` and `name` (the label), no DNI *(probed 2.5.2.139, C-7)*. In an app, `state` and `atomicState` share one keyspace, so `appState` has one row per key and no marker for the store ([platform notes](hubitat-platform-notes.md)).
