@@ -313,6 +313,14 @@ suggest "tune the reporting interval" or "configure Reportable Change" — there
 
 **Untested:** the herdsman schema lists a writable `coolDownTime` (`0xFFF1/0x0004`, UINT16, up to 7200 s in Zigbee2MQTT). It is unconfirmed whether it throttles the stream; we have not written it *(community: [zigbee-herdsman-converters `third_reality.ts`](https://github.com/Koenkk/zigbee-herdsman-converters/blob/master/src/devices/third_reality.ts))*.
 
+## Universal Electronics / Visonic URC4460BC0 (Xfinity contact sensor)
+
+Zigbee IAS contact sensor, model `URC4460BC0-X-R`, firmware `10EF-0001-20160921` on every unit seen *(probed firmware not recorded, C-7, 22 sensors)*.
+
+- **The sensor reports low battery itself**, in IAS Zone Status (`0x0500:0x0002`) bit 3 (`0x0008`), which ZCL defines as the battery-low bit *(spec: ZCL, IAS Zone cluster, ZoneStatus attribute)*.
+- On 11 of 22 sensors the bit set while battery voltage (`0x0001:0x0020`, 100 mV steps) read 2.5 or 2.6 V, 1 to 21 days after the voltage last changed to that value. None set it while the voltage read 2.7 V or more *(probed firmware not recorded, C-7, 22 sensors, attribute log June to October 2026)*.
+- After a battery change the bit cleared within 30 s of the first 3.0 V reading, on 8 sensors over 9 changes. One replacement cell read 3.0 V, then 2.6 V an hour later, and the bit set again with that reading *(probed firmware not recorded, C-7, 22 sensors, attribute log June to October 2026)*.
+
 ## Android TV / Google TV (Remote protocol v2)
 
 The protocol Google's TV remote app and Home Assistant's `androidtv_remote` integration use: TLS on
