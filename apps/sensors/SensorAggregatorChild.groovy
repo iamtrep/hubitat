@@ -35,7 +35,10 @@ import com.hubitat.app.ChildDeviceWrapper
 //import com.hubitat.hub.domain.Capability // only available from 2.4.3.148 onward
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.3.7"
+@Field static final String CODE_VERSION = "0.4.0"
+@Field static final Integer QUIET_FLOOR_MIN = 30
+@Field static final Integer MIN_GAPS = 5
+@Field static final Integer KEEP_GAPS = 48
 
 @Field static final Map<String, String> CAPABILITY_ATTRIBUTES = [
     "capability.carbonDioxideMeasurement"   : [ attribute: "carbonDioxide", driver: "Virtual Omni Sensor" ],
@@ -69,10 +72,11 @@ Map mainPage() {
         }
         section("Aggregation") {
             input name: "aggregationMethod", type: "enum", options: ["average", "median", "min", "max"], title: "Select aggregation method", defaultValue: "average", required: true, submitOnChange: true
-            input name: "excludeAfter", type: "number", title: "Exclude sensor when inactive for this many minutes:", defaultValue: 60, range: "0..1440", submitOnchange: true
+            input name: "excludeAfter", type: "number", title: "Exclude a sensor after this many minutes without activity, until the app has learned its usual gaps", defaultValue: 60, range: "0..1440", submitOnchange: true
         }
         section("Operation") {
             input name: "forceUpdate", type: "button", title: "Force update aggregate value"
+            input name: "forgetGaps", type: "button", title: "Forget the sensors' learned gaps"
             if(inputSensors && state.aggregateValue != null) {
                 paragraph "Current aggregate value: <b>${state.aggregateValue}</b>"
                 paragraph "Included sensors: ${state.includedSensors?.size() ?: 0} of ${inputSensors.size()}"
@@ -93,6 +97,7 @@ Map mainPage() {
             input name: "notificationDevice", type: "capability.notification", title: "Send notifications to:", multiple: false, required: false
             input name: "notifyOnAllExcluded", type: "bool", title: "Notify when all sensors are excluded", defaultValue: true
             input name: "notifyOnFirstExcluded", type: "bool", title: "Notify when any sensor is excluded", defaultValue: false
+            input name: "noSensorSwitch", type: "capability.switch", title: "Switch to turn on while no sensor reports", required: false
         }
     }
 }
@@ -131,6 +136,7 @@ void initialize() {
     if (state.maxSensorValue == null) { state.maxSensorValue = 0.0 }
     if (state.medianSensorValue == null) { state.medianSensorValue = 0.0 }
     if (state.createChild == null) { state.createChild = false }
+    pruneActivity()
 
     if (!outputSensor && state.createChild) {
         fetchChildDevice()
@@ -144,7 +150,17 @@ void initialize() {
         }
     }
 
+    // Silence sends no event: only a timer notices a sensor that stopped reporting.
+    schedule("${new Random().nextInt(60)} */5 * ? * *", "checkSensors")
     sensorEventHandler()
+}
+
+// Reads cached activity and values only; never commands the sensors.
+void checkSensors() {
+    checkVersion()
+    logSched "check"
+    def before = state.aggregateValue
+    if (computeAggregateSensorValue() && state.aggregateValue != before) publishAggregate()
 }
 
 private void checkVersion(boolean reinit = true) {
@@ -180,11 +196,16 @@ private List<String> sensorLabels(List ids) {
 
 void uninstalled() {
     logDebug "uninstalled()"
+    noSensorSwitch?.off()
 }
 
 void appButtonHandler(String buttonName) {
     checkVersion()
     switch (buttonName) {
+        case "forgetGaps":
+            forgetLearnedGaps()
+            logCfg "forgot the sensors' learned gaps"
+            break
         case "forceUpdate":
         default:
             //sensorEventHandler()
@@ -197,21 +218,23 @@ void sensorEventHandler(Event evt=null) {
     checkVersion()
     if (evt != null) logTrace "sensorEventHandler() called: ${evt?.name} ${evt?.getDevice().getLabel()} ${evt?.value} ${evt?.descriptionText}"
 
-	if (computeAggregateSensorValue()) {
-        DeviceWrapper sensorDevice = outputSensor
-        if (!sensorDevice) {
-            sensorDevice = fetchChildDevice()
-        }
-        if (!sensorDevice) {
-            logError("No output device to update")
-            return
-        }
-        sensorDevice.sendEvent(name: CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute,
-                               value: state.aggregateValue,
-                               unit: getAttributeUnits(selectedSensorCapability),
-                               descriptionText:"${sensorDevice.displayName} was set to ${state.aggregateValue}${getAttributeUnits(selectedSensorCapability)}"
-                               /* , isStateChange: true // let platform filter this event as needed */)
+	if (computeAggregateSensorValue()) publishAggregate()
+}
+
+private void publishAggregate() {
+    DeviceWrapper sensorDevice = outputSensor
+    if (!sensorDevice) {
+        sensorDevice = fetchChildDevice()
     }
+    if (!sensorDevice) {
+        logError("No output device to update")
+        return
+    }
+    sensorDevice.sendEvent(name: CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute,
+                           value: state.aggregateValue,
+                           unit: getAttributeUnits(selectedSensorCapability),
+                           descriptionText:"${sensorDevice.displayName} was set to ${state.aggregateValue}${getAttributeUnits(selectedSensorCapability)}"
+                           /* , isStateChange: true // let platform filter this event as needed */)
 }
 
 private String getAttributeUnits(String capability) {
@@ -255,24 +278,25 @@ private ChildDeviceWrapper fetchChildDevice() {
 }
 
 private List<DeviceWrapper> refreshIncludedSensors() {
-    Date now = new Date()
-    int excludeAfterMin = ((excludeAfter ?: 60) as Integer)
-    Date timeAgo = new Date(now.time - excludeAfterMin * 60 * 1000)
+    Long t = now()
     String attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute
+    sampleActivity()
+    Map all = (state.sensors ?: [:]) as Map
 
     List<DeviceWrapper> includedSensors = []
     List<DeviceWrapper> excludedSensors = []
 
     inputSensors.each {
-        Date lastActivity = it.getLastActivity()
-        if (lastActivity > timeAgo) {
+        String id = it.id.toString()
+        Long limit = limitFor(id)
+        if (!isQuiet(all[id] as Map, t, limit)) {
             if (it.currentValue(attributeName) != null) {
                 includedSensors << it
-                logTrace("Including sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - last activity ${lastActivity}")
+                logTrace("Including sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - last activity ${it.getLastActivity()}")
             }
         } else {
             excludedSensors << it
-            logTrace("Excluding sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - no activity since $timeAgo (last active ${lastActivity})")
+            logTrace("Excluding sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - no activity in ${limit.intdiv(60000L)} min (last active ${it.getLastActivity()})")
         }
     }
 
@@ -290,20 +314,68 @@ private List<DeviceWrapper> refreshIncludedSensors() {
         logDebug(message)
     }
 
-    // Notify if all sensors excluded
-    if (includedSensors.size() < 1) {
-        String message = "Sensor Aggregator '${app.label}': All sensors excluded due to inactivity"
-        if (notificationDevice && notifyOnAllExcluded && previouslyExcludedIds.size() < currentlyExcludedIds.size()) {
-            notificationDevice.deviceNotification(message)
-        }
-        logWarn(message)
-    }
+    noteNoSensor(includedSensors.isEmpty() && !currentlyExcludedIds.isEmpty(), currentlyExcludedIds)
 
     // Update state
     state.includedSensors = includedSensors.collect { it.id.toString() }
     state.excludedSensors = currentlyExcludedIds
 
     return includedSensors
+}
+
+// Notifies once on entry and once on exit; the switch follows the state at every evaluation.
+private void noteNoSensor(boolean none, List<String> excludedIds) {
+    // Before 0.4.0 there was no flag: derive it from the stored lists so an upgrade doesn't re-notify.
+    boolean was = state.noSensor != null ? state.noSensor as boolean : (!state.includedSensors && state.excludedSensors)
+    state.noSensor = none
+    if (none) {
+        String message = "Sensor Aggregator '${app.label}': All sensors excluded due to inactivity"
+        if (!was && notificationDevice && notifyOnAllExcluded) notificationDevice.deviceNotification(message)
+        logWarn(message)
+    } else if (was) {
+        String message = "Sensor Aggregator '${app.label}': Sensors reporting again"
+        if (notificationDevice && notifyOnAllExcluded) notificationDevice.deviceNotification(message)
+        logInfo(message)
+    }
+    String want = none ? "on" : "off"
+    if (noSensorSwitch && noSensorSwitch.currentValue("switch") != want) {
+        logCmd "${noSensorSwitch.displayName} ${want}"
+        if (none) noSensorSwitch.on() else noSensorSwitch.off()
+    }
+}
+
+// ── Sensor activity ───────────────────────────────────────────────────
+
+// getLastActivity() counts every event, battery reports and check-ins included.
+private void sampleActivity() {
+    Map all = (state.sensors ?: [:]) as Map
+    boolean changed = false
+    (inputSensors ?: []).each { DeviceWrapper d ->
+        Date la = d.getLastActivity()
+        if (la == null) return
+        String id = d.id.toString()
+        Map was = all[id] as Map
+        Map upd = recordActivity(was, la.time, KEEP_GAPS)
+        if (upd != was) { all[id] = upd; changed = true }
+    }
+    if (changed) state.sensors = all
+}
+
+private Long limitFor(String id) {
+    Map s = ((state.sensors ?: [:]) as Map)[id] as Map
+    Long fallbackMs = ((excludeAfter ?: 60) as Long) * 60000L
+    return quietLimitMs((s?.gaps ?: []) as List, fallbackMs, QUIET_FLOOR_MIN * 60000L, MIN_GAPS)
+}
+
+private void forgetLearnedGaps() {
+    Map all = [:]
+    ((state.sensors ?: [:]) as Map).each { k, v -> all[k] = [last: (v as Map)?.last, gaps: []] }
+    state.sensors = all
+}
+
+private void pruneActivity() {
+    List<String> ids = (inputSensors ?: []).collect { it.id.toString() }
+    state.sensors = ((state.sensors ?: [:]) as Map).findAll { k, v -> ids.contains(k.toString()) }
 }
 
 private boolean computeAggregateSensorValue() {
@@ -369,8 +441,40 @@ private void logStatistics() {
     } else {
         logDebug("No aggregated sensors!")
     }
-    if (state.excludedSensors.size() > 0) logDebug("Rejected sensors with last update older than $excludeAfter minutes: ${sensorLabels(state.excludedSensors).join(', ')}")
+    if (state.excludedSensors.size() > 0) logDebug("Rejected sensors with no recent activity: ${sensorLabels(state.excludedSensors).join(', ')}")
 }
+
+// ── Core (pure) ───────────────────────────────────────────────────────
+// No settings, state, devices, logging or @Field here: tests/test_core.groovy runs this block off-hub.
+// Same helpers as Switched Heater Thermostat; keep the copies in step.
+
+Map recordActivity(Map s, Long at, Integer keep) {
+    Long last = (s?.last != null) ? (s.last as Long) : null
+    List<Long> gaps = []
+    for (Object g : (List) (s?.gaps ?: [])) gaps << (g as Long)
+    if (at == null || (last != null && at <= last)) return [last: last, gaps: gaps]
+    if (last != null) {
+        gaps << (at - last)
+        while (gaps.size() > keep) gaps.remove(0)
+    }
+    return [last: at, gaps: gaps]
+}
+
+// Twice the second-longest gap: one outage in the history does not stretch the limit.
+Long quietLimitMs(List gaps, Long fallbackMs, Long floorMs, Integer minGaps) {
+    if (gaps == null || gaps.size() < minGaps) return fallbackMs
+    List<Long> sorted = []
+    for (Object g : gaps) sorted << (g as Long)
+    sorted.sort()
+    return Math.max(floorMs, 2L * sorted[sorted.size() - 2])
+}
+
+boolean isQuiet(Map s, Long now, Long limitMs) {
+    if (s?.last == null) return true
+    return now - (s.last as Long) > limitMs
+}
+
+// ── End core ──────────────────────────────────────────────────────────
 
 
 @CompileStatic

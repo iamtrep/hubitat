@@ -58,7 +58,9 @@ Aggregation methods:
 
 #### Common features
 
-- **Inactivity exclusion** — sensors with no activity for a configurable number of minutes are excluded from the calculation.
+- **Inactivity exclusion** — a sensor is left out of the result when its last activity (any event, including battery reports and check-ins) is older than its quiet limit. Until the app has seen 5 gaps between a sensor's activity, the limit is **Exclude a sensor after this many minutes** (default 60). After that, the limit is twice the second-longest of the last 48 gaps, never under 30 minutes. **Forget the sensors' learned gaps** goes back to the setting, for example after a sensor's reporting interval changes.
+- **Periodic check** — every 5 minutes the app re-reads each sensor's last activity and value and updates the output if the result changed. It sends no command to the sensors. A silent sensor is excluded on time even when no other sensor reports.
+- **No sensor reports** — when every sensor is excluded, the output keeps its last value. A notification goes out when this starts and when a sensor reports again, and an optional switch is on while it lasts.
 - **Notifications** — optional alerts (via a notification device) when any sensor is excluded or when all sensors are excluded.
 - **Auto child device** — can automatically create a virtual child device as the output if none is selected.
 - **Force update** button in the app UI to recalculate on demand.
