@@ -69,7 +69,8 @@
 
     Inputs:
     - Humidity state transitions (HIGH → turn on, NORMAL → turn off if app controls fan)
-    - Restriction changes (restricted → turn off if we turned it on, unrestricted → turn on if HIGH)
+    - Restriction changes (restricted → turn off if we turned it on, unrestricted → turn on if HIGH);
+      smoke and CO detectors count as restrictions, and their off skips the physical-run floor
     - External fan manipulation: a physical off is honored (clear our flag); a digital
       off while humidity is HIGH and not restricted turns the fan back on, at most
       once per 5 minutes (another app releasing a shared fan)
@@ -92,7 +93,7 @@ import groovy.transform.Field
 import com.hubitat.app.DeviceWrapper
 
 @Field static final String APP_NAME = "Humidity-Based Fan Controller"
-@Field static final String CODE_VERSION = "0.10.0"
+@Field static final String CODE_VERSION = "0.11.0"
 
 // Humidity state machine states
 @Field static final String HUMIDITY_NORMAL = "NORMAL"
@@ -226,6 +227,8 @@ Map mainPage() {
         section("Restrictions", hideable: true, hidden: true) {
             input "restrictionSwitchesMustBeOff", "capability.switch", title: "Restriction Switches (Must Be OFF)", description: "Fan automation paused if ANY of these is ON", multiple: true, required: false
             input "restrictionSwitchesMustBeOn", "capability.switch", title: "Restriction Switches (Must Be ON)", description: "Fan automation paused if ANY of these is OFF", multiple: true, required: false
+            input "smokeDetectors", "capability.smokeDetector", title: "Smoke Detectors", description: "Fan automation paused while ANY detects smoke; a fan the app turned on is turned off at once", multiple: true, required: false
+            input "coDetectors", "capability.carbonMonoxideDetector", title: "CO Detectors", description: "The same, while ANY detects CO", multiple: true, required: false
         }
 
         section("Logging", hideable: true, hidden: true) {
@@ -299,6 +302,8 @@ void initialize() {
     if (restrictionSwitchesMustBeOn) {
         subscribe(restrictionSwitchesMustBeOn, "switch", restrictionSwitchHandler)
     }
+    if (smokeDetectors) subscribe(smokeDetectors, "smoke", restrictionSwitchHandler)
+    if (coDetectors) subscribe(coDetectors, "carbonMonoxide", restrictionSwitchHandler)
 
     // Subscribe to occupancy motion (gates the fast-climb bypass)
     if (occupancySensors) {
@@ -513,9 +518,15 @@ void restrictionSwitchHandler(evt) {
     Boolean nowRestricted = isRestricted()
 
     if (nowRestricted && state.fanTurnedOnByApp) {
-        // Restriction activated and we have the fan on - turn it off
-        logInfo("Restriction activated - turning off fan")
-        requestFanOff("restriction activated")
+        // Restriction activated and we have the fan on - turn it off. Smoke or CO
+        // overrides the physical-run floor, as the max fan run time does.
+        if (safetyAlarm()) {
+            logInfo("Smoke or CO detected - turning off fan")
+            turnOffFan()
+        } else {
+            logInfo("Restriction activated - turning off fan")
+            requestFanOff("restriction activated")
+        }
     } else if (!nowRestricted && isHumidityHigh()) {
         // Restriction lifted and humidity is high - turn fan on
         logInfo("Restriction lifted while humidity is high - turning on fan")
@@ -1265,7 +1276,16 @@ void physicalRunFloorReached() {
 
 // ==================== Restrictions ====================
 
+private Boolean safetyAlarm() {
+    return (smokeDetectors ?: []).any { it.currentValue("smoke") == "detected" } ||
+           (coDetectors ?: []).any { it.currentValue("carbonMonoxide") == "detected" }
+}
+
 private Boolean isRestricted() {
+    if (safetyAlarm()) {
+        logDebug("Restriction: smoke or CO detected")
+        return true
+    }
     if (restrictionSwitchesMustBeOff) {
         Boolean anyOn = restrictionSwitchesMustBeOff.any { it.currentValue("switch") == "on" }
         if (anyOn) {
