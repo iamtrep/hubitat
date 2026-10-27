@@ -321,7 +321,7 @@ void evaluateAir(String why) {
                                       (state.claims ?: [:]) as Map, values)
             state.claims = r.claims
             st = r.stages as List<Map>
-            logInfo "detectors clear: ${(r.claims as Map).size()} switch(es) still on kept, other claims dropped"
+            logInfo "detectors clear: ${(r.claims as Map).size()} switch(es) kept, ${(r.stages as List<Map>).count { it.s == 'engaged' }} stage(s) resume"
         }
         if (reason) {
             releaseAll()
@@ -416,9 +416,12 @@ void stageSwitchHandler(evt) {
     List<Map> st = resized((state.stages ?: []) as List<Map>, stageCount())
     Map re = (state.reasserted ?: [:]) as Map
     String live = currentStopReason()
+    boolean claimed = ((state.claims ?: [:]) as Map)[id] == true
     String act = switchEventAction(evt.value as String, physical, pending, st[i].s as String, (state.lastStop != null || live != null),
-                                   re[id] as Long, now(), REASSERT_GAP_MS)
-    if (act != "own" && evt.value == "off") dropClaim(id)
+                                   re[id] as Long, now(), REASSERT_GAP_MS, claimed)
+    // A fire rule turns switches off during a safety stop and restores them after: the claim stays.
+    boolean safety = live == "safety" || state.lastStop == "safety"
+    if (act != "own" && evt.value == "off" && !safety) dropClaim(id)
     if (act == "hold") {
         long mins = numOr(holdMinutes, 60).longValue()
         st[i] = [s: "held", since: null, heldUntil: now() + mins * (testFast ? 1000L : 60000L)]
@@ -432,6 +435,11 @@ void stageSwitchHandler(evt) {
         switchCmd(evt.device as DeviceWrapper, "on")
     } else if (act == "throttled") {
         logWarn "${evt.displayName} turned off again within 5 minutes of being turned back on: left off"
+    } else if (act == "reengage") {
+        st[i] = [s: "engaged", since: null, heldUntil: null]
+        state.stages = st
+        logInfo "${evt.displayName} turned back on after the safety stop: stage ${i + 1} resumes"
+        evaluateAir("switch restored")
     }
     if (live != null && live != state.lastStop) evaluateAir("stop")
 }
@@ -662,34 +670,31 @@ boolean allRunning(List<Map> st) {
 // What a stage switch event means. pending: the command this app sent and has not seen come back.
 // 'own' our command arriving; 'hold' a physical off on a running stage; 'reassert' another source
 // turned a running stage's switch off; 'throttled' the same, too soon after the last re-assertion;
-// 'ignore' anything else.
+// 'reengage' a claimed switch turned back on while its stage is off (a fire rule restoring it after
+// a safety stop); 'ignore' anything else.
 @CompileStatic
 String switchEventAction(String value, boolean physical, String pending, String stageState, boolean stopped,
-                         Long lastReassert, long now, long gapMs) {
+                         Long lastReassert, long now, long gapMs, boolean claimed) {
     if (pending != null && pending == value) return 'own'
-    if (value != 'off' || stageState != 'engaged' || stopped) return 'ignore'
+    if (value == 'on') return claimed && stageState == 'off' && !stopped ? 'reengage' : 'ignore'
+    if (stageState != 'engaged' || stopped) return 'ignore'
     if (physical) return 'hold'
     if (lastReassert != null && now - lastReassert < gapMs) return 'throttled'
     return 'reassert'
 }
 
-// After a safety stop clears. A claimed switch that is still on keeps its claim, so nothing is left
-// on with no owner; any other claim is dropped. A stage that keeps a claim resumes engaged and
-// releases through its off dwell. stageIds: switch ids per stage; values: switch value by id.
+// After a safety stop clears. Every claim is kept, so nothing the app turned on is left on with no
+// owner: a fire rule may restore its switches after this runs, and a claimed switch turned back on
+// then re-engages its stage (switchEventAction 'reengage'). A stage with a claimed switch that is
+// on resumes engaged and releases through its off dwell. stageIds: switch ids per stage; values:
+// switch value by id.
 @CompileStatic
 Map resumeAfterSafety(List<List<String>> stageIds, Map claims, Map<String, String> values) {
-    Map kept = [:]
     List<Map> st = stageIds.collect { List<String> ids ->
-        boolean any = false
-        ids.each { String id ->
-            if (claims[id] && values[id] == 'on') {
-                kept[id] = true
-                any = true
-            }
-        }
+        boolean any = ids.any { String id -> claims[id] && values[id] == 'on' }
         return [s: any ? 'engaged' : 'off', since: null, heldUntil: null] as Map
     }
-    return [stages: st, claims: kept]
+    return [stages: st, claims: claims]
 }
 
 // w: [active, since, lastSent]. mode: 'run', 'pause' (no stage may run, CO2 alone decides) or 'stop'.

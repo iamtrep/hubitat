@@ -219,7 +219,27 @@ cases:
       - { device: test-iaq-s1, attribute: switch, value: "off" }
       - { device: test-iaq Air, attribute: ventilationStage, value: "0" }
     assert_logs:
-      - { pattern: "detectors clear: 1 switch\\(es\\) still on kept", level: info }
+      - { pattern: "detectors clear: 1 switch\\(es\\) kept, 1 stage\\(s\\) resume", level: info }
+
+  # Fire rule 992's order: turn the switch off during the alarm, restore it after the clear (after
+  # the app has resumed, with CO2 already low). The app keeps its claim, so the restore re-engages
+  # stage 1 and it turns the switch off through its off dwell.
+  - name: fire-rule-restore-keeps-claim
+    setup: *reset
+    command_spacing_seconds: 3
+    actions:
+      - { device: test-iaq-co2, command: setCarbonDioxide, args: [700] }
+      - { device: test-iaq-smoke, command: detected }
+      - { device: test-iaq-s1, command: "off" }
+      - { device: test-iaq-co2, command: setCarbonDioxide, args: [400] }
+      - { device: test-iaq-smoke, command: clear }
+      - { device: test-iaq-s1, command: "on" }
+    wait_seconds: 4
+    assert:
+      - { device: test-iaq-s1, attribute: switch, value: "off" }
+      - { device: test-iaq Air, attribute: ventilationStage, value: "0" }
+    assert_logs:
+      - { pattern: "turned back on after the safety stop: stage 1 resumes", level: info }
 
   - name: enable-off-releases
     setup: *reset
