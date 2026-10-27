@@ -570,7 +570,7 @@ Map optionsPage() {
             input "occupancySensor", "capability.motionSensor", title: "Occupancy sensor", required: false, submitOnChange: true, width: 4
             if (occupancySensor) {
                 input "occupiedAfter", "number", title: "Occupied after (minutes active)", defaultValue: 5, range: "0..1440", width: 4
-                input "vacantAfter", "number", title: "Vacant after (minutes inactive)", defaultValue: 40, range: "0..1440", width: 4
+                input "vacantAfter", "number", title: "Vacant after (minutes inactive)", defaultValue: 30, range: "0..1440", width: 4
                 String occ = (cfg.occupancy as Map)?.profile as String
                 input "edOccProfile", "enum", title: "While occupied, use profile", options: [none: "None"] + (cfg.profiles as List<Map>).collectEntries { [(it.name): it.name] },
                       defaultValue: occ ?: 'none', width: 4, submitOnChange: true, required: false
@@ -1076,7 +1076,7 @@ long occDelayMs(String name, int dflt) {
 
 Map occupancyDecision(String reading, Long changedAt) {
     return occupancyStep(((state.rt as Map)?.occ as Map)?.state as String, reading, changedAt, now(),
-                         occDelayMs("occupiedAfter", 5), occDelayMs("vacantAfter", 40))
+                         occDelayMs("occupiedAfter", 5), occDelayMs("vacantAfter", 30))
 }
 
 void occupancyWait(long at) {

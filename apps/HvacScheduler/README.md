@@ -54,7 +54,7 @@ Eco lowers the heating setpoint and raises the cooling setpoint by the offset (d
 
 ### Occupancy
 
-A program can take one motion sensor as its occupancy sensor, on the *Overrides and options* page. The zone counts as occupied once the sensor has been active for **Occupied after** minutes (default 5) and as vacant once it has been inactive for **Vacant after** minutes (default 40). To use several sensors, or presence sensors, combine them first with Zone Motion Controller or Sensor Aggregator and pick that device.
+A program can take one motion sensor as its occupancy sensor, on the *Overrides and options* page. The zone counts as occupied once the sensor has been active for **Occupied after** minutes (default 5) and as vacant once it has been inactive for **Vacant after** minutes (default 30). To use several sensors, or presence sensors, combine them first with Zone Motion Controller or Sensor Aggregator and pick that device.
 
 **While occupied, use profile** names the profile people want when they are there, for example *Present* at 20 °C. Each time period and each hub-mode row has a **Use the occupied profile while occupied** option. While the zone is occupied, a period with that option on takes the occupied profile's heating setpoint when it is higher than its own, and its cooling setpoint when it is lower. Fan and thermostat modes stay the period's. The period's own values apply when the zone is vacant, so a program whose sensor stops reporting keeps to its schedule.
 
