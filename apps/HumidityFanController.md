@@ -29,7 +29,7 @@ The app compares the bathroom humidity with a reference humidity, usually a near
 
 **High humidity switch.** An optional virtual switch is on while the bathroom is high (from activation until the fan's off delay ends) and off otherwise.
 
-**Dew-point mode (experimental).** Compares dew point in °C instead of relative humidity, which removes the difference that temperature alone makes between rooms. Bathroom and reference sensors must also report temperature; sensors without it are left out of the median.
+**Dew-point mode (experimental).** Compares dew point in °C instead of relative humidity, which removes the difference that temperature alone makes between rooms. Bathroom and reference sensors must also report temperature; sensors without it are left out of the median. Fast climb and the excessive change threshold stay in %RH. With several bathroom sensors, both use the median of their readings.
 
 ## Settings
 

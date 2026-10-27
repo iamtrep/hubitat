@@ -1,0 +1,105 @@
+# Copyright (c) 2026 PJ
+# SPDX-License-Identifier: MIT
+
+# HumidityFanController (HFC) — Mode 1, dew-point comparison (0.11.1)
+#
+# Dew point drives the thresholds; the excessive-change bypass stays in %RH.
+# All sensors at 22 °C. Reference 45 % (dew point 9.5 °C), so activation is above
+# 12.5 °C and release below the snapshot + 2 = 11.5 °C.
+#   - bath 45 → 60 % (13.9 °C): above threshold, rise 15 %RH < 20, so the delay runs.
+#   - bath 44 → 70 % (16.3 °C): rise 26 %RH ≥ 20, so the delay is skipped. Before
+#     0.11.1 the rise was the dew point (°C) minus the previous %RH sample and never
+#     reached the threshold.
+# Fast-climb is off (slope 0) so it can't bypass instead. Own rig: the sensors
+# need temperature.
+
+app:
+  source: apps/HumidityFanController.groovy
+  type_name: "Humidity-Based Fan Controller"
+  instance_label: test-hfc-dew
+  config:
+    highHumidityOffset: 20
+    normalHumidityOffset: 15
+    absoluteHighThreshold: 90
+    absoluteLowThreshold: 60
+    absoluteLowTolerance: 2
+    activationDelay: 5
+    deactivationDelay: 2
+    switchVerificationTimeout: 5
+    sensorInactivityTimeout: 60
+    maxFanRunTime: 0
+    excessiveChangeThreshold: 20
+    slopeActivationThreshold: 0
+    useDewPoint: true
+    dewPointHighOffset: 3
+    dewPointNormalOffset: 2
+    dewPointAbsoluteHigh: 25
+    dewPointAbsoluteLow: 6
+    dewPointLowTolerance: 0.5
+
+inputs:
+  - { name: test-hfcd-bath, driver: Virtual Omni Sensor, role: bathroomHumiditySensors }
+  - { name: test-hfcd-ref,  driver: Virtual Omni Sensor, role: referenceHumiditySensors }
+
+outputs:
+  - { name: test-hfcd-fan, driver: Virtual Switch, role: fanSwitch }
+
+maker_api:
+  label: test-hfcd-maker
+
+cases:
+  - name: baseline-normal
+    setup:
+      - { device: test-hfcd-fan,  command: "off" }
+      - { device: test-hfcd-ref,  command: setTemperature, args: [22] }
+      - { device: test-hfcd-bath, command: setTemperature, args: [22] }
+      - { device: test-hfcd-ref,  command: setRelativeHumidity, args: [45] }
+      - { device: test-hfcd-bath, command: setRelativeHumidity, args: [44] }
+      - { device: test-hfcd-bath, command: setRelativeHumidity, args: [45] }
+    command_spacing_seconds: 1.0
+    wait_seconds: 4
+    assert:
+      - { device: test-hfcd-fan, attribute: switch, value: "off" }
+
+  - name: small-rise-waits-for-the-delay
+    actions:
+      - { device: test-hfcd-bath, command: setRelativeHumidity, args: [60] }
+    wait_seconds: 1
+    assert:
+      - { device: test-hfcd-fan, attribute: switch, value: "off" }
+    assert_logs:
+      - { pattern: "Excessive humidity change", negate: true }
+      - { pattern: "above activation threshold.*°C.*starting 5s delay", level: info }
+
+  - name: activation-delay-completes
+    wait_seconds: 6
+    assert:
+      - { device: test-hfcd-fan, attribute: switch, value: "on" }
+
+  - name: back-to-normal
+    actions:
+      - { device: test-hfcd-bath, command: setRelativeHumidity, args: [45] }
+    wait_seconds: 5
+    assert:
+      - { device: test-hfcd-fan, attribute: switch, value: "off" }
+
+  - name: excessive-rise-skips-the-delay
+    setup:
+      - { device: test-hfcd-bath, command: setRelativeHumidity, args: [44] }
+    actions:
+      - { device: test-hfcd-bath, command: setRelativeHumidity, args: [70] }
+    wait_seconds: 1.5
+    assert:
+      - { device: test-hfcd-fan, attribute: switch, value: "on" }
+    assert_logs:
+      - { pattern: "Excessive humidity change.*Δ=26", level: info }
+      - { pattern: "bypassing activation delay", level: info }
+
+  - name: cleanup
+    actions:
+      - { device: test-hfcd-bath, command: setRelativeHumidity, args: [45] }
+    wait_seconds: 5
+    assert:
+      - { device: test-hfcd-fan, attribute: switch, value: "off" }
+
+runtime_budget_seconds: 90

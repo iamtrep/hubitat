@@ -31,5 +31,17 @@ check('off at the gap: reassert again', core.fanOffAction(false, true, true, fal
 check('off after the gap: reassert again', core.fanOffAction(false, true, true, false, 0L, GAP + 60000L, GAP), 'reassert')
 check('restricted wins over the gap', core.fanOffAction(false, true, true, true, 0L, 1000L, GAP), 'release')
 
+// excessiveRise(samples, threshold): samples are [ms, %RH]
+S = [[0L, 45.0G], [1000L, 70.0G]]
+check('rise at the threshold: the rise', core.excessiveRise(S, 25.0G), 25.0G)
+check('rise below the threshold: null', core.excessiveRise(S, 25.1G), null)
+check('only the last two samples count', core.excessiveRise([[0L, 20.0G]] + S, 30.0G), null)
+check('a fall is never excessive', core.excessiveRise([[0L, 70.0G], [1000L, 45.0G]], 1.0G), null)
+check('threshold 0 disables', core.excessiveRise(S, 0.0G), null)
+check('null threshold disables', core.excessiveRise(S, null), null)
+check('one sample: null', core.excessiveRise([[0L, 45.0G]], 1.0G), null)
+check('no samples: null', core.excessiveRise([], 1.0G), null)
+check('integer readings', core.excessiveRise([[0L, 40], [1000L, 65]], 25.0G), 25.0G)
+
 println "\n${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)

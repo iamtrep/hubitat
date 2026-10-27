@@ -349,6 +349,17 @@ cases:
       - { pattern: "Fan turned off externally - clearing app control flag", level: info }
       - { pattern: "turning it back on", negate: true }
 
+  # 0.11.1: the hand-off survives a settings save (initialize() used to turn the fan back on).
+  - name: hand-off-survives-a-settings-save
+    actions:
+      - { settings: { debugEnable: true } }
+    wait_seconds: 2
+    assert:
+      - { device: test-hfc-fan,   attribute: switch, value: "off" }
+      - { device: test-hfc-hi-sw, attribute: switch, value: "on" }
+    assert_logs:
+      - { pattern: "humidity HIGH, not restricted, but fan not on", negate: true }
+
   # The IAQ case: another app has the fan on, humidity goes HIGH (the app
   # takes the fan), then the other app releases it with a digital off. A new
   # episode, so the throttle from the cases above no longer applies.
