@@ -1,0 +1,111 @@
+# Copyright (c) 2026 PJ
+# SPDX-License-Identifier: MIT
+# Power State Monitor: Mode 1 behavior spec. A ventilator's states: off from 0 W, normal
+# from 20 W, turbo from 60 W, surges above 90 W. Settle time 3 s and unknown time 8 s keep
+# the cases short; readings 1 s apart are surges and ramps, as on the real plug. The power
+# values replay a ventilator plug's report sequences. Each case resets the rig to off.
+app:
+  source: apps/PowerStateMonitor/PowerStateMonitor.groovy
+  type_name: "Power State Monitor"
+  instance_label: test-psm
+  config:
+    debugEnable: true
+    stateCount: "3"
+    state1Name: "off"
+    state2Name: "normal"
+    state2From: 20
+    state3Name: "turbo"
+    state3From: 60
+    ceiling: 90
+    hysteresis: 5
+    settleSeconds: 3
+    unknownSeconds: 8
+    refreshMinutes: 0
+    sourceState: "turbo"
+inputs:
+  - { name: test-psm-meter, driver: Virtual Heater Plug (Test), role: meter }
+  - { name: test-psm-relay, driver: Virtual Switch, role: sourceSwitch }
+outputs:
+  - { name: test-psm State, child: true }
+maker_api:
+  label: test-psm-maker
+runtime_budget_seconds: 180
+cases:
+  - name: start-surge-settles-to-normal
+    setup: &reset
+      - settings: { debugEnable: true }
+      - { device: test-psm-relay, command: "off" }
+      - { device: test-psm-meter, command: setPower, args: [0] }
+      - await: { device: test-psm State, attribute: powerState, value: "off", timeout_seconds: 15 }
+    command_spacing_seconds: 1
+    actions:
+      - { device: test-psm-meter, command: setPower, args: [59.8] }
+      - { device: test-psm-meter, command: setPower, args: [134.4] }
+      - { device: test-psm-meter, command: setPower, args: [115.5] }
+      - { device: test-psm-meter, command: setPower, args: [47.7] }
+    wait_seconds: 6
+    assert:
+      - { device: test-psm State, attribute: powerState, value: "normal" }
+    assert_events:
+      - { attribute: powerState, value: "normal", source: "test-psm State" }
+      - { attribute: powerState, value: "turbo", source: "test-psm State", negate: true }
+      - { attribute: powerState, value: "unknown", source: "test-psm State", negate: true }
+
+  - name: ramp-to-turbo-from-the-switch
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-psm-relay, command: "off" }
+      - { device: test-psm-meter, command: setPower, args: [47.7] }
+      - await: { device: test-psm State, attribute: powerState, value: "normal", timeout_seconds: 15 }
+    command_spacing_seconds: 1
+    actions:
+      - { device: test-psm-relay, command: "on" }
+      - { device: test-psm-meter, command: setPower, args: [104.6] }
+      - { device: test-psm-meter, command: setPower, args: [89.6] }
+      - { device: test-psm-meter, command: setPower, args: [76.3] }
+    wait_seconds: 6
+    assert:
+      - { device: test-psm State, attribute: powerState, value: "turbo" }
+      - { device: test-psm State, attribute: stateSource, value: "switch" }
+    assert_events:
+      - { attribute: powerState, value: "unknown", source: "test-psm State", negate: true }
+
+  - name: turbo-after-the-switch-goes-off-is-other
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-psm-relay, command: "on" }
+      - { device: test-psm-meter, command: setPower, args: [76.3] }
+      - await: { device: test-psm State, attribute: powerState, value: "turbo", timeout_seconds: 15 }
+    actions:
+      - { device: test-psm-relay, command: "off" }
+    wait_seconds: 3
+    assert:
+      - { device: test-psm State, attribute: powerState, value: "turbo" }
+      - { device: test-psm State, attribute: stateSource, value: "other" }
+
+  - name: hysteresis-keeps-normal-near-its-edge
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-psm-relay, command: "off" }
+      - { device: test-psm-meter, command: setPower, args: [47.7] }
+      - await: { device: test-psm State, attribute: powerState, value: "normal", timeout_seconds: 15 }
+    actions:
+      - { device: test-psm-meter, command: setPower, args: [63] }
+    wait_seconds: 6
+    assert:
+      - { device: test-psm State, attribute: powerState, value: "normal" }
+      - { device: test-psm State, attribute: stateSource, value: "none" }
+
+  - name: held-surge-sets-unknown
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-psm-relay, command: "off" }
+      - { device: test-psm-meter, command: setPower, args: [47.7] }
+      - await: { device: test-psm State, attribute: powerState, value: "normal", timeout_seconds: 15 }
+    actions:
+      - { device: test-psm-meter, command: setPower, args: [130] }
+    wait_seconds: 11
+    assert:
+      - { device: test-psm State, attribute: powerState, value: "unknown" }
+    allow_log_patterns:
+      - "a reading above 90 W has held for 8 s"
