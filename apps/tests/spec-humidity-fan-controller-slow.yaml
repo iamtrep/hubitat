@@ -1,0 +1,99 @@
+# Copyright (c) 2026 PJ
+# SPDX-License-Identifier: MIT
+
+# HumidityFanController (HFC) — Mode 1 slow cases, behind RUN_SLOW_TESTS=1
+#
+# The 1-minute timers the fast test can't wait for, on a rig of their own
+# (maxFanRunTime would end the fast test's cases):
+#   - physical-run floor expiry: a hand-started fan turns off after the floor
+#   - max fan run time: no bathroom humidity event for 1 minute turns the fan off
+#   - a re-assertion keeps the max-run window: the fan still turns off 1 minute
+#     after it went on, not 1 minute after it was turned back on
+#
+# The generated test-humidity-fan-controller-slow.sh exits early unless
+# RUN_SLOW_TESTS=1 (a hand-added gate after rendering).
+
+app:
+  source: apps/HumidityFanController.groovy
+  type_name: "Humidity-Based Fan Controller"
+  instance_label: test-hfc-slow
+  config:
+    highHumidityOffset: 20
+    normalHumidityOffset: 15
+    absoluteHighThreshold: 90
+    absoluteLowThreshold: 60
+    absoluteLowTolerance: 2
+    activationDelay: 2
+    deactivationDelay: 2
+    switchVerificationTimeout: 5
+    sensorInactivityTimeout: 60
+    maxFanRunTime: 1
+    physicalRunTimerEnabled: true
+    physicalRunTimerMinutes: 1
+
+inputs:
+  - { name: test-hfcs-bath, driver: Virtual Humidity Sensor, role: bathroomHumiditySensors }
+  - { name: test-hfcs-ref,  driver: Virtual Humidity Sensor, role: referenceHumiditySensors }
+
+outputs:
+  - { name: test-hfcs-fan,   driver: Virtual Switch with Physical Events, role: fanSwitch }
+  - { name: test-hfcs-hi-sw, driver: Virtual Switch, role: highHumiditySwitch }
+
+maker_api:
+  label: test-hfcs-maker
+
+cases:
+  - name: baseline-normal
+    setup:
+      - { device: test-hfcs-bath, command: setHumidity, args: [45] }
+      - { device: test-hfcs-ref,  command: setHumidity, args: [50] }
+      - await: { device: test-hfcs-hi-sw, attribute: switch, value: "off", timeout_seconds: 8 }
+      - { device: test-hfcs-fan,  command: "off" }
+    wait_seconds: 2
+    assert:
+      - { device: test-hfcs-fan, attribute: switch, value: "off" }
+
+  - name: physical-run-floor-expires
+    actions:
+      - { device: test-hfcs-fan, command: physicalOn }
+    wait_seconds: 65
+    assert:
+      - { device: test-hfcs-fan, attribute: switch, value: "off" }
+    assert_logs:
+      - { pattern: "Physical-run floor reached \\(1 min\\); turning off fan", level: info }
+
+  - name: max-fan-run-time-expires
+    actions:
+      - { device: test-hfcs-bath, command: setHumidity, args: [75] }
+    wait_seconds: 66
+    assert:
+      - { device: test-hfcs-fan,   attribute: switch, value: "off" }
+      - { device: test-hfcs-hi-sw, attribute: switch, value: "off" }
+    assert_logs:
+      - { pattern: "Max fan run time \\(1 min\\) expired", level: warn }
+    allow_log_patterns:
+      - "Max fan run time \\(1 min\\) expired"
+      - "No notification device configured"
+
+  # HIGH at ~2 s, max-run due at ~62 s. The digital off at ~35 s is re-asserted;
+  # had the re-assertion restarted the window, the fan would still be on at ~70 s.
+  - name: reassert-keeps-the-max-run-window
+    setup:
+      - { device: test-hfcs-bath, command: setHumidity, args: [30] }
+      - await: { device: test-hfcs-hi-sw, attribute: switch, value: "off", timeout_seconds: 8 }
+      - await: { device: test-hfcs-fan, attribute: switch, value: "off", timeout_seconds: 6 }
+    command_spacing_seconds: 35
+    actions:
+      - { device: test-hfcs-bath, command: setHumidity, args: [75] }
+      - { device: test-hfcs-fan,  command: "off" }
+    wait_seconds: 35
+    assert:
+      - { device: test-hfcs-fan, attribute: switch, value: "off" }
+    assert_logs:
+      - { pattern: "turned off by another source while humidity is high", level: info }
+      - { pattern: "Max fan run time \\(1 min\\) expired", level: warn }
+    allow_log_patterns:
+      - "Max fan run time \\(1 min\\) expired"
+      - "No notification device configured"
+
+runtime_budget_seconds: 260

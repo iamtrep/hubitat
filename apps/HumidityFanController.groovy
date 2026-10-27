@@ -70,7 +70,9 @@
     Inputs:
     - Humidity state transitions (HIGH → turn on, NORMAL → turn off if app controls fan)
     - Restriction changes (restricted → turn off if we turned it on, unrestricted → turn on if HIGH)
-    - External fan manipulation (someone else turned it off → clear our flag)
+    - External fan manipulation: a physical off is honored (clear our flag); a digital
+      off while humidity is HIGH and not restricted turns the fan back on, at most
+      once per 5 minutes (another app releasing a shared fan)
     - Switch verification results (failed → notify, succeeded → confirm control flag)
     - Max fan run timer expiry (no bathroom humidity event in maxFanRunTime → turn off and notify)
 
@@ -90,7 +92,7 @@ import groovy.transform.Field
 import com.hubitat.app.DeviceWrapper
 
 @Field static final String APP_NAME = "Humidity-Based Fan Controller"
-@Field static final String CODE_VERSION = "0.9.8"
+@Field static final String CODE_VERSION = "0.10.0"
 
 // Humidity state machine states
 @Field static final String HUMIDITY_NORMAL = "NORMAL"
@@ -116,6 +118,7 @@ import com.hubitat.app.DeviceWrapper
 @Field static final Integer DEFAULT_SLOPE_WINDOW_SECONDS = 180
 @Field static final BigDecimal DEFAULT_EXCESSIVE_CHANGE_THRESHOLD = 0G
 @Field static final Integer SAMPLE_BUFFER_CAP = 20
+@Field static final long REASSERT_GAP_MS = 300000L  // at most one re-assertion per 5 minutes
 @Field static final Integer DEFAULT_OCCUPANCY_WINDOW_SECONDS = 600
 
 // Dew-point mode (opt-in): thresholds/offsets are °C; replaces the %RH set when enabled.
@@ -436,7 +439,9 @@ void fanSwitchHandler(evt) {
             state.pendingCommand = null
         } else if (state.pendingCommand == "off") {
             // We requested OFF but the switch went ON — externally countermanded.
+            // The fan is now another source's, not ours.
             logInfo("Pending OFF countermanded by external ON event - clearing")
+            state.fanTurnedOnByApp = false
             state.pendingCommand = null
         } else if (evt.type == "physical") {
             // Human paddle press with no app activity in flight — arm the run floor.
@@ -454,18 +459,46 @@ void fanSwitchHandler(evt) {
             logInfo("Fan verified OFF")
             state.fanTurnedOnByApp = false
             state.pendingCommand = null
-        } else if (state.pendingCommand == "on") {
+            return
+        }
+        Boolean wanted = state.fanTurnedOnByApp || state.pendingCommand == "on"
+        String action = fanOffAction(evt.type == "physical", wanted as boolean, isHumidityHigh() as boolean,
+                                     isRestricted() as boolean, state.lastReassertAt as Long, now(), REASSERT_GAP_MS)
+        if (state.pendingCommand == "on") {
             // We requested ON but the switch went OFF — externally countermanded.
             logInfo("Pending ON countermanded by external OFF event - clearing")
-            state.fanTurnedOnByApp = false
-            state.pendingCommand = null
-        } else if (state.fanTurnedOnByApp) {
-            // External off while we thought we controlled the fan
+        } else if (state.fanTurnedOnByApp && action == "release") {
             logInfo("Fan turned off externally - clearing app control flag")
-            state.fanTurnedOnByApp = false
+        }
+        state.fanTurnedOnByApp = false
+        state.pendingCommand = null
+        if (action == "reassert") {
+            logInfo("Fan turned off by another source while humidity is high - turning it back on")
+            state.lastReassertAt = now()
+            reassertFan()
+        } else if (action == "throttled") {
+            logWarn("Fan turned off again within 5 minutes of being turned back on - left off")
         }
     }
 }
+
+// ── Core (pure) ───────────────────────────────────────────────────────
+// Self-contained: arguments in, values out. tests/test-humidity-fan-controller-core.groovy
+// parses and runs this block off-hub.
+
+// What an off event on the fan means when it is not this app's own off.
+// 'reassert': a digital off while humidity is high, the app wants the fan on and is not
+// restricted; 'throttled': the same within gapMs of the last re-assertion; 'release':
+// anything else, including every physical off (a hand at the wall is always honored).
+@CompileStatic
+static String fanOffAction(boolean physical, boolean wanted, boolean high, boolean restricted,
+                           Long lastReassertAt, long nowMs, long gapMs) {
+    if (physical || !wanted || !high || restricted) return 'release'
+    if (lastReassertAt != null && nowMs - lastReassertAt < gapMs) return 'throttled'
+    return 'reassert'
+}
+
+// ── End core ──────────────────────────────────────────────────────────
 
 void occupancyHandler(evt) {
     checkVersion()
@@ -695,6 +728,7 @@ void delayedTransitionToNormal() {
 private void transitionHumidityState(String newState) {
     String oldState = state.humidityState
     state.humidityState = newState
+    if (newState == HUMIDITY_NORMAL) state.lastReassertAt = null   // each episode starts with no throttle
 
     if (oldState != newState) {
         logInfo("Humidity state: ${oldState} -> ${newState}")
@@ -962,6 +996,18 @@ private void turnOnFan() {
 
     // Start max fan run timer
     scheduleMaxFanRunTimer()
+}
+
+// Turns the fan back on after another source turned it off. Unlike turnOnFan(), the
+// max fan run window keeps its start: a re-assertion is not a humidity event.
+private void reassertFan() {
+    logCmd("Turning fan back on")
+    state.fanTurnedOnByApp = true
+    state.pendingCommand = "on"
+    fanSwitch.on()
+    runIn(switchVerificationTimeout as Integer, "verifyFanOn")
+    if (isMaxFanRunTimeEnabled() && state.maxFanRunSince == null) scheduleMaxFanRunTimer()
+    else serviceMaxFanRunTimer()
 }
 
 void verifyFanOn() {
