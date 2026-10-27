@@ -134,16 +134,20 @@ check('allRunning not', core.allRunning([[s: 'engaged'], [s: 'off']]), false)
 
 // ── switch events ──
 long GAP = 5 * M
-check('own command', core.switchEventAction('on', false, 'on', 'engaged', false, null, 0L, GAP), 'own')
-check('countermanded is not own', core.switchEventAction('off', false, 'on', 'engaged', false, null, 0L, GAP), 'reassert')
-check('physical off holds', core.switchEventAction('off', true, null, 'engaged', false, null, 0L, GAP), 'hold')
-check('digital off reasserts', core.switchEventAction('off', false, null, 'engaged', false, null, 0L, GAP), 'reassert')
-check('reassert throttled', core.switchEventAction('off', false, null, 'engaged', false, 0L, M, GAP), 'throttled')
-check('reassert after gap', core.switchEventAction('off', false, null, 'engaged', false, 0L, 6 * M, GAP), 'reassert')
-check('off while stage off', core.switchEventAction('off', false, null, 'off', false, null, 0L, GAP), 'ignore')
-check('off while held', core.switchEventAction('off', true, null, 'held', false, null, 0L, GAP), 'ignore')
-check('off while stopped', core.switchEventAction('off', false, null, 'engaged', true, null, 0L, GAP), 'ignore')
-check('on by someone else', core.switchEventAction('on', true, null, 'off', false, null, 0L, GAP), 'ignore')
+check('own command', core.switchEventAction('on', false, 'on', 'engaged', false, null, 0L, GAP, false), 'own')
+check('countermanded is not own', core.switchEventAction('off', false, 'on', 'engaged', false, null, 0L, GAP, false), 'reassert')
+check('physical off holds', core.switchEventAction('off', true, null, 'engaged', false, null, 0L, GAP, false), 'hold')
+check('digital off reasserts', core.switchEventAction('off', false, null, 'engaged', false, null, 0L, GAP, false), 'reassert')
+check('reassert throttled', core.switchEventAction('off', false, null, 'engaged', false, 0L, M, GAP, false), 'throttled')
+check('reassert after gap', core.switchEventAction('off', false, null, 'engaged', false, 0L, 6 * M, GAP, false), 'reassert')
+check('off while stage off', core.switchEventAction('off', false, null, 'off', false, null, 0L, GAP, false), 'ignore')
+check('off while held', core.switchEventAction('off', true, null, 'held', false, null, 0L, GAP, false), 'ignore')
+check('off while stopped', core.switchEventAction('off', false, null, 'engaged', true, null, 0L, GAP, false), 'ignore')
+check('on by someone else', core.switchEventAction('on', true, null, 'off', false, null, 0L, GAP, false), 'ignore')
+check('claimed switch back on, stage off: reengage', core.switchEventAction('on', false, null, 'off', false, null, 0L, GAP, true), 'reengage')
+check('claimed switch back on while stopped: ignore', core.switchEventAction('on', false, null, 'off', true, null, 0L, GAP, true), 'ignore')
+check('claimed switch on, stage engaged: ignore', core.switchEventAction('on', false, null, 'engaged', false, null, 0L, GAP, true), 'ignore')
+check('claimed switch on, stage held: ignore', core.switchEventAction('on', true, null, 'held', false, null, 0L, GAP, true), 'ignore')
 
 // ── window advisory ──
 TOP = 1150G   // binding variable: win() can't see a typed local
@@ -195,11 +199,12 @@ check('humidity message', core.humidityMessage('Home', 27.6G, 12), 'Home: indoor
 // ── resume after a safety stop ──
 Map ras = core.resumeAfterSafety([['1'], ['2', '4'], ['3']], ['1': true, '2': true, '3': true],
                                  ['1': 'on', '2': 'off', '4': 'on', '3': 'on'])
-check('safety: claimed and on keeps claim', ras.claims, ['1': true, '3': true])
+check('safety: every claim kept', ras.claims, ['1': true, '2': true, '3': true])
 check('safety: stage with a kept claim engaged', ras.stages*.s, ['engaged', 'off', 'engaged'])
 check('safety: unclaimed on switch does not engage', core.resumeAfterSafety([['4']], [:], ['4': 'on']).stages[0].s, 'off')
 Map rasOff = core.resumeAfterSafety([['1']], ['1': true], ['1': 'off'])
-check('safety: switch turned off loses claim', rasOff.claims, [:])
+check('safety: switch still off keeps its claim (a fire rule may restore it)', rasOff.claims, ['1': true])
+check('safety: stage of a switch still off resumes off', rasOff.stages[0].s, 'off')
 check('safety: resumed stage has no timers', ras.stages[0], [s: 'engaged', since: null, heldUntil: null])
 // a resumed stage releases through its off dwell when CO2 is low
 Map relA = core.stepStages(ras.stages, 500G, 0L, cfg(), false)

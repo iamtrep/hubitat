@@ -76,7 +76,7 @@ On entering a stopped state the app turns off the switches it turned on and sets
 
 When the last of them clears, the app evaluates from the current CO2 value and starts stages through their dwell times.
 
-While a smoke or CO detector reports `detected`, the app stops and leaves every switch as it is, so a fire rule keeps control. When every detector is clear, a switch the app turned on that is still on stays the app's, and its stage resumes and turns it off through the off dwell once CO2 is low; the app lets go of the other switches. It then evaluates from the current CO2 value.
+While a smoke or CO detector reports `detected`, the app stops and leaves every switch as it is, so a fire rule keeps control. The app keeps its claim on the switches it turned on, even when a fire rule turns them off. When every detector is clear, a stage whose switch is on resumes and turns it off through the off dwell once CO2 is low. A claimed switch turned back on later (a fire rule restoring the switches it captured) resumes its stage the same way, so nothing the app turned on is left on with no owner. The app then evaluates from the current CO2 value.
 
 ## Threshold offset
 
