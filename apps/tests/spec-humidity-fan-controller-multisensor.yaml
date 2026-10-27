@@ -1,0 +1,83 @@
+# Copyright (c) 2026 PJ
+# SPDX-License-Identifier: MIT
+
+# HumidityFanController (HFC) — Mode 1, two bathroom sensors (0.11.1)
+#
+# The sample buffer behind fast-climb and excessive-change records the median of
+# the bathroom sensors, not each sensor's raw reading. Excessive-change compares
+# the current median with the previous sample. Bath2 at 90 %, then bath1 at 20 %
+# (median 55), then bath1 at 60 % (median 75): the change is 20, below the
+# threshold (50), so the activation delay applies. Recording raw readings would
+# compare 75 with bath1's 20 (Δ 55) and skip the delay. Fast-climb is off
+# (slope 0) so it can't bypass instead. Own rig: a second bathroom sensor would
+# change every case of the main test.
+
+app:
+  source: apps/HumidityFanController.groovy
+  type_name: "Humidity-Based Fan Controller"
+  instance_label: test-hfc-multi
+  config:
+    highHumidityOffset: 20
+    normalHumidityOffset: 15
+    absoluteHighThreshold: 90
+    absoluteLowThreshold: 60
+    absoluteLowTolerance: 2
+    activationDelay: 2
+    deactivationDelay: 2
+    switchVerificationTimeout: 5
+    sensorInactivityTimeout: 60
+    maxFanRunTime: 0
+    excessiveChangeThreshold: 50
+    slopeActivationThreshold: 0
+
+inputs:
+  - { name: test-hfcm-bath1, driver: Virtual Humidity Sensor, role: bathroomHumiditySensors }
+  - { name: test-hfcm-bath2, driver: Virtual Humidity Sensor, role: bathroomHumiditySensors }
+  - { name: test-hfcm-ref,   driver: Virtual Humidity Sensor, role: referenceHumiditySensors }
+
+outputs:
+  - { name: test-hfcm-fan, driver: Virtual Switch, role: fanSwitch }
+
+maker_api:
+  label: test-hfcm-maker
+
+cases:
+  - name: baseline-normal
+    setup:
+      - { device: test-hfcm-ref,   command: setHumidity, args: [50] }
+      - { device: test-hfcm-bath1, command: setHumidity, args: [45] }
+      - { device: test-hfcm-bath2, command: setHumidity, args: [45] }
+    command_spacing_seconds: 1.0
+    wait_seconds: 4
+    assert:
+      - { device: test-hfcm-fan, attribute: switch, value: "off" }
+
+  - name: change-is-measured-on-the-median
+    setup:
+      - { device: test-hfcm-bath2, command: setHumidity, args: [90] }
+      - { device: test-hfcm-bath1, command: setHumidity, args: [20] }
+    command_spacing_seconds: 1.0
+    actions:
+      - { device: test-hfcm-bath1, command: setHumidity, args: [60] }
+    wait_seconds: 0.5
+    assert:
+      - { device: test-hfcm-fan, attribute: switch, value: "off" }
+    assert_logs:
+      - { pattern: "Excessive humidity change", negate: true }
+      - { pattern: "above activation threshold.*starting 2s delay", level: info }
+
+  - name: activation-delay-completes
+    wait_seconds: 3
+    assert:
+      - { device: test-hfcm-fan, attribute: switch, value: "on" }
+
+  - name: cleanup
+    command_spacing_seconds: 1.0
+    actions:
+      - { device: test-hfcm-bath1, command: setHumidity, args: [45] }
+      - { device: test-hfcm-bath2, command: setHumidity, args: [45] }
+    wait_seconds: 5
+    assert:
+      - { device: test-hfcm-fan, attribute: switch, value: "off" }
+
+runtime_budget_seconds: 40
