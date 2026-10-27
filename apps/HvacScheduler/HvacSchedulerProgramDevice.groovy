@@ -10,7 +10,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.3.2"
+@Field static final String CODE_VERSION = "0.4.0"
 
 metadata {
     definition(name: "HVAC Scheduler Program Device", namespace: "iamtrep", author: "pj", component: true,
@@ -29,6 +29,7 @@ metadata {
         attribute "eco", "enum", ["on", "off"]
         attribute "ecoOffset", "number"
         attribute "lastApply", "string"
+        attribute "occupancy", "enum", ["occupied", "vacant", "none"]
         command "resume"
         command "applyNow"
         command "advance"

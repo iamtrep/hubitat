@@ -16,8 +16,9 @@ Modes are those of TESTING.md. Every on-hub test follows its closed-loop contrac
 | E | Parity with the built-in scheduler | 1, differential | `test-tsp-parity.sh` | Done |
 | F | Configuration `PUT` and importer | 2 and 4 | `test-tsp-api.sh` (PUT section), `test-tsp-import.sh`, `test_core.groovy` (PUT and import cases) | Done |
 | G | HVAC Interlock and hub variables | 1 | `test-tsp-interlock.sh` | Done |
+| H | Occupancy | 1 and 4 | `test-tsp-occupancy.sh`, `test_core.groovy` (occupancy cases) | Done |
 
-B, C and E take minutes each and belong to `RUN_SLOW_TESTS=1` runs. E checks the flag and, without it, prints `[INFO] ... skipped` and exits 0; the generated B and C run whether the flag is set or not. B and C use the program's test inputs (configuration JSON, test clock), which render only while its debug logging is on, so their first case turns debug logging on; it turns itself off after 30 minutes.
+B, C, E and H take minutes each and belong to `RUN_SLOW_TESTS=1` runs. E and H check the flag and, without it, prints `[INFO] ... skipped` and exits 0; the generated B and C run whether the flag is set or not. B and C use the program's test inputs (configuration JSON, test clock), which render only while its debug logging is on, so their first case turns debug logging on; it turns itself off after 30 minutes.
 
 ## Phase A: core unit tests
 
@@ -53,6 +54,12 @@ Core cases in `test_core.groovy`: the revision (stable across a JSON round trip,
 
 Right after a lift that follows a setpoint changed by hand, `status` read `manual` once in eight runs and `schedule` a moment later; the case reads it after 10 seconds.
 
+## Phase H: occupancy
+
+Core cases in `test_core.groovy`: the occupied profile in a period that uses it (higher heat, lower cool, its name as the profile, fan kept), vacant and no sensor, a period that doesn't use it, a warmer period keeping its own values, blank values on either side, no effect on a hold, a mode override or a pause, eco on top, a hub-mode row with and without it, an occupied profile from a hub variable, no occupied profile set, a `next` hold kept across a change, validation (unknown occupied profile, a non-boolean `useOccupied`), and the `PUT` document and shape; `occupancyStep` in both directions on either side of each delay, a reading equal to the committed state, delay 0, the first commit with either reading, a reading with no date, and an unknown reading.
+
+`test-tsp-occupancy.sh` runs a program it creates (`test-tsp-occ`) on the virtual thermostat `test-tsp-occ-th`, with the virtual motion sensor `test-tsp-occ-motion` as its occupancy sensor and both delays at 1 minute. Cases: vacant at start; motion shorter than the delay writes nothing; past it, the occupied profile's setpoint, `occupancy` `occupied`, `profile` the occupied profile, `status` `schedule`; a 20-second break keeps the zone occupied; eco on top; a `next` hold kept while the zone goes vacant, then resume; a period that doesn't use the occupied profile, then a `PUT` that ticks it while occupied; a pause while occupied and the resume; Done while occupied writes no setpoint; removing the sensor reports `none` and writes the period's setpoint. The delays are real time, since the test clock does not move `runIn`.
+
 ## Known gaps
 
 - The API test does not cover local access turned off.
@@ -67,3 +74,5 @@ Right after a lift that follows a setpoint changed by hand, `status` read `manua
 - The reference scheduler leaves thermostats alone while restricted, so no on-hub case imports a scheduler set to turn them off; the import test covers it by switching the imported program to that setting before Done.
 - The parent's import page is checked by hand.
 - Hub variable rename is covered by the core tests (`renameVarRefs`) only; phase G covers a change of a setpoint variable on the hub.
+- Occupancy across a hub restart is not run on the hub; the start rule is the core's `occupancyStep` with the sensor's state date, which the Done case exercises.
+- Renaming the occupied profile, and the refusal to delete it while in use, have no test: both are page-button paths (`renameProfileRefs`, `usage`).

@@ -11,10 +11,11 @@
 
 import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.app.DeviceWrapper
+import com.hubitat.hub.domain.State
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.3.2"
+@Field static final String CODE_VERSION = "0.4.0"
 
 definition(
     name: "HVAC Scheduler Program",
@@ -86,6 +87,9 @@ String coolSpan(Object v) { v == null ? '' : "<span class='tsp-cool'>${fmtT(v)}<
 
 Map uiCfg() { return (state.config ?: newConfig()) as Map }
 
+// The occupied profile's name, when a sensor and a profile are both set.
+String occupiedProfile(Map cfg) { return occupancySensor ? ((cfg.occupancy as Map)?.profile as String) : null }
+
 Map newConfig() { return seedOverrides(defaultConfig(), location.modes.collect { [id: it.id as Long, name: it.name as String] }) }
 
 Map cfgCopy() { return parseJson(groovy.json.JsonOutput.toJson(uiCfg())) as Map }
@@ -120,7 +124,7 @@ void uiErr(String text) { state.uiError = [page: state.uiPage ?: 'mainPage', tex
 
 String pageForButton(String btn) {
     if (btn ==~ /epf~\d+/ || btn.startsWith('btnProfile')) return 'profilesPage'
-    if (btn ==~ /eov~\d+/ || btn.startsWith('btnOverride')) return 'optionsPage'
+    if (btn ==~ /eov~\d+/ || btn.startsWith('btnOverride') || btn == 'btnOccSave') return 'optionsPage'
     return 'schedulesPage'
 }
 
@@ -143,6 +147,7 @@ String usage(String profile, Map cfg = null) {
         } else if ((s.rows as List<Map>)?.any { Map r -> !r.custom && r.profile == profile }) out << (s.name as String)
     }
     (c.overrides as List<Map>).findAll { it.profile == profile }.each { out << "Mode override: ${modeName(it.modeId)}".toString() }
+    if ((c.occupancy as Map)?.profile == profile) out << "occupancy (the occupied profile)"
     Map hold = (state.rt as Map)?.hold as Map
     if (hold?.kind == 'profile' && hold.profile == profile) out << "the hold now in effect"
     return out.join(', ')
@@ -154,6 +159,8 @@ void renameProfileRefs(Map c, String from, String to) {
         (s.rows as List<Map>)?.each { Map r -> if (r.profile == from) r.profile = to }
     }
     (c.overrides as List<Map>).each { Map o -> if (o.profile == from) o.profile = to }
+    Map occ = c.occupancy as Map
+    if (occ?.profile == from) occ.profile = to
 }
 
 // The running hold and the main page's hold choice name profiles too; called once the renamed config is stored.
@@ -258,6 +265,8 @@ Map mainPage() {
 
 String optionsSummary(Map cfg) {
     List<String> parts = (cfg.overrides as List<Map>).collect { "${modeName(it.modeId)} mode uses ${it.profile}".toString() }
+    String occ = occupiedProfile(cfg)
+    if (occ) parts << "occupied uses ${occ} (${occupancySensor.displayName})".toString()
     parts << "eco ${fmtT(settings.ecoOffset != null ? settings.ecoOffset : 2.0)} ${unit()}".toString()
     parts << (settings.whilePaused == 'off' ? "when paused, turn thermostats off" : "when paused, leave thermostats alone")
     return parts.join(' · ')
@@ -288,6 +297,12 @@ String nowHtml(Map cfg, Map rt, Map target, Map ctx, Map sm) {
         why = cur ? "${sched.name} schedule, ${cur.group}, ${cur.period} since ${hhmmOf(cur.at as long, tz)}" : "${cfg.active} schedule has no period yet"
     }
     h << "<div>${esc(why)}</div>"
+    Map occ = rt.occ as Map
+    if (occupancySensor && occ) {
+        String occLine = "${occ.state == 'occupied' ? 'Occupied' : 'Vacant'} since ${hhmmOf(occ.since as long, tz)} (${occupancySensor.displayName})"
+        if (target.occupied) occLine += ": ${(cfg.occupancy as Map)?.profile} in effect"
+        h << "<div>${esc(occLine)}</div>"
+    }
     if (status == 'manual') {
         List names = (thermostats ?: []).findAll { (rt.manual as List).contains(it.id as String) }*.displayName
         h << "<div>Changed by hand on ${esc(names.join(', '))}; the next program write replaces it</div>"
@@ -430,16 +445,19 @@ void timeScheduleSections(Map cfg, Map s, int si, Map ui) {
     }
     Map ctx = buildCtx(coreConfig())
     Map cur = s.name == cfg.active ? currentTransition(s, ctx) : null
+    String occ = occupiedProfile(cfg)
     section {
         groups.eachWithIndex { Map g, int gi ->
-            StringBuilder t = new StringBuilder("<div class='tsp-h'>${esc(g.name)}</div><div class='tsp-tw'><table class='tsp-t'><thead><tr><th>Period</th><th>Starts</th><th>Profile</th></tr></thead><tbody>")
+            StringBuilder t = new StringBuilder("<div class='tsp-h'>${esc(g.name)}</div><div class='tsp-tw'><table class='tsp-t'><thead><tr><th>Period</th><th>Starts</th><th>Profile</th>${occ ? '<th>While occupied</th>' : ''}</tr></thead><tbody>")
             (g.periods as List<Map>).eachWithIndex { Map p, int pi ->
                 boolean sel = ui.group == gi && ui.period == pi
                 boolean now = cur && cur.group == g.name && cur.period == p.name
                 t << "<tr${sel ? " class='tsp-sel'" : ''}><td>${cellButton("epd~${gi}~${pi}", p.name as String)}${now ? "<span class='tsp-now'>NOW</span>" : ''}</td>"
-                t << "<td>${esc(startLabel(p.start as Map))}</td><td>${refLabel(cfg, p.profile as String, p.custom as Map)}</td></tr>"
+                t << "<td>${esc(startLabel(p.start as Map))}</td><td>${refLabel(cfg, p.profile as String, p.custom as Map)}</td>"
+                if (occ) t << "<td${p.useOccupied ? '' : " class='tsp-dim'"}>${p.useOccupied ? esc(occ) : '—'}</td>"
+                t << "</tr>"
             }
-            if (!g.periods) t << "<tr><td colspan='3' class='tsp-dim'>No periods: thermostats left as they are</td></tr>"
+            if (!g.periods) t << "<tr><td colspan='${occ ? 4 : 3}' class='tsp-dim'>No periods: thermostats left as they are</td></tr>"
             t << "</tbody></table></div>${cellButton("apd~${gi}", "Add period")}"
             paragraph t.toString(), width: 6
         }
@@ -461,6 +479,7 @@ void timeScheduleSections(Map cfg, Map s, int si, Map ui) {
                 input "edHeat", "decimal", title: "Heating setpoint (${unit()})", width: 2, submitOnChange: true, required: false
                 input "edCool", "decimal", title: "Cooling setpoint (${unit()})", width: 2, submitOnChange: true, required: false
             }
+            if (occ) input "edUseOccupied", "bool", title: "Use the occupied profile (${esc(occ)}) while occupied", width: 6, submitOnChange: true, required: false
             if (kind in ['sunrise', 'sunset']) {
                 Map ctx2 = buildCtx(coreConfig())
                 String today = isoDate(ctx2.now as long, ctx2.tz as TimeZone)
@@ -487,14 +506,17 @@ String startLabel(Map st) {
 void modeScheduleSections(Map cfg, Map s, int si, Map ui) {
     List<Map> rows = (s.rows ?: []) as List<Map>
     section("By hub mode") {
-        StringBuilder t = new StringBuilder("<div class='tsp-tw' style='max-width:760px'><table class='tsp-t'><thead><tr><th>When the hub mode is</th><th>Profile</th></tr></thead><tbody>")
+        String occ = occupiedProfile(cfg)
+        StringBuilder t = new StringBuilder("<div class='tsp-tw' style='max-width:760px'><table class='tsp-t'><thead><tr><th>When the hub mode is</th><th>Profile</th>${occ ? '<th>While occupied</th>' : ''}</tr></thead><tbody>")
         rows.eachWithIndex { Map r, int i ->
             String modes = (r.modes as List).collect { modeName(it) }.join(', ')
-            t << "<tr${ui.row == i ? " class='tsp-sel'" : ''}><td>${cellButton("emr~${i}", modes ?: '(no mode)')}</td><td>${refLabel(cfg, r.profile as String, r.custom as Map)}</td></tr>"
+            t << "<tr${ui.row == i ? " class='tsp-sel'" : ''}><td>${cellButton("emr~${i}", modes ?: '(no mode)')}</td><td>${refLabel(cfg, r.profile as String, r.custom as Map)}</td>"
+            if (occ) t << "<td${r.useOccupied ? '' : " class='tsp-dim'"}>${r.useOccupied ? esc(occ) : '—'}</td>"
+            t << "</tr>"
         }
         List covered = rows.collectMany { (it.modes as List).collect { m -> m as Long } }
         location.modes.findAll { !covered.contains(it.id as Long) }.each { m ->
-            t << "<tr><td class='tsp-dim'>${esc(m.name)}</td><td class='tsp-dim'>No row: thermostats left as they are</td></tr>"
+            t << "<tr><td class='tsp-dim'>${esc(m.name)}</td><td class='tsp-dim'${occ ? " colspan='2'" : ''}>No row: thermostats left as they are</td></tr>"
         }
         paragraph t.append("</tbody></table></div>").toString()
         input "btnRowAdd", "button", title: "Add row", width: 2, inputClass: SEC
@@ -511,6 +533,8 @@ void modeScheduleSections(Map cfg, Map s, int si, Map ui) {
                 input "edHeat", "decimal", title: "Heating setpoint (${unit()})", width: 2, submitOnChange: true, required: false
                 input "edCool", "decimal", title: "Cooling setpoint (${unit()})", width: 2, submitOnChange: true, required: false
             }
+            String occ = occupiedProfile(cfg)
+            if (occ) input "edUseOccupied", "bool", title: "Use the occupied profile (${esc(occ)}) while occupied", width: 6, submitOnChange: true, required: false
             input "btnRowSave", "button", title: "Save", width: 2, inputClass: PRI
             input "btnRowCancel", "button", title: "Cancel", width: 2, inputClass: SEC
             if (!isNew) input "btnRowRemove", "button", title: "Remove row", width: 3, inputClass: SEC
@@ -541,6 +565,19 @@ Map optionsPage() {
                 input "btnOverrideCancel", "button", title: "Cancel", width: 2, inputClass: SEC
                 if ((ui.override as int) >= 0) input "btnOverrideRemove", "button", title: "Remove override", width: 3, inputClass: SEC
             }
+        }
+        section("Occupancy") {
+            input "occupancySensor", "capability.motionSensor", title: "Occupancy sensor", required: false, submitOnChange: true, width: 4
+            if (occupancySensor) {
+                input "occupiedAfter", "number", title: "Occupied after (minutes active)", defaultValue: 5, range: "0..1440", width: 4
+                input "vacantAfter", "number", title: "Vacant after (minutes inactive)", defaultValue: 40, range: "0..1440", width: 4
+                String occ = (cfg.occupancy as Map)?.profile as String
+                input "edOccProfile", "enum", title: "While occupied, use profile", options: [none: "None"] + (cfg.profiles as List<Map>).collectEntries { [(it.name): it.name] },
+                      defaultValue: occ ?: 'none', width: 4, submitOnChange: true, required: false
+                if (settings.edOccProfile != null && settings.edOccProfile != (occ ?: 'none')) input "btnOccSave", "button", title: "Save", width: 2, inputClass: PRI
+            }
+            paragraph "<p class='tsp-note'>One motion sensor. To use several, or presence sensors, combine them first with Zone Motion Controller or Sensor Aggregator and pick that device. " +
+                      "Tick the periods that use the occupied profile on the Schedules page. Occupancy never lowers a period's comfort, and does nothing during a hold, a mode override or a pause.</p>"
         }
         section("Eco offset") {
             input "ecoOffset", "decimal", title: "Offset (${unit()})", defaultValue: 2.0, width: 3
@@ -708,6 +745,7 @@ boolean scheduleButton(String btn, Map ui) {
         if (st.kind in ['sunrise', 'sunset']) prefill("edOffset", "number", st.offset ?: 0)
         if (st.kind == 'var') prefill("edVar", "enum", st.name)
         prefillTargets(p.profile as String, p.custom as Map)
+        prefill("edUseOccupied", "bool", p.useOccupied == true ? true : null)
         return true
     }
     if (btn ==~ /emr~\d+/ || btn == 'btnRowAdd') {
@@ -719,6 +757,7 @@ boolean scheduleButton(String btn, Map ui) {
         state.ui = [schedule: si, row: ri]
         prefill("edModes", "mode", (r.modes as List).collect { it.toString() })
         prefillTargets(r.profile as String, r.custom as Map)
+        prefill("edUseOccupied", "bool", r.useOccupied == true ? true : null)
         return true
     }
     if (btn == "btnGroupSave") {
@@ -739,6 +778,7 @@ boolean scheduleButton(String btn, Map ui) {
                   : (kind == 'var' ? [kind: 'var', name: settings.edVar] : [kind: kind, offset: (settings.edOffset ?: 0) as int])
         Map custom = customFromEdits()
         Map np = [name: (settings.edName ?: 'Period') as String, start: start, profile: custom ? null : settings.edProfile, custom: custom]
+        if (settings.edUseOccupied == true) np.useOccupied = true
         List<Map> periods = g.periods as List<Map>
         if ((ui.period as int) < 0) periods << np else periods[ui.period as int] = np
         if (periods.count { it.name == np.name } > 1) { uiErr("Period name used twice: ${np.name}"); return true }
@@ -756,6 +796,7 @@ boolean scheduleButton(String btn, Map ui) {
         Map c = cfgCopy(); Map s = (c.schedules as List<Map>)[si]
         Map custom = customFromEdits()
         Map nr = [modes: (settings.edModes ?: []).collect { it as Long }, profile: custom ? null : settings.edProfile, custom: custom]
+        if (settings.edUseOccupied == true) nr.useOccupied = true
         if (!nr.modes) { uiErr("Choose at least one mode"); return true }
         List<Map> rows = (s.rows ?: []) as List<Map>
         if ((ui.row as int) < 0) rows << nr else rows[ui.row as int] = nr
@@ -861,6 +902,13 @@ boolean overrideButton(String btn, Map ui) {
         if (saveConfig(c)) state.ui = [:]
         return true
     }
+    if (btn == "btnOccSave") {
+        Map c = cfgCopy()
+        String p = settings.edOccProfile as String
+        if (!p || p == 'none') c.remove('occupancy') else c.occupancy = [profile: p]
+        if (saveConfig(c)) state.ui = [:]
+        return true
+    }
     if (btn == "btnOverrideRemove") {
         if (ui.override == null || (ui.override as int) < 0) return true
         Map c = cfgCopy(); (c.overrides as List).remove(ui.override as int)
@@ -911,6 +959,7 @@ void initialize() {
     if (!settings.testClock) app.removeSetting("testClock")
     programDevice()
     if ((state.rt as Map).verify) runIn(30, "verifyWrites")
+    occupancySeed()
     subscribeAll()
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
     evaluate("initialize", false)
@@ -924,6 +973,7 @@ void subscribeAll() {
     subscribe(location, "mode", "modeHandler")
     subscribe(location, "systemStart", "startHandler")
     [pauseWhenOn, pauseWhenOff].each { if (it) subscribe(it, "switch", "pauseSwitchHandler") }
+    if (occupancySensor) subscribe(occupancySensor, "motion", "occupancyHandler")
     List<String> vars = varNames((state.config ?: [:]) as Map)
     removeAllInUseGlobalVar()
     if (vars) addInUseGlobalVar(vars)
@@ -1009,9 +1059,71 @@ Map buildCtx(Map cfg) {
         }
         vars[n] = v
     }
-    Map ctx = [now: t, tz: tz, modeId: location.currentMode?.id as Long, sun: sun, vars: vars]
+    Map ctx = [now: t, tz: tz, modeId: location.currentMode?.id as Long, sun: sun, vars: vars,
+               occupied: occupancySensor ? (((state.rt as Map)?.occ as Map)?.state == 'occupied') : null]
     ctx.restricted = restrictedNow(cfg.restrictions as Map, ctx) || switchRestricted()
     return ctx
+}
+
+// ── Occupancy ──
+// Set apart from evaluate(): sensor events only decide and schedule; a commit that changes the
+// zone's state is the only path from the sensor to the setpoints.
+
+long occDelayMs(String name, int dflt) {
+    Object v = settings[name]
+    return ((v != null ? v : dflt) as long) * 60000L
+}
+
+Map occupancyDecision(String reading, Long changedAt) {
+    return occupancyStep(((state.rt as Map)?.occ as Map)?.state as String, reading, changedAt, now(),
+                         occDelayMs("occupiedAfter", 5), occDelayMs("vacantAfter", 40))
+}
+
+void occupancyWait(long at) {
+    int secs = Math.max(1L, (long) Math.ceil((at - now()) / 1000.0d)) as int
+    runIn(secs, "commitOccupancy")
+    logSched "occupancy commit in ${secs} s"
+}
+
+// Install, Done and hub start: re-read the sensor, keep the committed state, commit or wait out the time left.
+void occupancySeed() {
+    Map rt = state.rt as Map
+    if (!occupancySensor) {
+        if (rt.occ != null) { rt.occ = null; state.rt = rt }
+        return
+    }
+    State cs = occupancySensor.currentState("motion")
+    if (cs == null) return
+    Map step = occupancyDecision(cs.value as String, cs.date?.getTime())
+    if (step.commit) {
+        rt.occ = [state: step.commit, since: step.since]
+        state.rt = rt
+        logCfg "zone ${step.commit} (${occupancySensor.displayName})"
+    } else if (step.at != null) occupancyWait(step.at as long)
+}
+
+void occupancyHandler(evt) {
+    checkVersion()
+    logEvt "${evt.displayName} motion ${evt.value}"
+    Map step = occupancyDecision(evt.value as String, (evt.date as Date)?.getTime())
+    if (step.cancel) unschedule("commitOccupancy")
+    else if (step.at != null) occupancyWait(step.at as long)
+    else commitOccupancy()
+}
+
+void commitOccupancy() {
+    checkVersion()
+    if (!occupancySensor) return
+    State cs = occupancySensor.currentState("motion")
+    if (cs == null) return
+    Map step = occupancyDecision(cs.value as String, cs.date?.getTime())
+    if (step.at != null) { occupancyWait(step.at as long); return }
+    if (!step.commit) return
+    Map rt = state.rt as Map
+    rt.occ = [state: step.commit, since: step.since]
+    state.rt = rt
+    logCfg "zone ${step.commit} (${occupancySensor.displayName})"
+    evaluate("occupancy ${step.commit}", false)
 }
 
 boolean switchRestricted() {
@@ -1174,7 +1286,8 @@ Map statusMap(Map cfg, Map rt, Map target, Map ctx) {
         switch: rt.paused ? 'off' : 'on', status: status, schedule: cfg.active, profile: target.profile ?: 'none',
         heatingTarget: target.heat, coolingTarget: target.cool, holdEnd: holdEnd,
         nextTransition: next ? iso.format(new Date(next.at as long)) : 'none', nextProfile: next?.profile ?: 'none',
-        eco: rt.eco ? 'on' : 'off', ecoOffset: (cfg.eco as Map).offset, lastApply: rt.lastApply]
+        eco: rt.eco ? 'on' : 'off', ecoOffset: (cfg.eco as Map).offset, lastApply: rt.lastApply,
+        occupancy: occupancySensor ? (((rt.occ as Map)?.state ?: 'none') as String) : 'none']
 }
 
 void publish(Map cfg, Map rt, Map target, Map ctx) {
@@ -1191,6 +1304,7 @@ void startHandler(evt = null) {
     Map rt = state.rt as Map
     rt.verify = null
     state.rt = rt
+    occupancySeed()
     evaluate("hub start", coreConfig().options.applyOnStart as boolean)
 }
 
@@ -1479,7 +1593,7 @@ List<Map> transitionsForDay(Map sched, String iso, Map ctx) {
         Long at = startOf(p.start as Map, iso, ctx)
         if (at != null) {
             out << [at: at, key: "${iso}|${g.name}|${p.name}".toString(), group: g.name, period: p.name,
-                    profile: p.profile, custom: p.custom]
+                    profile: p.profile, custom: p.custom, useOccupied: p.useOccupied == true]
         }
     }
     return out.sort { Map t -> t.at as Long }
@@ -1534,6 +1648,7 @@ Map resolveTarget(Map cfg, Map rt, Map ctx) {
     Map hold = rt.hold as Map
     Map base = null
     String layer = 'none'
+    boolean ticked = false
     if (hold) {
         base = hold.kind == 'profile' ? profileValues(cfg, hold.profile as String, ctx)
              : [heat: numOrNull(hold.heat), cool: numOrNull(hold.cool), fan: null, mode: null, profile: 'custom']
@@ -1546,12 +1661,20 @@ Map resolveTarget(Map cfg, Map rt, Map ctx) {
         if (row) {
             base = row.custom ? valuesOf(row.custom as Map, ctx) + [profile: 'custom'] : profileValues(cfg, row.profile as String, ctx)
             layer = 'schedule'
+            ticked = row.useOccupied == true
         }
     } else if (cur) {
         base = cur.custom ? valuesOf(cur.custom as Map, ctx) + [profile: 'custom'] : profileValues(cfg, cur.profile as String, ctx)
         layer = 'schedule'
+        ticked = cur.useOccupied == true
     }
     if (base == null) return [layer: 'none', transitionKey: key, overrideModeId: ov?.modeId as Long]
+    boolean occupied = false
+    if (layer == 'schedule' && ticked && ctx.occupied == true) {
+        Map merged = occupiedMerge(base, profileValues(cfg, (cfg.occupancy as Map)?.profile as String, ctx))
+        occupied = merged.occupied == true
+        base = merged
+    }
     Map eco = (cfg.eco ?: [:]) as Map
     boolean ecoOn = rt.eco == true && (layer != 'mode' || eco.onOverrides != false)
     BigDecimal off = numOrNull(eco.offset) ?: 0.0G
@@ -1562,7 +1685,37 @@ Map resolveTarget(Map cfg, Map rt, Map ctx) {
         if (cool != null) cool = cool + off
     }
     return [layer: layer, profile: base.profile, heat: heat, cool: cool, fan: base.fan, mode: base.mode,
-            eco: ecoOn, transitionKey: key, overrideModeId: ov?.modeId as Long]
+            eco: ecoOn, occupied: occupied, transitionKey: key, overrideModeId: ov?.modeId as Long]
+}
+
+// While occupied, a ticked period takes the occupied profile's setpoints where they are more comfortable:
+// the higher heat, the lower cool; a blank side takes the other's. Fan and mode stay the period's.
+@CompileStatic
+Map occupiedMerge(Map base, Map occ) {
+    if (occ == null) return base
+    BigDecimal bh = base.heat as BigDecimal, bc = base.cool as BigDecimal
+    BigDecimal oh = occ.heat as BigDecimal, oc = occ.cool as BigDecimal
+    BigDecimal heat = bh == null ? oh : (oh == null ? bh : bh.max(oh))
+    BigDecimal cool = bc == null ? oc : (oc == null ? bc : bc.min(oc))
+    boolean raised = (heat != null && (bh == null || heat > bh)) || (cool != null && (bc == null || cool < bc))
+    Map out = new LinkedHashMap(base)
+    out.heat = heat
+    out.cool = cool
+    out.occupied = raised
+    if (raised) out.profile = occ.profile
+    return out
+}
+
+// What one occupancy sensor reading means. Same as the committed state: drop any pending commit.
+// Otherwise commit once the reading is older than its delay (`since` is when that was), or wait until `at`.
+// Before the first commit a vacant reading commits at once.
+@CompileStatic
+Map occupancyStep(String committed, String reading, Long changedAt, long now, long occupiedAfterMs, long vacantAfterMs) {
+    String want = reading == 'active' ? 'occupied' : 'vacant'
+    if (want == committed) return [cancel: true]
+    if (committed == null && want == 'vacant') return [commit: want, since: now]
+    long due = (changedAt != null ? (long) changedAt : now) + (want == 'occupied' ? occupiedAfterMs : vacantAfterMs)
+    return due <= now ? [commit: want, since: due] : [at: due]
 }
 
 @CompileStatic
@@ -1751,6 +1904,7 @@ List<String> validateConfig(Map doc, Map env) {
                     if (kind == 'time' && !((p.start.at as String) ==~ /([01]\d|2[0-3]):[0-5]\d/)) e << "${where}: bad time ${p.start.at}".toString()
                     if (kind == 'var' && !(env.vars as List).contains(p.start.name)) e << "${where}: unknown variable ${p.start.name}".toString()
                     profileRef(p.profile as String, p.custom as Map, where)
+                    if (p.useOccupied != null && !(p.useOccupied instanceof Boolean)) e << "${where}: useOccupied must be true or false".toString()
                 }
             }
         } else if (s.type == 'mode') {
@@ -1762,6 +1916,7 @@ List<String> validateConfig(Map doc, Map env) {
                     seen << m
                 }
                 profileRef(row.profile as String, row.custom as Map, "Schedule ${s.name}".toString())
+                if (row.useOccupied != null && !(row.useOccupied instanceof Boolean)) e << "Schedule ${s.name}: useOccupied must be true or false".toString()
             }
         } else e << "Schedule ${s.name}: unknown type ${s.type}".toString()
     }
@@ -1769,6 +1924,8 @@ List<String> validateConfig(Map doc, Map env) {
         if (!(env.modeIds as List).collect { it as Long }.contains(o.modeId as Long)) e << "Override: unknown mode ${o.modeId}".toString()
         profileRef(o.profile as String, null, 'Override')
     }
+    String occ = (doc.occupancy as Map)?.profile as String
+    if (occ && !names.contains(occ)) e << "Occupied profile: unknown profile ${occ}".toString()
     return e
 }
 
@@ -1853,12 +2010,20 @@ List<String> putShapeErrors(Map c) {
     if (!(c.schedules instanceof List)) e << 'config.schedules must be a list'
     if (!(c.active instanceof String)) e << 'config.active must be text'
     if (c.overrides != null && !(c.overrides instanceof List)) e << 'config.overrides must be a list'
+    Object occ = c.occupancy
+    Object occProfile = occ instanceof Map ? ((Map) occ).get('profile') : null
+    if (occ != null && !(occ instanceof Map && (occProfile == null || occProfile instanceof String)))
+        e << 'config.occupancy must be an object with a profile name'
     return e
 }
 
 @CompileStatic
 Map putDocument(Map c) {
-    return [v: c.v ?: 1, profiles: c.profiles, schedules: c.schedules, active: c.active, overrides: c.overrides ?: []]
+    Map d = [v: c.v ?: 1, profiles: c.profiles, schedules: c.schedules, active: c.active, overrides: c.overrides ?: []]
+    Map occ = c.occupancy as Map
+    Object name = occ?.get('profile')
+    if (name) d.put('occupancy', [profile: name])
+    return d
 }
 
 @CompileStatic

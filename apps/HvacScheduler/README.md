@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT
 
 # HVAC Scheduler
 
-A thermostat scheduler for Hubitat Elevation with named profiles, several schedules per zone, holds, mode overrides, an eco offset and pause handling. Each program publishes what it is doing on its own program device, so rules, dashboards, Maker API and other apps can read and control it. The parent app also serves a small HTTP API.
+A thermostat scheduler for Hubitat Elevation with named profiles, several schedules per zone, holds, mode overrides, occupancy, an eco offset and pause handling. Each program publishes what it is doing on its own program device, so rules, dashboards, Maker API and other apps can read and control it. The parent app also serves a small HTTP API.
 
 It covers what the built-in Thermostat Scheduler does and fixes four of its known problems: the eco offset stacking when changed while on, eco off resuming the time schedule during Away, Away not being restorable after a manual change, and Rule Machine reaching only one scheduler per thermostat.
 
@@ -52,6 +52,14 @@ An override maps a hub mode to a profile and applies on top of any schedule whil
 
 Eco lowers the heating setpoint and raises the cooling setpoint by the offset (default 2.0 °C or °F, in the hub's scale). It is applied to whatever the schedule, override or hold resolves to and is never stored as a setpoint, so changing the offset while eco is on recalculates from the schedule. By default eco also applies on top of mode overrides; the **Also apply eco on top of mode overrides** option turns that off.
 
+### Occupancy
+
+A program can take one motion sensor as its occupancy sensor, on the *Overrides and options* page. The zone counts as occupied once the sensor has been active for **Occupied after** minutes (default 5) and as vacant once it has been inactive for **Vacant after** minutes (default 40). To use several sensors, or presence sensors, combine them first with Zone Motion Controller or Sensor Aggregator and pick that device.
+
+**While occupied, use profile** names the profile people want when they are there, for example *Present* at 20 °C. Each time period and each hub-mode row has a **Use the occupied profile while occupied** option. While the zone is occupied, a period with that option on takes the occupied profile's heating setpoint when it is higher than its own, and its cooling setpoint when it is lower. Fan and thermostat modes stay the period's. The period's own values apply when the zone is vacant, so a program whose sensor stops reporting keeps to its schedule.
+
+Occupancy applies to the schedule only: holds, mode overrides (Away, for example) and pauses take precedence. An occupancy change never ends a hold. Eco applies on top of the occupied profile.
+
 ### Holds
 
 A hold replaces the scheduled values until it ends. It holds a profile or explicit setpoints, with one of four ends:
@@ -67,7 +75,7 @@ A hold replaces the scheduled values until it ends. It holds a profile or explic
 
 ### Precedence
 
-The program resolves one target from these layers, highest first, and applies the eco offset last: paused or restricted, hold, mode override, active schedule. Turning one layer off re-resolves the rest, so nothing stale is left behind.
+The program resolves one target from these layers, highest first, and applies the eco offset last: paused or restricted, hold, mode override, active schedule (with the occupied profile in periods that use it while the zone is occupied). Turning one layer off re-resolves the rest, so nothing stale is left behind.
 
 ### Writing to thermostats
 
@@ -106,7 +114,7 @@ The device is how rules, Maker API, dashboards and other apps reach one program;
 | `switch` | `on` running, `off` paused |
 | `status` | `schedule`, `mode`, `hold`, `manual`, `paused`, `restricted` |
 | `schedule` | Active schedule name |
-| `profile` | Profile in effect, `custom` for explicit setpoints, or `none` |
+| `profile` | Profile in effect, `custom` for explicit setpoints, or `none`. The occupied profile while it raises the heating or lowers the cooling setpoint |
 | `heatingTarget`, `coolingTarget` | Resolved setpoints in °C or °F (hub's scale), eco offset included. When no target applies to one of them, it keeps its last value; `status` and `profile` show when no target applies |
 | `holdEnd` | `next`, `indefinite`, an ISO time, or `none` |
 | `nextTransition` | ISO time of the next period, or `none` |
@@ -114,6 +122,7 @@ The device is how rules, Maker API, dashboards and other apps reach one program;
 | `eco` | `on`, `off` |
 | `ecoOffset` | Offset in °C or °F (hub's scale) |
 | `lastApply` | `ok`, `partial`, `failed` |
+| `occupancy` | `occupied`, `vacant`, or `none` without an occupancy sensor |
 
 | Command | Arguments |
 |---|---|
@@ -158,7 +167,7 @@ The reply carries the new status:
  "nextTransition": "2026-10-04T06:30:00-04:00", "nextProfile": "Home", "eco": "off", "ecoOffset": 2.0, "lastApply": "ok"}
 ```
 
-`PUT` takes `{"revision": <from GET>, "config": {...}}`, where `config` has the shape `GET` returns. Profiles, schedules, the active schedule and overrides are required and replace the program's; `eco`, `options` and `restrictions` are optional and, when present, replace those settings. A configuration changed since the `GET` answers 409 with the current `revision`; a configuration that does not validate answers 400 with an `errors` list. A hold on a profile the new configuration drops ends.
+`PUT` takes `{"revision": <from GET>, "config": {...}}`, where `config` has the shape `GET` returns. Profiles, schedules, the active schedule and overrides are required and replace the program's, with `occupancy` (`{"profile": "<name>"}`) optional; periods and rows may carry `"useOccupied": true`; `eco`, `options` and `restrictions` are optional and, when present, replace those settings. A configuration changed since the `GET` answers 409 with the current `revision`; a configuration that does not validate answers 400 with an `errors` list. A hold on a profile the new configuration drops ends.
 
 Errors carry an `error` field: 400 for a body that is not a JSON object or a bad command or argument, 403 when local or cloud access is off, 404 for an unknown program, 409 for a disabled one. A malformed JSON body sent as `application/json` gets an empty 200 from the platform before the app runs.
 
@@ -176,6 +185,7 @@ Run from the repository root. On-hub tests target the default hub in `.hubitat.j
 | `bash apps/HvacScheduler/tests/test-tsp-api.sh` | HTTP API, on the program `test-tsp.sh` provisions |
 | `bash apps/HvacScheduler/tests/test-tsp-import.sh` | Importing the built-in scheduler the parity test uses |
 | `bash apps/HvacScheduler/tests/test-tsp-interlock.sh` | Hub variable setpoints, eco by device command, pausing on an HVAC Interlock group |
+| `RUN_SLOW_TESTS=1 bash apps/HvacScheduler/tests/test-tsp-occupancy.sh` | Occupancy: both delays, the occupied profile, eco, holds, pauses |
 | `RUN_SLOW_TESTS=1 bash apps/HvacScheduler/tests/test-tsp-parity.sh` | Side by side with a built-in Thermostat Scheduler |
 
 ## More

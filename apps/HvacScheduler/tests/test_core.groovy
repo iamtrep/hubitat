@@ -388,6 +388,57 @@ check('import: Hub Modes scheduler gets no Away override', [mc.doc.overrides, mc
 check('import: Hub Modes Away row is an ordinary row', core.convertBuiltin([schedTypeL: 'Hub Modes', therm: ['11': 'Th A']], [modeTable: ['4': [heat: 15.0, used: true]], heatAway: 16.0], bModes).doc.with { [it.schedules[0].rows, it.overrides, it.profiles] }, [[[modes: [4L], profile: 'Away']], [], [[name: 'Away', heat: 15.0]]])
 check('import: Hub Modes EcoMode-for-Away not warned', core.convertBuiltin([schedTypeL: 'Hub Modes', therm: ['11': 'Th A']], mState + [useEcoModeAway: true], bModes).warnings.any { it.contains('EcoMode') }, false)
 
+// ── occupancy ──
+tickedNormal = core.parseJsonLike(normal)
+tickedNormal.groups[0].periods[0].useOccupied = true   // Wake (Home 21/24)
+tickedNormal.groups[0].periods[1].useOccupied = true   // Leave (Out 19/27); Night left unticked
+cfgOcc = cfgBase + [profiles: cfgBase.profiles + [[name: 'Comfort', heat: 20.0, cool: 25.0]], occupancy: [profile: 'Comfort'],
+  schedules: [tickedNormal, [name: 'Cottage', type: 'mode', rows: [[modes: [1, 2], profile: 'Home'], [modes: [3], profile: 'Sleep', useOccupied: true]]]]]
+occ9 = at9 + [occupied: true]
+check('occupied: ticked period takes the higher heat', r(cfgOcc, rt0, occ9).heat, 20.0)
+check('occupied: ticked period takes the lower cool', r(cfgOcc, rt0, occ9).cool, 25.0)
+check('occupied: profile shows the occupied profile', r(cfgOcc, rt0, occ9).profile, 'Comfort')
+check('occupied: target marked occupied', r(cfgOcc, rt0, occ9).occupied, true)
+check('occupied: fan stays the period\'s', r(cfgOcc, rt0, ctxAt('2026-10-05', '07:00', [occupied: true])).fan, 'auto')
+check('vacant: period values', r(cfgOcc, rt0, at9 + [occupied: false]).with { [it.heat, it.profile, it.occupied] }, [19.0, 'Out', false])
+check('no sensor: period values', r(cfgOcc, rt0, at9 + [occupied: null]).heat, 19.0)
+check('occupied: unticked period unchanged', r(cfgOcc, rt0, ctxAt('2026-10-05', '23:00', [occupied: true])).with { [it.heat, it.profile] }, [18.0, 'Sleep'])
+check('occupied: warmer period keeps its own', r(cfgOcc, rt0, ctxAt('2026-10-05', '07:00', [occupied: true])).with { [it.heat, it.cool, it.profile, it.occupied] }, [21.0, 24.0, 'Home', false])
+check('occupied: not applied on a hold', r(cfgOcc, rt0 + [hold: [kind: 'profile', profile: 'Out', end: 'indefinite']], occ9).heat, 19.0)
+check('occupied: not applied on a mode override', r(cfgOcc, rt0, occ9 + [modeId: 4L]).heat, 16.0)
+check('occupied: not applied while paused', r(cfgOcc, rt0 + [paused: true], occ9).layer, 'paused')
+check('occupied: eco on top', r(cfgOcc, rt0 + [eco: true], occ9).with { [it.heat, it.cool] }, [18.0, 27.0])
+check('occupied: hub-mode row ticked', r(cfgOcc + [active: 'Cottage'], rt0, occ9 + [modeId: 3L]).with { [it.heat, it.profile] }, [20.0, 'Comfort'])
+check('occupied: hub-mode row unticked', r(cfgOcc + [active: 'Cottage'], rt0, occ9 + [modeId: 1L]).profile, 'Home')
+check('occupied: profile from a hub variable', r(cfgOcc + [occupancy: [profile: 'Var']], rt0, occ9 + [vars: [comfort: 22.5]]).heat, 22.5)
+check('occupied: no occupied profile set', r(cfgOcc - [occupancy: cfgOcc.occupancy], rt0, occ9).with { [it.heat, it.profile] }, [19.0, 'Out'])
+vacantTgt = r(cfgOcc, rt0, at9 + [occupied: false])
+check('occupied: a flip keeps a next hold', core.holdExpired([end: 'next', transitionKey: vacantTgt.transitionKey, overrideModeId: null], r(cfgOcc, rt0, occ9), at9.now as long), false)
+check('merge: blank period heat takes the occupied one', core.occupiedMerge([heat: null, cool: 26.0, profile: 'X'], [heat: 20.0, cool: null, profile: 'C']), [heat: 20.0, cool: 26.0, profile: 'C', occupied: true])
+check('merge: blank occupied values change nothing', core.occupiedMerge([heat: 19.0, cool: 27.0, profile: 'Out'], [heat: null, cool: null, profile: 'C']), [heat: 19.0, cool: 27.0, profile: 'Out', occupied: false])
+check('merge: missing occupied profile', core.occupiedMerge([heat: 19.0, profile: 'Out'], null), [heat: 19.0, profile: 'Out'])
+check('occupied: config validates', core.validateConfig(cfgOcc + [v: 1], env), [])
+check('occupied: unknown occupied profile', core.validateConfig(cfgOcc + [occupancy: [profile: 'Gone']], env), ['Occupied profile: unknown profile Gone'])
+badTick = core.parseJsonLike(tickedNormal); badTick.groups[0].periods[0].useOccupied = 'yes'
+check('occupied: useOccupied must be boolean', core.validateConfig(cfgOcc + [schedules: [badTick]], env).size(), 1)
+check('occupied: PUT document keeps occupancy', core.putDocument(cfgOcc).occupancy, [profile: 'Comfort'])
+check('occupied: PUT shape rejects text', core.putShapeErrors([profiles: [], schedules: [], active: 'N', occupancy: 'Comfort']), ['config.occupancy must be an object with a profile name'])
+check('occupied: PUT shape accepts an object', core.putShapeErrors([profiles: [], schedules: [], active: 'N', occupancy: [profile: 'Comfort']]), [])
+// occupancyStep: committed state, reading, date it last changed, now, occupied after, vacant after
+t0 = T('2026-10-05', '12:00'); M = 60000L   // untyped: step() reads them
+Map step(String c, String r, Long at, long now) { core.occupancyStep(c, r, at, now, 5 * M, 40 * M) }
+check('step: same state cancels', step('occupied', 'active', t0, t0 + M), [cancel: true])
+check('step: active waits out occupied after', step('vacant', 'active', t0, t0 + M), [at: t0 + 5 * M])
+check('step: active past the delay commits', step('vacant', 'active', t0, t0 + 6 * M), [commit: 'occupied', since: t0 + 5 * M])
+check('step: inactive waits out vacant after', step('occupied', 'inactive', t0, t0 + 39 * M), [at: t0 + 40 * M])
+check('step: inactive past the delay commits', step('occupied', 'inactive', t0, t0 + 40 * M), [commit: 'vacant', since: t0 + 40 * M])
+check('step: delay 0 commits at once', core.occupancyStep('vacant', 'active', t0, t0, 0L, 0L), [commit: 'occupied', since: t0])
+check('step: first install, inactive commits vacant', step(null, 'inactive', t0, t0 + M), [commit: 'vacant', since: t0 + M])
+check('step: first install, long active commits occupied', step(null, 'active', t0, t0 + 60 * M), [commit: 'occupied', since: t0 + 5 * M])
+check('step: first install, recent active waits', step(null, 'active', t0, t0 + M), [at: t0 + 5 * M])
+check('step: no date counts from now', step('vacant', 'active', null, t0), [at: t0 + 5 * M])
+check('step: any other reading is vacant', step('vacant', 'unknown', t0, t0), [cancel: true])
+
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)
