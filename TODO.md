@@ -28,12 +28,6 @@ Replace each with an `href` to a confirmation page that lists what will be remov
 
 `removeGroupPage` has a confirm button and a Cancel link, but its `nextPage` button is a third exit that does nothing. Hide it, or drop `nextPage`.
 
-### 5. Progress for long-running buttons
-
-If they run async, give these `disabled: busy` plus `refreshInterval: busy ? 2 : 0`, with a nonce in `state` to ignore stale callbacks:
-
-- `apps/sensors/SensorAggregatorDiscreteChild.groovy`: "Run Full Test Suite"
-
 ### 6. Status colors (opportunistic)
 
 Inline `color:red/orange/green` appears in HubInspector, WellMonitor, SensorAggregatorDiscreteChild and the integration managers. Switch to PrimeFlex color classes only when already editing those pages.

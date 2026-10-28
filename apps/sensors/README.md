@@ -66,8 +66,6 @@ Aggregation methods:
 - **Force update** button in the app UI to recalculate on demand.
 - Configurable log level (warn / info / debug / trace).
 
-The discrete child also includes a built-in **test framework** (3 smoke tests and a full ~40-test suite) that creates temporary virtual devices, runs aggregation assertions, and cleans up automatically.
-
 **Motion Fusion Child:** `MotionFusionChild.groovy` — combines PIR and mmWave motion inputs from a dual-sensor device (e.g. Aqara FP300) into a single motion output using configurable fusion algorithms.
 
 ---

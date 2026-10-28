@@ -44,6 +44,7 @@ maker_api:
 cases:
   - name: all-closed-baseline
     setup:
+      - { settings: { aggregationMethod: any, defaultStaysSeconds: 0 } }
       - { device: test-sadc-in-1, command: close }
       - { device: test-sadc-in-2, command: close }
       - { device: test-sadc-in-3, command: close }
@@ -65,4 +66,64 @@ cases:
     assert:
       - { device: test-sadc-out, attribute: contact, value: closed }
 
-runtime_budget_seconds: 30
+  # Methods: the vote itself is unit-tested in tests/test_core.groovy; these check
+  # that a saved method reaches the output.
+  - name: majority-one-of-three
+    setup:
+      - { settings: { aggregationMethod: majority } }
+    actions:
+      - { device: test-sadc-in-1, command: open }
+    wait_seconds: 2
+    assert:
+      - { device: test-sadc-out, attribute: contact, value: closed }
+
+  - name: majority-two-of-three
+    actions:
+      - { device: test-sadc-in-2, command: open }
+    wait_seconds: 2
+    assert:
+      - { device: test-sadc-out, attribute: contact, value: open }
+
+  - name: all-two-of-three
+    setup:
+      - { settings: { aggregationMethod: all } }
+    wait_seconds: 2
+    assert:
+      - { device: test-sadc-out, attribute: contact, value: closed }
+
+  - name: all-three-of-three
+    actions:
+      - { device: test-sadc-in-3, command: open }
+    wait_seconds: 2
+    assert:
+      - { device: test-sadc-out, attribute: contact, value: open }
+
+  # "And stays": a change reaches the output only after the window.
+  - name: stays-held
+    setup:
+      - { settings: { aggregationMethod: any, defaultStaysSeconds: 3 } }
+      - { device: test-sadc-in-1, command: close }
+      - { device: test-sadc-in-2, command: close }
+      - { device: test-sadc-in-3, command: close }
+    setup_wait_seconds: 5
+    actions:
+      - { device: test-sadc-in-1, command: open }
+    wait_seconds: 1
+    assert:
+      - { device: test-sadc-out, attribute: contact, value: closed }
+
+  - name: stays-committed
+    wait_seconds: 4
+    assert:
+      - { device: test-sadc-out, attribute: contact, value: open }
+
+  - name: stays-reset
+    setup:
+      - { settings: { defaultStaysSeconds: 0 } }
+    actions:
+      - { device: test-sadc-in-1, command: close }
+    wait_seconds: 2
+    assert:
+      - { device: test-sadc-out, attribute: contact, value: closed }
+
+runtime_budget_seconds: 60

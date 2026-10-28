@@ -112,25 +112,6 @@ Map mainPage() {
             input name: "notifyOnFirstExcluded", type: "bool", title: "Notify when any sensor is excluded", defaultValue: false
             input name: "noSensorSwitch", type: "capability.switch", title: "Switch to turn on while no sensor reports", required: false
         }
-        section(title: "Testing", hideable: true, hidden: true) {
-            paragraph "<b>Automated Testing</b>"
-            paragraph "Run automated tests to verify the aggregation logic. This will create test devices, run tests, and clean up automatically."
-            input name: "runSmokeTests", type: "button", title: "Run Quick Smoke Tests (3 tests)"
-            input name: "runAllTests", type: "button", title: "Run Full Test Suite (~40 tests)"
-            input name: "cleanupTestDevices", type: "button", title: "Cleanup Test Devices Only"
-
-            if (state.lastTestRun) {
-                paragraph "<hr>"
-                paragraph "<b>Last Test Run:</b> ${state.lastTestRun}"
-                paragraph "<b>Results:</b> ${state.testsPassed} / ${state.testsTotal} passed"
-                if (state.testsFailed > 0) {
-                    paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f)'><b>Failed:</b> ${state.testsFailed}</span>"
-                    paragraph "<b>Failed Tests:</b><br>${state.failedTests?.join('<br>')}"
-                } else if (state.testsTotal > 0) {
-                    paragraph "<span style='color:var(--hubitat-success-color, #356700)'><b>All tests passed!</b></span>"
-                }
-            }
-        }
     }
 }
 
@@ -145,20 +126,17 @@ void updated() {
     unschedule()
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
 
-    // Validate settings (skip validation during testing)
-    if (!state.testingInProgress) {
-        if (!selectedSensorCapability) {
-            logError("No sensor capability selected")
-            return
-        }
-        if (!inputSensors || inputSensors.size() == 0) {
-            logError("No input sensors selected")
-            return
-        }
-        if (!attributeValue) {
-            logError("No attribute value selected")
-            return
-        }
+    if (!selectedSensorCapability) {
+        logError("No sensor capability selected")
+        return
+    }
+    if (!inputSensors || inputSensors.size() == 0) {
+        logError("No input sensors selected")
+        return
+    }
+    if (!attributeValue) {
+        logError("No attribute value selected")
+        return
     }
 
     initialize()
@@ -188,6 +166,9 @@ void initialize() {
     checkVersion(false)
     app.removeSetting("logLevel")
     migrateSensorListsToIds()
+    // Left by the in-app test suite removed in 0.4.1
+    ["testingInProgress", "savedConfig", "testOutputDeviceId", "testResults", "testsTotal",
+     "testsPassed", "testsFailed", "failedTests", "lastTestRun"].each { state.remove(it) }
     if (state.includedSensors == null) { state.includedSensors = [] }
     if (state.excludedSensors == null) { state.excludedSensors = [] }
     if (state.aggregateValue == null) { state.aggregateValue = "" }
@@ -196,7 +177,7 @@ void initialize() {
     if (state.pendingSeq == null) { state.pendingSeq = [:] }
     pruneActivity()
 
-    if (!outputSensor && state.createChild && !state.testingInProgress) {
+    if (!outputSensor && state.createChild) {
         fetchChildDevice()
     }
 
@@ -213,8 +194,7 @@ void initialize() {
                 if (liveValue != null) seededStuck[sid] = liveValue
             }
             state.stuckState = seededStuck
-            Map pending = (state.pendingSeq as Map) ?: [:]
-            state.pendingSeq = pending.collectEntries { k, v -> [(k): ((v ?: 0) as int) + 1] }
+            state.pendingSeq = advanceAllSeqs(state.pendingSeq as Map)
 
             subscribe(inputSensors, attributeName, sensorEventHandler)
             logTrace "Subscribed to ${attributeName} events for ${inputSensors.collect { it.displayName}}."
@@ -225,15 +205,12 @@ void initialize() {
     schedule("${new Random().nextInt(60)} */15 * ? * *", "checkSensors")
 
     // Perform initial calculation
-    if (!state.testingInProgress) {
-        sensorEventHandler()
-    }
+    sensorEventHandler()
 }
 
 // Reads cached activity and values only; never commands the sensors.
 void checkSensors() {
     checkVersion()
-    if (state.testingInProgress) return
     logSched "check"
     publishAggregate(true)
 }
@@ -319,9 +296,9 @@ void sensorEventHandler(Event evt=null) {
         return
     }
 
-    Map pending = (state.pendingSeq as Map) ?: [:]
-    int seq = ((pending[sid] ?: 0) as int) + 1
-    state.pendingSeq = pending + [(sid): seq]
+    Map pending = withNextSeq(state.pendingSeq as Map, sid)
+    int seq = pending[sid] as int
+    state.pendingSeq = pending
     runIn(seconds, "commitStuckState",
           [data: [sensorId: sid, seq: seq, value: newValue], overwrite: false])
     logSched "Sticky scheduled: ${evt.getDevice().getLabel()} -> ${newValue} in ${seconds}s (seq ${seq})"
@@ -332,9 +309,8 @@ void commitStuckState(Map data) {
     if (state.pendingSeq == null) state.pendingSeq = [:]
     if (state.stuckState == null) state.stuckState = [:]
     String sid = data.sensorId as String
-    Integer expectedSeq = (state.pendingSeq as Map)?.get(sid) as Integer
-    if (expectedSeq == null || (data.seq as int) != expectedSeq) {
-        logTrace "Stale sticky commit ignored: sensor ${sid} seq ${data.seq} (current ${expectedSeq})"
+    if (!commitApplies(state.pendingSeq as Map, sid, data.seq)) {
+        logTrace "Stale sticky commit ignored: sensor ${sid} seq ${data.seq} (current ${(state.pendingSeq as Map)?.get(sid)})"
         return
     }
     commitState(sid, data.value as String)
@@ -375,9 +351,7 @@ private void publishAggregate(boolean onlyIfChanged = false) {
 
 private int effectiveStaysSeconds(DeviceWrapper sensor) {
     if (sensor == null) return 0
-    Integer override = settings["staysOverride_${sensor.id}"] as Integer
-    if (override != null) return override as int
-    return (settings.defaultStaysSeconds ?: 0) as int
+    return staysSecondsFor(settings["staysOverride_${sensor.id}"], settings.defaultStaysSeconds)
 }
 
 private String stuckValueFor(DeviceWrapper sensor, String attributeName) {
@@ -504,25 +478,10 @@ private boolean computeAggregateSensorValue() {
     String targetValue = attributeValue
     String oppositeValue = possibleValues.find { it != targetValue }
 
-    // Compute aggregate value based on method
-    switch (aggregationMethod) {
-        case "all":
-            state.aggregateValue = sensorValues.every { it == targetValue } ? targetValue : oppositeValue
-            break
-        case "majority":
-            int countTarget = sensorValues.count { it == targetValue }
-            state.aggregateValue = (countTarget > n / 2) ? targetValue : oppositeValue
-            break
-        case "threshold":
-            int countTarget = sensorValues.count { it == targetValue }
-            double percentage = (countTarget / (double)n) * 100.0
-            state.aggregateValue = (percentage >= thresholdPercent) ? targetValue : oppositeValue
-            logDebug("Threshold check: ${countTarget}/${n} = ${roundToDecimalPlaces(percentage, 1)}% (threshold: ${thresholdPercent}%)")
-            break
-        case "any":
-        default:
-            state.aggregateValue = sensorValues.any { it == targetValue } ? targetValue : oppositeValue
-            break
+    state.aggregateValue = aggregateOf(sensorValues, aggregationMethod as String, targetValue, oppositeValue, thresholdPercent as Number)
+    if (aggregationMethod == "threshold") {
+        int countTarget = sensorValues.count { it == targetValue }
+        logDebug("Threshold check: ${countTarget}/${n} = ${roundToDecimalPlaces((countTarget / (double) n) * 100.0, 1)}% (threshold: ${thresholdPercent}%)")
     }
 
     logStatistics()
@@ -540,15 +499,6 @@ void appButtonHandler(String buttonName) {
         case "forceUpdate":
             logInfo("Force update triggered")
             updated()
-            break
-        case "runSmokeTests":
-            runSmokeTests()
-            break
-        case "runAllTests":
-            runAllTests()
-            break
-        case "cleanupTestDevices":
-            cleanupTestDevices()
             break
     }
 }
@@ -640,991 +590,51 @@ boolean isQuiet(Map s, Long now, Long limitMs) {
 
 // ── End core ──────────────────────────────────────────────────────────
 
-// ============================================================================
-// TESTING FRAMEWORK
-// ============================================================================
+// ── Discrete core (pure) ──────────────────────────────────────────────
+// Same rules as the core above; tests/test_core.groovy runs this block off-hub too.
 
-void runSmokeTests() {
-    logInfo "=" * 60
-    logInfo "STARTING SMOKE TESTS"
-    logInfo "=" * 60
-
-    if (!setupTestEnvironment()) {
-        logError "Failed to setup test environment"
-        return
+// The target value when the method's vote passes, else the opposite value.
+String aggregateOf(List<String> values, String method, String target, String opposite, Number thresholdPercent) {
+    int n = values.size()
+    int hits = values.count { it == target } as int
+    boolean pass
+    switch (method) {
+        case "all": pass = hits == n; break
+        case "majority": pass = hits > n / 2; break
+        case "threshold": pass = hits * 100.0 / n >= (thresholdPercent ?: 50); break
+        default: pass = hits > 0
     }
-
-    initializeTestRun()
-
-    // Run essential tests
-    test_ANY_OneOpen()
-    test_ALL_AllMatch()
-    test_Majority_60Percent()
-
-    finalizeTestRun("SMOKE TESTS")
-    teardownTestEnvironment()
+    return pass ? target : opposite
 }
 
-void runAllTests() {
-    logInfo "=" * 60
-    logInfo "STARTING FULL TEST SUITE"
-    logInfo "=" * 60
-
-    if (!setupTestEnvironment()) {
-        logError "Failed to setup test environment"
-        return
-    }
-
-    initializeTestRun()
-
-    // Suite 1: Basic Aggregation
-    logInfo ""
-    logInfo "-" * 60
-    logInfo "TEST SUITE 1: Basic Aggregation Methods"
-    logInfo "-" * 60
-    test_ANY_AllClosed()
-    test_ANY_OneOpen()
-    test_ALL_NotAll()
-    test_ALL_AllMatch()
-    test_AttributeValue_TargetClosed()
-    test_AllSensorsExcluded()
-
-    // Suite 2: Voting Methods
-    logInfo ""
-    logInfo "-" * 60
-    logInfo "TEST SUITE 2: Voting Methods"
-    logInfo "-" * 60
-    test_Majority_60Percent()
-    test_Majority_40Percent()
-    test_Threshold_AtThreshold()
-    test_Threshold_Below()
-
-    // Suite 3: Value Changes
-    logInfo ""
-    logInfo "-" * 60
-    logInfo "TEST SUITE 3: Value Change Detection"
-    logInfo "-" * 60
-    test_ValueChanges()
-
-    // Suite 4: Sticky Trigger
-    runStaysTests()
-
-    finalizeTestRun("FULL TEST SUITE")
-    teardownTestEnvironment()
+// "And stays": each event takes the sensor's next number, and its delayed
+// commit applies only while that number is still the sensor's latest.
+Map withNextSeq(Map pending, String sid) {
+    Map m = [:]
+    if (pending) m.putAll(pending)
+    m[sid] = ((m[sid] ?: 0) as int) + 1
+    return m
 }
 
-boolean setupTestEnvironment() {
-    logInfo "Setting up test environment..."
-
-    state.testingInProgress = true
-
-    // Save current configuration
-    state.savedConfig = [
-        selectedSensorCapability: selectedSensorCapability,
-        inputSensors: inputSensors?.collect { it.id },
-        outputSensor: outputSensor?.id,
-        attributeValue: attributeValue,
-        aggregationMethod: aggregationMethod,
-        thresholdPercent: thresholdPercent,
-        excludeAfter: excludeAfter,
-        defaultStaysSeconds: settings.defaultStaysSeconds
-    ]
-
-    // Zero out sticky filter during the suite — sticky tests opt in via prepareStickyTest()
-    app.updateSetting("defaultStaysSeconds", [type: "number", value: 0])
-
-    // Create test devices
-    if (!createTestDevices()) {
-        return false
-    }
-
-    // Configure app for testing
-    app.updateSetting("selectedSensorCapability", [type: "enum", value: "capability.contactSensor"])
-    app.updateSetting("attributeValue", [type: "enum", value: "open"])
-    app.updateSetting("excludeAfter", [type: "number", value: 60])
-
-    // Set input sensors to the test devices
-    List<String> testInputIds = []
-    for (int i = 1; i <= 5; i++) {
-        String dni = "test-input-${app.id}-${i}"
-        ChildDeviceWrapper device = getChildDevice(dni)
-        if (device) {
-            testInputIds << device.id.toString()
-        }
-    }
-
-    if (testInputIds.size() != 5) {
-        logError "Failed to get all test input device IDs"
-        return false
-    }
-
-    app.updateSetting("inputSensors", [type: "capability.contactSensor", value: testInputIds])
-
-    // Create test output device
-    String outputDni = "test-output-${app.id}"
-    ChildDeviceWrapper existingOutput = getChildDevice(outputDni)
-    if (existingOutput) {
-        deleteChildDevice(outputDni)
-        pauseExecution(500)
-    }
-
-    ChildDeviceWrapper outputDevice = addChildDevice("hubitat", "Virtual Contact Sensor", outputDni,
-                                                     [name: "Test Output", label: "Test Output"])
-    if (!outputDevice) {
-        logError "Failed to create test output device"
-        return false
-    }
-
-    outputDevice.close()
-    app.updateSetting("outputSensor", [type: "capability.contactSensor", value: outputDevice.id.toString()])
-
-    state.testOutputDeviceId = outputDevice.id
-
-    pauseExecution(1000)
-
-    logInfo "Test environment setup complete"
-    return true
+boolean commitApplies(Map pending, String sid, Object seq) {
+    Object current = pending?.get(sid)
+    return current != null && seq != null && (current as int) == (seq as int)
 }
 
-void teardownTestEnvironment() {
-    logInfo "Tearing down test environment..."
-
-    // Restore original configuration
-    if (state.savedConfig) {
-        app.updateSetting("selectedSensorCapability", [type: "enum", value: state.savedConfig.selectedSensorCapability])
-
-        if (state.savedConfig.inputSensors) {
-            app.updateSetting("inputSensors", [type: state.savedConfig.selectedSensorCapability,
-                                                value: state.savedConfig.inputSensors])
-        }
-
-        if (state.savedConfig.outputSensor) {
-            app.updateSetting("outputSensor", [type: state.savedConfig.selectedSensorCapability,
-                                                value: state.savedConfig.outputSensor])
-        }
-
-        if (state.savedConfig.attributeValue) {
-            app.updateSetting("attributeValue", [type: "enum", value: state.savedConfig.attributeValue])
-        }
-
-        if (state.savedConfig.aggregationMethod) {
-            app.updateSetting("aggregationMethod", [type: "enum", value: state.savedConfig.aggregationMethod])
-        }
-
-        if (state.savedConfig.thresholdPercent) {
-            app.updateSetting("thresholdPercent", [type: "number", value: state.savedConfig.thresholdPercent])
-        }
-
-        if (state.savedConfig.excludeAfter) {
-            app.updateSetting("excludeAfter", [type: "number", value: state.savedConfig.excludeAfter])
-        }
-
-        // Restore sticky setting (may be null/0 — both valid)
-        Integer savedStays = state.savedConfig.defaultStaysSeconds as Integer
-        if (savedStays != null) {
-            app.updateSetting("defaultStaysSeconds", [type: "number", value: savedStays])
-        }
-    }
-
-    // Clean up test devices
-    cleanupTestDevices()
-
-    state.testingInProgress = false
-    state.remove('savedConfig')
-    state.remove('testOutputDeviceId')
-
-    // Reinitialize with original config
-    updated()
-
-    logInfo "Test environment teardown complete"
+// After a re-init every number moves on, so no timer set before it applies.
+Map advanceAllSeqs(Map pending) {
+    Map m = [:]
+    (pending ?: [:]).each { k, v -> m[k] = ((v ?: 0) as int) + 1 }
+    return m
 }
 
-boolean createTestDevices() {
-    logInfo "Creating test devices..."
-
-    try {
-        // Create 5 test input sensors
-        for (int i = 1; i <= 5; i++) {
-            String dni = "test-input-${app.id}-${i}"
-            ChildDeviceWrapper existingDevice = getChildDevice(dni)
-
-            if (!existingDevice) {
-                ChildDeviceWrapper newDevice = addChildDevice(
-                    "hubitat",
-                    "Virtual Contact Sensor",
-                    dni,
-                    [name: "Test Input ${i}", label: "Test Input ${i}"]
-                )
-
-                if (newDevice) {
-                    newDevice.close() // Initialize to closed
-                    logInfo "Created: Test Input ${i}"
-                } else {
-                    logError "Failed to create Test Input ${i}"
-                    return false
-                }
-            } else {
-                existingDevice.close()
-                logInfo "Using existing: Test Input ${i}"
-            }
-        }
-
-        pauseExecution(1000)
-        logInfo "Test device creation complete"
-        return true
-
-    } catch (Exception e) {
-        logError "Failed to create test devices: ${e.message}"
-        e.printStackTrace()
-        return false
-    }
+// A per-sensor override wins, 0 included; otherwise the default.
+int staysSecondsFor(Object override, Object defaultSeconds) {
+    if (override != null) return override as int
+    return (defaultSeconds ?: 0) as int
 }
 
-void cleanupTestDevices() {
-    logInfo "Cleaning up test devices..."
-
-    try {
-        // Delete input sensors
-        for (int i = 1; i <= 5; i++) {
-            String dni = "test-input-${app.id}-${i}"
-            ChildDeviceWrapper testDevice = getChildDevice(dni)
-
-            if (testDevice) {
-                deleteChildDevice(dni)
-                logInfo "Deleted: Test Input ${i}"
-            }
-        }
-
-        // Delete output sensor
-        String outputDni = "test-output-${app.id}"
-        ChildDeviceWrapper outputDevice = getChildDevice(outputDni)
-        if (outputDevice) {
-            deleteChildDevice(outputDni)
-            logInfo "Deleted: Test Output"
-        }
-
-        logInfo "Test device cleanup complete"
-
-    } catch (Exception e) {
-        logError "Failed to cleanup test devices: ${e.message}"
-    }
-}
-
-void initializeTestRun() {
-    state.testsPassed = 0
-    state.testsFailed = 0
-    state.testsTotal = 0
-    state.failedTests = []
-    state.testResults = [:]
-}
-
-void finalizeTestRun(String suiteName) {
-    logInfo "=" * 60
-    logInfo "${suiteName} COMPLETE"
-    logInfo "Total Tests: ${state.testsTotal}"
-    logInfo "Passed: ${state.testsPassed}"
-    logInfo "Failed: ${state.testsFailed}"
-
-    if (state.testsFailed > 0) {
-        logWarn "Failed Tests:"
-        state.failedTests.each { logWarn "  - ${it}" }
-    }
-
-    logInfo "=" * 60
-
-    state.lastTestRun = new Date().format("yyyy-MM-dd HH:mm:ss")
-}
-
-void configureForTest(Map config) {
-    if (config.aggregationMethod) {
-        app.updateSetting("aggregationMethod", [type: "enum", value: config.aggregationMethod])
-    }
-    if (config.thresholdPercent != null) {
-        app.updateSetting("thresholdPercent", [type: "number", value: config.thresholdPercent])
-    }
-    if (config.attributeValue) {
-        app.updateSetting("attributeValue", [type: "enum", value: config.attributeValue])
-    }
-    if (config.containsKey('defaultStaysSeconds')) {
-        app.updateSetting("defaultStaysSeconds", [type: "number", value: (config.defaultStaysSeconds ?: 0)])
-    }
-    // staysOverrides: Map<Integer testSensorIndex (1..5), Integer seconds or null to clear>
-    if (config.staysOverrides != null) {
-        for (int i = 1; i <= 5; i++) {
-            String dni = "test-input-${app.id}-${i}"
-            ChildDeviceWrapper d = getChildDevice(dni)
-            if (d == null) continue
-            String key = "staysOverride_${d.id}"
-            if ((config.staysOverrides as Map).containsKey(i)) {
-                Integer v = (config.staysOverrides as Map)[i] as Integer
-                if (v == null) {
-                    app.removeSetting(key)
-                } else {
-                    app.updateSetting(key, [type: "number", value: v])
-                }
-            } else {
-                app.removeSetting(key)
-            }
-        }
-    }
-    if (config.clearStuckState) {
-        state.stuckState = [:]
-        state.pendingSeq = [:]
-    }
-    if (config.containsKey('excludeAfter')) {
-        app.updateSetting("excludeAfter", [type: "number", value: config.excludeAfter])
-    }
-
-    pauseExecution(500)
-    initialize()
-    pauseExecution(500)
-}
-
-ChildDeviceWrapper getTestSensor(int oneBasedIndex) {
-    return getChildDevice("test-input-${app.id}-${oneBasedIndex}")
-}
-
-void setStaysSeconds(int seconds) {
-    app.updateSetting("defaultStaysSeconds", [type: "number", value: seconds])
-}
-
-void setTestInputSensors(List<Integer> openIndices) {
-    List<ChildDeviceWrapper> devices = []
-
-    for (int i = 1; i <= 5; i++) {
-        String dni = "test-input-${app.id}-${i}"
-        ChildDeviceWrapper device = getChildDevice(dni)
-        if (device) {
-            devices << device
-        }
-    }
-
-    if (devices.size() != 5) {
-        logError "Could not find all test input devices"
-        return
-    }
-
-    devices.each { it.close(); pauseExecution(150) }
-    pauseExecution(400)
-
-    openIndices.each { index ->
-        if (index >= 0 && index < devices.size()) {
-            devices[index].open()
-            pauseExecution(150)
-        }
-    }
-
-    pauseExecution(1200) // Allow remaining events to propagate and aggregation to settle
-}
-
-boolean assertAggregateValue(String expected, String testName, boolean countAsTest = true) {
-    pauseExecution(500)
-
-    ChildDeviceWrapper outputDevice = getChildDevice("test-output-${app.id}")
-    if (!outputDevice) {
-        logError "Test output device not found!"
-        if (countAsTest) {
-            state.testsFailed++
-            state.failedTests = state.failedTests + [testName]
-        }
-        return false
-    }
-
-    String actual = outputDevice.currentValue("contact")
-    boolean passed = (actual == expected)
-
-    if (countAsTest) {
-        state.testsTotal++
-        if (passed) {
-            state.testsPassed++
-            logInfo "✓ PASS: ${testName} - Output: ${actual}"
-        } else {
-            state.testsFailed++
-            state.failedTests = state.failedTests + [testName]
-            logError "✗ FAIL: ${testName} - Expected: ${expected}, Got: ${actual}"
-            logDebug "  State aggregateValue: ${state.aggregateValue}"
-            logDebug "  Aggregation method: ${aggregationMethod}"
-        }
-
-        Map results = new LinkedHashMap((state.testResults ?: [:]) as Map)
-        results[testName] = [
-            passed: passed,
-            expected: expected,
-            actual: actual
-        ]
-        state.testResults = results
-    } else {
-        // Pre-condition check
-        if (passed) {
-            logDebug "Pre-condition verified: Output is '${actual}' as expected"
-        } else {
-            logWarn "Pre-condition check failed: Expected '${expected}', got '${actual}'"
-        }
-    }
-
-    return passed
-}
-
-void verifyInitialCondition(List<Integer> sensorConfig, String expectedValue) {
-    setTestInputSensors(sensorConfig)
-    assertAggregateValue(expectedValue, "Pre-condition", false)
-}
-
-// ============================================================================
-// INDIVIDUAL TEST CASES
-// ============================================================================
-
-void test_ANY_AllClosed() {
-    String testName = "Test 1.1: ANY Method - All Closed"
-    logInfo ""
-    logInfo "Running: ${testName}"
-
-    configureForTest([aggregationMethod: "any"])
-
-    // Verify initial condition should give opposite result
-    verifyInitialCondition([0], "open")
-
-    // Now test the actual condition
-    setTestInputSensors([])
-    assertAggregateValue("closed", testName)
-}
-
-void test_ANY_OneOpen() {
-    String testName = "Test 1.2: ANY Method - One Open"
-    logInfo ""
-    logInfo "Running: ${testName}"
-
-    configureForTest([aggregationMethod: "any"])
-
-    // Verify initial condition should give opposite result
-    verifyInitialCondition([], "closed")
-
-    // Now test the actual condition
-    setTestInputSensors([0])
-    assertAggregateValue("open", testName)
-}
-
-void test_ALL_NotAll() {
-    String testName = "Test 1.3: ALL Method - Not All Match"
-    logInfo ""
-    logInfo "Running: ${testName}"
-
-    configureForTest([aggregationMethod: "all"])
-
-    // Verify initial condition should give opposite result
-    verifyInitialCondition([0, 1, 2, 3, 4], "open")
-
-    // Now test the actual condition
-    setTestInputSensors([0, 1, 2, 3])
-    assertAggregateValue("closed", testName)
-}
-
-void test_ALL_AllMatch() {
-    String testName = "Test 1.4: ALL Method - All Match"
-    logInfo ""
-    logInfo "Running: ${testName}"
-
-    configureForTest([aggregationMethod: "all"])
-
-    // Verify initial condition should give opposite result
-    verifyInitialCondition([0, 1, 2], "closed")
-
-    // Now test the actual condition
-    setTestInputSensors([0, 1, 2, 3, 4])
-    assertAggregateValue("open", testName)
-}
-
-void test_Majority_60Percent() {
-    String testName = "Test 2.1: MAJORITY - 3 of 5 Open (60%)"
-    logInfo ""
-    logInfo "Running: ${testName}"
-
-    configureForTest([aggregationMethod: "majority"])
-
-    // Verify initial condition (minority)
-    verifyInitialCondition([0, 1], "closed")
-
-    // Now test the actual condition (majority)
-    setTestInputSensors([0, 1, 2])
-    assertAggregateValue("open", testName)
-}
-
-void test_Majority_40Percent() {
-    String testName = "Test 2.2: MAJORITY - 2 of 5 Open (40%)"
-    logInfo ""
-    logInfo "Running: ${testName}"
-
-    configureForTest([aggregationMethod: "majority"])
-
-    // Verify initial condition (majority)
-    verifyInitialCondition([0, 1, 2], "open")
-
-    // Now test the actual condition (minority)
-    setTestInputSensors([0, 1])
-    assertAggregateValue("closed", testName)
-}
-
-void test_Threshold_AtThreshold() {
-    String testName = "Test 2.3: THRESHOLD - At 60% Threshold"
-    logInfo ""
-    logInfo "Running: ${testName}"
-
-    configureForTest([aggregationMethod: "threshold", thresholdPercent: 60])
-
-    // Verify initial condition (below threshold)
-    verifyInitialCondition([0, 1], "closed")
-
-    // Now test the actual condition (at threshold)
-    setTestInputSensors([0, 1, 2])
-    assertAggregateValue("open", testName)
-}
-
-void test_Threshold_Below() {
-    String testName = "Test 2.4: THRESHOLD - Below 80% Threshold"
-    logInfo ""
-    logInfo "Running: ${testName}"
-
-    configureForTest([aggregationMethod: "threshold", thresholdPercent: 80])
-
-    // Verify initial condition (at threshold)
-    verifyInitialCondition([0, 1, 2, 3], "open")
-
-    // Now test the actual condition (below threshold)
-    setTestInputSensors([0, 1, 2])
-    assertAggregateValue("closed", testName)
-}
-
-void test_ValueChanges() {
-    String testName = "Test 3.1: Value Changes"
-    logInfo ""
-    logInfo "Running: ${testName}"
-
-    configureForTest([aggregationMethod: "any"])
-
-    // Verify initial condition
-    verifyInitialCondition([0], "open")
-
-    // Test transitions
-    setTestInputSensors([])
-    boolean step1 = assertAggregateValue("closed", "${testName} - Change to Closed")
-
-    setTestInputSensors([0])
-    boolean step2 = assertAggregateValue("open", "${testName} - Change to Open")
-
-    setTestInputSensors([])
-    boolean step3 = assertAggregateValue("closed", "${testName} - Change to Closed Again")
-
-    if (!step1 || !step2 || !step3) {
-        logWarn "Overall test had failures in one or more steps"
-    }
-}
-
-// ============================================================================
-// STICKY TRIGGER ("AND STAYS") TEST SUITE
-// ============================================================================
-
-void runStaysTests() {
-    logInfo ""
-    logInfo "-" * 60
-    logInfo "TEST SUITE 4: Sticky Trigger (and stays)"
-    logInfo "-" * 60
-
-    test_Stays_BypassWhenZero()
-    test_Stays_BasicStick()
-    test_Stays_FlickerSuppressed()
-    test_Stays_RapidFireResetsTimer()
-    test_Stays_OverrideTrumpsDefault()
-    test_Stays_OverrideZeroDisablesPerSensor()
-    test_Stays_BothDirectionsStick()
-    test_Stays_OnePerSensorIndependent()
-    test_Stays_RemovedSensorIsPruned()
-    test_Stays_ExcludeAfterStillWins()
-    test_Stays_MajorityWithSticky()
-    test_Stays_ThresholdWithSticky()
-    test_Stays_OverrideOnlyDefaultZero()
-    test_Stays_PendingTimerSurvivesReinit()
-    test_Stays_ReinitSeqNoCollision()
-    // test_Stays_SameDirectionRepeatDedup intentionally removed:
-    // Hubitat's sendEvent dedupes same-value emissions (no isStateChange:true), so the
-    // "fire same value twice in a row" scenario can't occur in production. Seq supersession
-    // for alternating values is already covered by test_Stays_FlickerSuppressed (4.3) and
-    // test_Stays_RapidFireResetsTimer (4.4).
-}
-
-private void prepareStickyTest(int defaultSeconds, Map<Integer,Integer> overrides=[:]) {
-    // Turn off sticky and reset all sensors to closed via bypass path
-    app.updateSetting("defaultStaysSeconds", [type: "number", value: 0])
-    pauseExecution(200)
-    setTestInputSensors([])  // all closed; bypass=0; aggregate becomes "closed"
-    pauseExecution(300)
-
-    // Clear sticky internal state and overrides
-    state.stuckState = [:]
-    state.pendingSeq = [:]
-    for (int i = 1; i <= 5; i++) {
-        ChildDeviceWrapper d = getTestSensor(i)
-        if (d) app.removeSetting("staysOverride_${d.id}")
-    }
-    overrides.each { idx, secs ->
-        ChildDeviceWrapper d = getTestSensor(idx as int)
-        if (d) {
-            if (secs == null) {
-                app.removeSetting("staysOverride_${d.id}")
-            } else {
-                app.updateSetting("staysOverride_${d.id}", [type: "number", value: secs])
-            }
-        }
-    }
-
-    // Configure aggregation method and default stays window
-    app.updateSetting("aggregationMethod", [type: "enum", value: "any"])
-    app.updateSetting("defaultStaysSeconds", [type: "number", value: defaultSeconds])
-    pauseExecution(300)
-    initialize()
-    pauseExecution(500)
-}
-
-private void fireSensor(int oneBasedIndex, String newValue) {
-    ChildDeviceWrapper d = getTestSensor(oneBasedIndex)
-    if (d == null) return
-    if (newValue == "open") d.open()
-    else if (newValue == "closed") d.close()
-}
-
-void test_Stays_BypassWhenZero() {
-    String testName = "Test 4.1: Stays - Bypass when 0"
-    logInfo ""
-    logInfo "Running: ${testName}"
-    prepareStickyTest(0)
-    fireSensor(1, "open")
-    pauseExecution(800)
-    assertAggregateValue("open", testName)
-}
-
-void test_Stays_BasicStick() {
-    String testName = "Test 4.2: Stays - Basic stick"
-    logInfo ""
-    logInfo "Running: ${testName}"
-    prepareStickyTest(3)
-    fireSensor(1, "open")
-    pauseExecution(1000)
-    assertAggregateValue("closed", "${testName} - not yet stuck @1s")
-    pauseExecution(3000)
-    assertAggregateValue("open", "${testName} - stuck after 4s")
-}
-
-void test_Stays_FlickerSuppressed() {
-    String testName = "Test 4.3: Stays - Flicker suppressed"
-    logInfo ""
-    logInfo "Running: ${testName}"
-    prepareStickyTest(3)
-    fireSensor(1, "open")         // seq=1, fires at +3s
-    pauseExecution(1000)
-    fireSensor(1, "closed")        // seq=2 (supersedes seq=1), fires at +4s
-    pauseExecution(4000)           // wait through both timer fire points
-    // seq=1 timer found stale and no-oped; seq=2 timer committed "closed" but value didn't change
-    assertAggregateValue("closed", testName)
-}
-
-void test_Stays_RapidFireResetsTimer() {
-    String testName = "Test 4.4: Stays - Rapid fire, latest seq wins"
-    logInfo ""
-    logInfo "Running: ${testName}"
-    prepareStickyTest(3)
-    fireSensor(1, "open")           // t=0, seq=1, fires at t=3
-    pauseExecution(1500)
-    fireSensor(1, "closed")          // t=1.5, seq=2, fires at t=4.5
-    pauseExecution(500)
-    fireSensor(1, "open")           // t=2, seq=3, fires at t=5
-    pauseExecution(2000)
-    // t=4: seq=1 fired at t=3 (stale); seq=2 fires at t=4.5 (still pending); seq=3 fires at t=5
-    assertAggregateValue("closed", "${testName} - pre-final-commit")
-    pauseExecution(2500)
-    // t=6.5: seq=2 fired stale, seq=3 committed "open"
-    assertAggregateValue("open", "${testName} - latest seq committed")
-}
-
-void test_Stays_OverrideTrumpsDefault() {
-    String testName = "Test 4.5: Stays - Override > default"
-    logInfo ""
-    logInfo "Running: ${testName}"
-    prepareStickyTest(2, [1: 5])
-    fireSensor(1, "open")
-    pauseExecution(3000)
-    assertAggregateValue("closed", "${testName} - override 5s not yet elapsed at 3s")
-    pauseExecution(3000)
-    assertAggregateValue("open", "${testName} - committed after override elapsed")
-}
-
-void test_Stays_OverrideZeroDisablesPerSensor() {
-    String testName = "Test 4.6: Stays - Override 0 disables filter for that sensor"
-    logInfo ""
-    logInfo "Running: ${testName}"
-    prepareStickyTest(5, [1: 0])
-    fireSensor(1, "open")
-    pauseExecution(800)
-    assertAggregateValue("open", testName)
-}
-
-void test_Stays_BothDirectionsStick() {
-    String testName = "Test 4.7: Stays - Symmetric, both directions"
-    logInfo ""
-    logInfo "Running: ${testName}"
-    prepareStickyTest(2)
-    fireSensor(1, "open")
-    pauseExecution(2500)
-    assertAggregateValue("open", "${testName} - open committed")
-    fireSensor(1, "closed")
-    pauseExecution(1000)
-    assertAggregateValue("open", "${testName} - close not yet stuck @1s")
-    pauseExecution(2000)
-    assertAggregateValue("closed", "${testName} - close stuck after 3s")
-}
-
-void test_Stays_OnePerSensorIndependent() {
-    String testName = "Test 4.8: Stays - Per-sensor independent timers"
-    logInfo ""
-    logInfo "Running: ${testName}"
-    prepareStickyTest(2)
-    // Switch to 'all' so the aggregate is sensitive to the last-sticking sensor
-    app.updateSetting("aggregationMethod", [type: "enum", value: "all"])
-    pauseExecution(300)
-    // Open sensors 1..4 at t≈0 (paced 150ms apart to avoid concurrent-handler races —
-    // production sensors never fire this close together anyway).
-    [1, 2, 3, 4].each { fireSensor(it, "open"); pauseExecution(150) }
-    // We are now ~0.6s in; the 2s sticky windows for sensors 1..4 will commit ~t≈2.0–2.6s.
-    pauseExecution(400)  // total ~1.0s elapsed
-    // Open sensor 5 at t≈1.0
-    fireSensor(5, "open")
-    pauseExecution(1500)
-    // t≈2.5: sensors 1..4 committed (~2.1..2.6s); sensor 5 commits at t≈3.0
-    assertAggregateValue("closed", "${testName} - all method: 4/5 stuck, sensor 5 pending")
-    pauseExecution(1500)
-    // t≈4.0: sensor 5 committed at t≈3.0 -> all open
-    assertAggregateValue("open", "${testName} - all method: all 5 stuck")
-}
-
-void test_Stays_RemovedSensorIsPruned() {
-    String testName = "Test 4.9: Stays - Removed sensor pruned"
-    logInfo ""
-    logInfo "Running: ${testName}"
-    prepareStickyTest(2)
-    fireSensor(1, "open")
-    pauseExecution(2500)
-    ChildDeviceWrapper s1 = getTestSensor(1)
-    String s1id = s1?.id as String
-
-    // Verify the stuck entry exists pre-prune
-    state.testsTotal++
-    if ((state.stuckState as Map)?.containsKey(s1id)) {
-        state.testsPassed++
-        logInfo "✓ PASS: ${testName} - precondition: s1 in stuckState"
-    } else {
-        state.testsFailed++
-        state.failedTests = state.failedTests + ["${testName} - precondition"]
-        logError "✗ FAIL: ${testName} - s1 (${s1id}) missing from stuckState: ${state.stuckState}"
-    }
-
-    // Drop sensor 1 from inputSensors and re-init
-    List<String> remainingIds = []
-    for (int i = 2; i <= 5; i++) {
-        ChildDeviceWrapper d = getTestSensor(i)
-        if (d) remainingIds << (d.id as String)
-    }
-    app.updateSetting("inputSensors", [type: "capability.contactSensor", value: remainingIds])
-    pauseExecution(500)
-    initialize()
-    pauseExecution(500)
-
-    // Verify pruning
-    state.testsTotal++
-    boolean stuckPruned = !((state.stuckState as Map)?.containsKey(s1id))
-    boolean seqPruned = !((state.pendingSeq as Map)?.containsKey(s1id))
-    if (stuckPruned && seqPruned) {
-        state.testsPassed++
-        logInfo "✓ PASS: ${testName} - s1 pruned from stuckState and pendingSeq"
-    } else {
-        state.testsFailed++
-        state.failedTests = state.failedTests + [testName]
-        logError "✗ FAIL: ${testName} - prune failed (stuck=${stuckPruned}, seq=${seqPruned}, stuckState=${state.stuckState}, pendingSeq=${state.pendingSeq})"
-    }
-
-    // Restore all 5 sensors for subsequent tests
-    List<String> allIds = []
-    for (int i = 1; i <= 5; i++) {
-        ChildDeviceWrapper d = getTestSensor(i)
-        if (d) allIds << (d.id as String)
-    }
-    app.updateSetting("inputSensors", [type: "capability.contactSensor", value: allIds])
-    pauseExecution(500)
-    initialize()
-    pauseExecution(500)
-}
-
-void test_Stays_ExcludeAfterStillWins() {
-    String testName = "Test 4.10: Stays - excludeAfter orthogonal"
-    logInfo ""
-    logInfo "Running: ${testName}"
-    prepareStickyTest(2)
-    // Set excludeAfter to 0 minutes — any non-immediate activity is "stale"
-    app.updateSetting("excludeAfter", [type: "number", value: 0])
-    pauseExecution(300)
-    fireSensor(1, "open")
-    pauseExecution(3000)
-    // Sensor 1 is "stuck open" in state.stuckState BUT excludeAfter=0 drops it from aggregation
-    // computeAggregateSensorValue returns false (no sensors included), aggregate value unchanged from prep ("closed")
-    assertAggregateValue("closed", testName)
-    // Restore for subsequent tests
-    app.updateSetting("excludeAfter", [type: "number", value: 60])
-    pauseExecution(300)
-}
-
-// ============================================================================
-// STICKY TRIGGER COVERAGE EXTENSIONS (4.11 .. 4.15)
-// ============================================================================
-
-void test_Stays_MajorityWithSticky() {
-    String testName = "Test 4.11: Stays - Majority aggregation uses stuck values"
-    logInfo ""
-    logInfo "Running: ${testName}"
-    prepareStickyTest(2)
-    app.updateSetting("aggregationMethod", [type: "enum", value: "majority"])
-    pauseExecution(300)
-    // Open sensors 1 and 2 (2/5 — under majority of >50%)
-    fireSensor(1, "open"); pauseExecution(150)
-    fireSensor(2, "open")
-    pauseExecution(2500)  // both stuck
-    assertAggregateValue("closed", "${testName} - 2/5 stuck, below majority")
-    // Open sensor 3 — 3/5 once stuck
-    fireSensor(3, "open")
-    pauseExecution(2500)  // sensor 3 stuck
-    assertAggregateValue("open", "${testName} - 3/5 stuck, majority")
-}
-
-void test_Stays_ThresholdWithSticky() {
-    String testName = "Test 4.12: Stays - Threshold aggregation uses stuck values"
-    logInfo ""
-    logInfo "Running: ${testName}"
-    prepareStickyTest(2)
-    app.updateSetting("aggregationMethod", [type: "enum", value: "threshold"])
-    app.updateSetting("thresholdPercent", [type: "number", value: 60])
-    pauseExecution(300)
-    // 2/5 = 40% (under 60%)
-    fireSensor(1, "open"); pauseExecution(150)
-    fireSensor(2, "open")
-    pauseExecution(2500)
-    assertAggregateValue("closed", "${testName} - 2/5 (40%) below threshold")
-    // 3/5 = 60% (at threshold)
-    fireSensor(3, "open")
-    pauseExecution(2500)
-    assertAggregateValue("open", "${testName} - 3/5 (60%) at threshold")
-}
-
-void test_Stays_OverrideOnlyDefaultZero() {
-    String testName = "Test 4.13: Stays - Override opts a sensor in when default is 0"
-    logInfo ""
-    logInfo "Running: ${testName}"
-    prepareStickyTest(0, [1: 3])
-    // Sensor 2 has default (=0) → immediate commit
-    fireSensor(2, "open")
-    pauseExecution(800)
-    assertAggregateValue("open", "${testName} - sensor 2 (default 0) immediate")
-    fireSensor(2, "closed")  // reset state cleanly
-    pauseExecution(800)
-    assertAggregateValue("closed", "${testName} - sensor 2 back to closed")
-    // Sensor 1 has override=3 → must wait 3 s
-    fireSensor(1, "open")
-    pauseExecution(1000)
-    assertAggregateValue("closed", "${testName} - sensor 1 (override 3s) not yet stuck @1s")
-    pauseExecution(2500)
-    assertAggregateValue("open", "${testName} - sensor 1 stuck after 3.5s")
-}
-
-void test_Stays_PendingTimerSurvivesReinit() {
-    String testName = "Test 4.15: Stays - Pending sticky timer no-ops after initialize()"
-    logInfo ""
-    logInfo "Running: ${testName}"
-    prepareStickyTest(3)
-    // Open then close sensor 1 — leaves two pending sticky commits (seq=1 'open', seq=2 'closed')
-    fireSensor(1, "open")
-    pauseExecution(500)
-    fireSensor(1, "closed")
-    pauseExecution(500)
-    // T≈1: device is back to "closed". Force re-init.
-    initialize()
-    pauseExecution(500)
-    // initialize() reseeds stuckState to "closed" and advances pendingSeq to 3.
-    // Both pending runIns (T≈3 and T≈3.5) carry an older seq → stale → no-op.
-    pauseExecution(3500)
-    assertAggregateValue("closed", testName)
-}
-
-void test_Stays_ReinitSeqNoCollision() {
-    String testName = "Test 4.16: Stays - Pre-reinit timer can't match a post-reinit seq"
-    logInfo ""
-    logInfo "Running: ${testName}"
-    prepareStickyTest(4)
-    // Pending commits seq=1 'open' (due T≈4) and seq=2 'closed' (due T≈4.5)
-    fireSensor(1, "open")
-    pauseExecution(500)
-    fireSensor(1, "closed")
-    pauseExecution(500)
-    initialize()
-    pauseExecution(500)
-    // T≈1.5: a new 'open' after reinit, due T≈5.5. If initialize() restarted the
-    // sequence, this event reuses seq=1 and the old 'open' timer commits it at T≈4.
-    fireSensor(1, "open")
-    pauseExecution(2500)
-    // T≈4.5 (assert adds 500 ms): the new 'open' hasn't stayed 4 s yet
-    assertAggregateValue("closed", "${testName} - old timer ignored")
-    pauseExecution(1500)
-    assertAggregateValue("open", "${testName} - new timer commits")
-}
-
-// ============================================================================
-// PRE-EXISTING FEATURE COVERAGE EXTENSIONS
-// ============================================================================
-
-void test_AttributeValue_TargetClosed() {
-    // Existing tests all target "open" — this exercises the inverted path
-    String testName = "Test 1.5: Aggregation with target value 'closed' (inverted target)"
-    logInfo ""
-    logInfo "Running: ${testName}"
-    configureForTest([aggregationMethod: "any", attributeValue: "closed"])
-    // 4 open + 1 closed: 'any closed' is true → output "closed"
-    setTestInputSensors([0, 1, 2, 3])  // sensors 1-4 open, sensor 5 closed
-    assertAggregateValue("closed", "${testName} - any=closed: 1 sensor matches")
-    // All 5 open: no sensor matches "closed" → output is opposite "open"
-    setTestInputSensors([0, 1, 2, 3, 4])
-    assertAggregateValue("open", "${testName} - any=closed: 0 sensors match")
-    // Restore target back to "open" for downstream tests
-    app.updateSetting("attributeValue", [type: "enum", value: "open"])
-    pauseExecution(200)
-}
-
-void test_AllSensorsExcluded() {
-    // With excludeAfter=0, all sensors are stale by definition.
-    // computeAggregateSensorValue should return false; output should NOT update.
-    String testName = "Test 1.6: All sensors excluded by excludeAfter=0 → no output update"
-    logInfo ""
-    logInfo "Running: ${testName}"
-    configureForTest([aggregationMethod: "any"])
-    // Seed a known output value first
-    setTestInputSensors([0])
-    assertAggregateValue("open", "${testName} - precondition: output 'open'")
-    // Now exclude everything by setting excludeAfter to 0 minutes
-    app.updateSetting("excludeAfter", [type: "number", value: 0])
-    pauseExecution(300)
-    // Trigger an event that WOULD transition aggregate to "closed" if any sensor were included
-    fireSensor(1, "closed")  // sensor 1 commits closed (sticky bypass)
-    pauseExecution(1500)
-    // refreshIncludedSensors excludes all (all stale). computeAggregateSensorValue returns false.
-    // state.aggregateValue is NOT updated. Output device retains last value ("open").
-    assertAggregateValue("open", "${testName} - output unchanged when all excluded")
-    // Restore excludeAfter to default for downstream tests
-    app.updateSetting("excludeAfter", [type: "number", value: 60])
-    pauseExecution(300)
-}
+// ── End discrete core ─────────────────────────────────────────────────
 
 // ── Logging (app) ─────────────────────────────────────────────────────
 //   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
