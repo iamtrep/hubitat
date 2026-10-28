@@ -23,7 +23,6 @@ definition(
     description: "Publishes the heating and cooling season on a device, from dates and the outdoor temperature",
     menu: "Automations", // new in platform 2.5.0
     category: "Convenience",
-    singleThreaded: true,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/apps/HvacSeasonManager/HvacSeasonManager.groovy",
     documentationLink: "https://github.com/iamtrep/hubitat/tree/main/apps/HvacSeasonManager",
     iconUrl: "", iconX2Url: ""

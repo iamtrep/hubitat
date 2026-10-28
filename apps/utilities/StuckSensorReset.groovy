@@ -35,7 +35,6 @@ definition(
     menu: "Automations",
     category: "Convenience",
     singleInstance: false,
-    singleThreaded: true,  // a reset from the switch and one from the button would otherwise both notify
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/utilities/StuckSensorReset.groovy",
     documentationLink: "https://github.com/iamtrep/hubitat/tree/main/apps/utilities",
     iconUrl: "",
