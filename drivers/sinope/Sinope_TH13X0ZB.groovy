@@ -25,7 +25,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.24"
+@Field static final String CODE_VERSION = "0.0.25"
 
 @Field static final List<String> SUPPORTED_THERMOSTAT_MODES     = ['"off"', '"heat"']
 @Field static final List<String> SUPPORTED_THERMOSTAT_FAN_MODES = ['"auto"']
@@ -48,7 +48,6 @@ metadata
         capability 'EnergyMeter'
         capability 'TemperatureMeasurement'
         capability 'Thermostat'
-        capability 'VoltageMeasurement'
 
         attribute 'floorTemperature', 'number'
         attribute 'roomTemperature', 'number'
@@ -144,7 +143,9 @@ void configure() {
 
     unschedule()
 
-    state.voltageDivider = 1 as Float
+    // Voltage is a fixed 240 V and current is power over it, so neither is exposed; earlier versions exposed voltage
+    device.deleteCurrentState('voltage')
+    state.remove('voltageDivider')
     state.powerDivider = 1 as Integer
 
     runIn(10, 'refreshClockTime')
@@ -157,7 +158,6 @@ void configure() {
     cmds += zigbee.configureReporting(0x0204, 0x0000, 0x30, 1, 0)                                       // temperature display mode (change-of-value only, 1s debounce)
     cmds += zigbee.configureReporting(0x0204, 0x0001, 0x30, 1, 0)                                       // keypad lockout (change-of-value only, 1s debounce)
     cmds += zigbee.configureReporting(0x0702, 0x0000, 0x25, 59, 1799, (int) (prefMinEnergyChange ?: 10)) // Energy reading
-    cmds += zigbee.configureReporting(0x0B04, 0x0505, 0x29, 30, 600, 1)                                 // Voltage
     cmds += zigbee.configureReporting(0xFF01, 0x0115, 0x30, 10, 3600, 1, [mfgCode: '0x119C'])           // gfci status
     cmds += zigbee.configureReporting(0xFF01, 0x010C, 0x30, 10, 3600, 1, [mfgCode: '0x119C'])           // floor limit status
     cmds += zigbee.configureReporting(0xFF01, 0x0200, 0x1b, 10, 3600, 0x60, [mfgCode: '0x119C'])        // device status bitmap — watch bits 5 (floor) + 6 (temp)
@@ -312,7 +312,6 @@ void refresh() {
     cmds += zigbee.readAttribute(0x0702, 0x0000)    // Read energy delivered
     cmds += zigbee.readAttribute(0x0B04, 0x050D)    // Read highest power delivered
     cmds += zigbee.readAttribute(0x0B04, 0x050B)    // Read thermostat Active power
-    cmds += zigbee.readAttribute(0x0B04, 0x0505)    // Read voltage
     cmds += zigbee.readAttribute(0x0201, 0x0010)    // Read local temperature calibration
     cmds += zigbee.readAttribute(0xFF01, 0x0107, [mfgCode: '0x119C'])    // Read floor temperature
     cmds += zigbee.readAttribute(0xFF01, 0x0200, [mfgCode: '0x119C'])    // Read device status bitmap
@@ -629,17 +628,9 @@ private void parseAttributeReport(Map descMap) {
         case 0x0B04: // Electrical cluster
             switch (descMap.attrInt) {
                 case 0x0505:
-                    map.name = 'voltage'
-                    map.value = getRMSVoltage(descMap.value)
-                    map.unit = 'V'
-                    map.descriptionText = "Voltage of ${device.displayName} is ${map.value} ${map.unit}"
-                    break
-
                 case 0x0508:
-                    map.name = 'amperage'
-                    map.value = getRMSCurrent(descMap.value)
-                    map.unit = 'A'
-                    map.descriptionText = "Current of ${device.displayName} is ${map.value} ${map.unit}"
+                    // Voltage and current: units keep reporting entries set before this driver
+                    logTrace("ignored electrical attribute ${descMap.attrId} value ${descMap.value}")
                     break
 
                 case 0x050B:
@@ -961,25 +952,6 @@ private Integer getActivePower(String value) {
         state.powerDivider = 1 as Integer
     }
     return Integer.parseInt(value, 16).intdiv(state.powerDivider as Integer)
-}
-
-private Double getRMSVoltage(String attributeReportValue) {
-    if (attributeReportValue == null) {
-        return null
-    }
-    if (state.voltageDivider == null) {
-        state.voltageDivider = 1 as Integer
-    }
-    return Integer.parseInt(attributeReportValue, 16) / (state.voltageDivider as Double)
-}
-
-@CompileStatic
-private Double getRMSCurrent(String attributeReportValue) {
-    // attribute report is in mA
-    if (attributeReportValue == null) {
-        return null
-    }
-    return Integer.parseInt(attributeReportValue, 16) / 1000.0d
 }
 
 @CompileStatic

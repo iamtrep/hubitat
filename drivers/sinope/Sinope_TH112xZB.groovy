@@ -16,6 +16,7 @@
  *  for the specific language governing permissions and limitations under the License.
  *
  * v0.0.1 - Initial version
+ * v0.0.2 - Drop voltage and current: the thermostat stores a fixed voltage and derives current from power
  *
  */
 
@@ -23,7 +24,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.1"
+@Field static final String CODE_VERSION = "0.0.2"
 
 @Field static final List<String> SUPPORTED_THERMOSTAT_MODES     = ['"off"', '"heat"']
 @Field static final List<String> SUPPORTED_THERMOSTAT_FAN_MODES = ['"auto"']
@@ -42,12 +43,10 @@ metadata
         capability 'Configuration'
         capability 'Initialize'
         capability 'Refresh'
-        capability 'CurrentMeter'
         capability 'PowerMeter'
         capability 'EnergyMeter'
         capability 'TemperatureMeasurement'
         capability 'Thermostat'
-        capability 'VoltageMeasurement'
 
         attribute 'outdoorTemperature', 'number'
 
@@ -114,10 +113,9 @@ metadata
 
 @Field static final Map constKeypadLockoutMap = [ '00': 'unlocked', '01': 'locked' ]
 
-// Electrical Measurement scale attributes (0x0B04): the value is raw * multiplier / divisor
-@Field static final Map constElectricalScaleAttrs = [ 0x0600: 'acVoltageMultiplier', 0x0601: 'acVoltageDivisor',
-                                                      0x0602: 'acCurrentMultiplier', 0x0603: 'acCurrentDivisor',
-                                                      0x0604: 'acPowerMultiplier',   0x0605: 'acPowerDivisor' ]
+// Electrical Measurement power scale attributes (0x0B04): the value is raw * multiplier / divisor.
+// Voltage and current are not exposed: the voltage is a fixed per-unit value, and current is power over that voltage.
+@Field static final Map constElectricalScaleAttrs = [ 0x0604: 'acPowerMultiplier', 0x0605: 'acPowerDivisor' ]
 
 
 //-- Capabilities -----------------------------------------------------------------------------------------
@@ -134,12 +132,15 @@ void configure() {
 
     unschedule()
 
+    // Left by 0.0.1, which exposed them
+    device.deleteCurrentState('voltage')
+    device.deleteCurrentState('amperage')
+    ['acVoltageMultiplier', 'acVoltageDivisor', 'acCurrentMultiplier', 'acCurrentDivisor'].each { state.remove(it) }
 
     runIn(10, 'refreshClockTime')
-    runIn(120, 'refreshElectrical')  // after the scale read below, which waits behind the reporting setup
+    runIn(120, 'refreshMaxPower')  // after the scale read below, which waits behind the reporting setup
 
     // A G2 holds at most 8 reporting entries (Z2M) and answers INSUFFICIENT_SPACE past that; this list has 7.
-    // Voltage and current are not reported: refreshElectrical() reads them every hour.
     List<String> cmds = []
     cmds += zigbee.configureReporting(0x0201, 0x0000, 0x29, 30, 580, (int) (prefMinTempChange ?: 50))   // local temperature
     cmds += zigbee.configureReporting(0x0201, 0x0008, 0x20, 59, 590, (int) (prefMinPIChange ?: 5))      // PI heating demand
@@ -149,7 +150,7 @@ void configure() {
     cmds += zigbee.configureReporting(0x0702, 0x0000, 0x25, 59, 1799, (int) (prefMinEnergyChange ?: 10)) // Energy reading
     cmds += zigbee.configureReporting(0x0B04, 0x050B, 0x29, 10, 600, 5)                                 // measured active power (W)
 
-    // Electrical scale: configure() can run without refresh() (driver change, code push), and power and voltage wait for it
+    // Power scale: configure() can run without refresh() (driver change, code push), and power waits for it
     cmds += zigbee.readAttribute(0x0B04, constElectricalScaleAttrs.keySet() as List<Integer>)
     cmds += zigbee.readAttribute(0xFF01, 0x0003, [mfgCode: '0x119C'])  // firmware number
     cmds += zigbee.readAttribute(0xFF01, 0x0004, [mfgCode: '0x119C'])  // firmware version
@@ -216,13 +217,11 @@ void refresh() {
     cmds += zigbee.readAttribute(0x0204, 0x0000)    // Read Temperature Display Mode
     cmds += zigbee.readAttribute(0x0204, 0x0001)    // Read Keypad Lockout
     cmds += zigbee.readAttribute(0x0702, 0x0000)    // Read energy delivered
-    if (state.acPowerDivisor == null || state.acVoltageDivisor == null) {
+    if (state.acPowerDivisor == null) {
         cmds += zigbee.readAttribute(0x0B04, constElectricalScaleAttrs.keySet() as List<Integer>)
     }
     cmds += zigbee.readAttribute(0x0B04, 0x050D)    // Read highest power delivered
     cmds += zigbee.readAttribute(0x0B04, 0x050B)    // Read thermostat Active power
-    cmds += zigbee.readAttribute(0x0B04, 0x0505)    // Read voltage
-    cmds += zigbee.readAttribute(0x0B04, 0x0508)    // Read current
     cmds += zigbee.readAttribute(0xFF01, 0x0119, [mfgCode: '0x119C'])    // Read connected load
 
     sendZigbeeCommands(cmds) // Submit zigbee commands
@@ -240,7 +239,7 @@ void initialize() {
     refresh()
     // One-shot runIn chains: a run that fell due while the hub was down is dropped, ending the chain
     runIn(10, 'refreshClockTime')
-    runIn(12, 'refreshElectrical')
+    runIn(12, 'refreshMaxPower')
 }
 
 void updated() {
@@ -524,21 +523,9 @@ private void parseAttributeReport(Map descMap) {
             }
             switch (descMap.attrInt) {
                 case 0x0505:
-                    Double volts = getRMSVoltage(descMap.value)
-                    if (volts == null) break
-                    map.name = 'voltage'
-                    map.value = volts
-                    map.unit = 'V'
-                    map.descriptionText = "Voltage of ${device.displayName} is ${map.value} ${map.unit}"
-                    break
-
                 case 0x0508:
-                    Double amps = getRMSCurrent(descMap.value)
-                    if (amps == null) break
-                    map.name = 'amperage'
-                    map.value = amps
-                    map.unit = 'A'
-                    map.descriptionText = "Current of ${device.displayName} is ${map.value} ${map.unit}"
+                    // Voltage and current: some units keep reporting entries set before this driver
+                    logTrace("ignored electrical attribute ${descMap.attrId} value ${descMap.value}")
                     break
 
                 case 0x050B:
@@ -726,13 +713,11 @@ private void refreshClockTime() {
     runIn(3*3600, 'refreshClockTime')
 }
 
-private void refreshElectrical() {
+private void refreshMaxPower() {
     List<String> cmds = []
-    cmds += zigbee.readAttribute(0x0B04, 0x0505)  // voltage
-    cmds += zigbee.readAttribute(0x0B04, 0x0508)  // current
     cmds += zigbee.readAttribute(0x0B04, 0x050D)  // highest power delivered
     sendZigbeeCommands(cmds)
-    runIn(3600, 'refreshElectrical')
+    runIn(12*3600, 'refreshMaxPower')
 }
 
 private void setSecondTempDisplay(String mode = (prefSecondTempDisplay ?: 'auto')) {
@@ -810,16 +795,6 @@ private Double scaleElectrical(String value, String prefix) {
 private Integer getActivePower(String value) {
     Double watts = scaleElectrical(value, 'acPower')
     return (watts == null) ? null : Math.round(watts) as Integer
-}
-
-private Double getRMSVoltage(String value) {
-    Double volts = scaleElectrical(value, 'acVoltage')
-    return (volts == null) ? null : roundToTwoDecimalPlaces(volts)
-}
-
-private Double getRMSCurrent(String value) {
-    Double amps = scaleElectrical(value, 'acCurrent')
-    return (amps == null) ? null : Math.round(amps * 1000) / 1000.0d
 }
 
 @CompileStatic
