@@ -724,5 +724,24 @@ check('firmware notify: a successful Default Response is not the answer, a faile
     List bad = '18 05 0B 00 81'.split(' ') as List
     !app.replyFits(ota, ok, app.parseZclHeader(ok)) && app.replyFits(ota, bad, app.parseZclHeader(bad))
 }
+// ---- frameTimeMs ----
+TimeZone tor = TimeZone.getTimeZone('America/Toronto')
+long tFrame = Date.parse('yyyy-MM-dd HH:mm:ss.SSS', '2026-10-27 21:52:00.577', tor).time
+check('frameTimeMs: reads the frame time in the hub time zone') {
+    app.frameTimeMs([time: '2026-10-27 21:52:00.577'], tFrame + 30000L, tor) == tFrame
+}
+check('frameTimeMs: never later than now') {
+    app.frameTimeMs([time: '2026-10-27 21:52:00.577'], tFrame - 1000L, tor) == tFrame - 1000L
+}
+check('frameTimeMs: now when the time is missing or unreadable') {
+    app.frameTimeMs([:], 42L, tor) == 42L && app.frameTimeMs([time: 'soon'], 42L, tor) == 42L && app.frameTimeMs(null, 42L, tor) == 42L
+}
+check('a reply processed after its deadline matches by its frame time, not by now') {
+    Map req = zdoReq + [sentAt: tFrame - 2000L, deadline: tFrame + 1000L]
+    Map frame = zdoFrame + [time: '2026-10-27 21:52:00.577']
+    long late = tFrame + 20000L
+    app.matchPending(['k': new LinkedHashMap(req)], frame, late) == null &&
+        app.matchPending(['k': new LinkedHashMap(req)], frame, app.frameTimeMs(frame, late, tor)) != null
+}
 println "${passed} passed, ${failed} failed, 0 warnings"
 System.exit(failed == 0 ? 0 : 1)

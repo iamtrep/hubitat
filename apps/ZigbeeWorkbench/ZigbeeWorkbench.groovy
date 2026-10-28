@@ -20,6 +20,10 @@ import java.util.concurrent.ConcurrentHashMap
 @Field static final String RADIO_DRIVER = "Zigbee Workbench Radio"
 @Field static final String MONITOR_DRIVER = "Zigbee Workbench Monitor"
 @Field static final long REPLY_TIMEOUT_MS = 10000L
+// The app is singleThreaded, so a frame or a sweep can wait behind a slow call (a 15 s hub read)
+// and run after a deadline it met. Page renders, buttons and monitor polls expire requests only
+// this long past their deadline: they are the backstop for a sweep lost to a reboot.
+@Field static final long BACKSTOP_GRACE_MS = 60000L
 @Field static final long HUB_CACHE_MS = 60000L
 @Field static final int MAX_PAGES = 20
 
@@ -2064,6 +2068,18 @@ static String renderMd(Map data, Map opts, int level) {
     L << '[/details]'
     return L.join('\n')
 }
+// When the hub received a frame, in ms: its time field ("yyyy-MM-dd HH:mm:ss.SSS", hub local
+// time), never later than now; now when the field is missing or unreadable.
+static long frameTimeMs(Map frame, long now, TimeZone tz) {
+    String t = frame?.time?.toString()
+    if (!t) return now
+    try {
+        return Math.min(now, Date.parse("yyyy-MM-dd HH:mm:ss.SSS", t, tz).time)
+    } catch (Exception ignored) {
+        return now
+    }
+}
+
 // ==== Engine end ====
 
 // LIFECYCLE
@@ -2781,7 +2797,8 @@ void radioFrame(Map frame) {
     checkVersion()
     Map pending = state.pending
     if (!pending) return
-    Map m = matchPending(pending, frame, now())
+    // The frame's own time: it may have waited for this app's turn past a deadline it met.
+    Map m = matchPending(pending, frame, frameTimeMs(frame, now(), location.timeZone))
     if (m == null) return
     try {
         handleReply((Map) m.request, frame, (Map) m.header)
@@ -2812,19 +2829,21 @@ void failAllPending(String reason) {
 
 void sweepPending() {
     checkVersion()
+    // Judged at the time the sweep was due: replies that came before it waited ahead of it.
+    long due = Math.min(now(), ((state.sweepAt ?: now()) as Number).longValue())
     state.remove("sweepAt")
-    expireOverdue()
+    expireOverdue(due)
     interviewSweep()
     flushRadio()
 }
 
-// Records a timeout for every sent request past its deadline. Runs from sweepPending and also from
-// every button press and device page render, so a sweep lost to a reboot or a failed run does not
-// leave a request pending for good.
-private void expireOverdue() {
+// Records a timeout for every sent request whose deadline is before asOf. Runs from sweepPending
+// (asOf: when the sweep was due) and also from every button press and device page render (asOf: a
+// minute ago), so a sweep lost to a reboot or a failed run does not leave a request pending for good.
+private void expireOverdue(long asOf = now() - BACKSTOP_GRACE_MS) {
     Map pending = state.pending
     if (!pending) return
-    for (String k in expirePending(pending, now())) {
+    for (String k in expirePending(pending, asOf)) {
         Map r = (Map) pending.remove(k)
         logWarn "${r.kind} for ${targetName((String) r.ieee)}: no reply"
         putResult((String) r.ieee, (String) r.kind, timeoutEntry(r, now()))
