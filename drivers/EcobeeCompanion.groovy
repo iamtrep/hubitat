@@ -102,7 +102,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.1.7"
+@Field static final String CODE_VERSION = "0.1.8"
 
 // Decrypted tokens, kept in memory only: decrypt() costs ~350 ms on a C-8 Pro, ~830 ms on a C-7.
 // Keyed by device id + token name; the stored ciphertext rides along so a refreshed token misses.
@@ -905,14 +905,63 @@ private void pollState() {
         includeEvents: true
     ]
 
-    Map err = [:]
-    Map thermostat = fetchThermostatData("/1/thermostat", selection, err)
-    if (!thermostat) {
-        pollFailed((err.msg ?: "no thermostat data") as String)
+    // The token refresh stays sync and serialized by singleThreaded (the refresh token rotates);
+    // the poll itself is async, so commands and other callers don't wait out a slow or dead API.
+    if (!checkAndRefreshToken(true)) {
+        pollFailed("token refresh failed: ${state.lastTokenError}")
         return
     }
-    String recovery = pollSucceeded()
+    sendPoll(selection, 0)
+}
 
+private void sendPoll(Map selection, int attempt) {
+    Map params = [
+        uri: "${ECOBEE_API_BASE}/1/thermostat",
+        query: [json: JsonOutput.toJson([selection: selection])],
+        headers: [Authorization: "Bearer ${token("accessToken")}"],
+        contentType: "application/json",
+        timeout: 15
+    ]
+    asynchttpGet("pollResponse", params, [selection: selection, attempt: attempt])
+}
+
+void pollResponse(resp, Map data) {
+    int status = resp.getStatus()
+    if (status == 401 && (data?.attempt ?: 0) == 0) {
+        logWarn "Token invalid, refreshing..."
+        if (refreshToken(true)) {
+            sendPoll(data.selection as Map, 1)
+            return
+        }
+    }
+    if (resp.hasError() || status < 200 || status >= 300) {
+        Long retryAfter = retryAfterSeconds(resp)
+        if (retryAfter) noteRetryAfterSeconds(retryAfter)
+        String reason = resp.hasError() ? resp.getErrorMessage() : "status=${status}"
+        pollFailed("Ecobee API failed [GET /1/thermostat] status=${status} msg=${reason}")
+        return
+    }
+    Map json
+    try {
+        json = resp.getJson() as Map
+    } catch (Exception e) {
+        pollFailed("unreadable response: ${e.message}")
+        return
+    }
+    Integer ecobeeCode = json?.status?.code as Integer
+    if (ecobeeCode != null && ecobeeCode != 0) {
+        pollFailed("Ecobee app-level error [GET /1/thermostat] code=${ecobeeCode} msg=${json?.status?.message}")
+        return
+    }
+    Map thermostat = json?.thermostatList ? (json.thermostatList[0] as Map) : null
+    if (!thermostat) {
+        pollFailed("no thermostat in the response")
+        return
+    }
+    applyPolledState(thermostat, pollSucceeded())
+}
+
+private void applyPolledState(Map thermostat, String recovery) {
     Map runtime = thermostat.runtime
     if (runtime?.connected == false) {
         setHealth("offline", "thermostat not connected to Ecobee since ${runtime.disconnectDateTime} UTC")
@@ -1237,6 +1286,20 @@ private void noteRetryAfter(response) {
     } catch (Exception e) {
         return
     }
+    noteRetryAfterSeconds(secs)
+}
+
+// An async response carries its headers as a map.
+private static Long retryAfterSeconds(resp) {
+    try {
+        String v = resp.getHeaders()?.find { k, val -> (k as String)?.equalsIgnoreCase("Retry-After") }?.value as String
+        return v?.trim()?.isLong() ? v.trim().toLong() : null
+    } catch (Exception e) {
+        return null
+    }
+}
+
+private void noteRetryAfterSeconds(Long secs) {
     if (secs == null || secs <= 0) return
     long ms = Math.min(secs * 1000L, RETRY_AFTER_MAX_MS)
     state.pollPausedUntil = now() + ms
