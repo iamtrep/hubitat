@@ -5,14 +5,14 @@ SPDX-License-Identifier: MIT
 
 # HVAC Interlock
 
-Gates heating and cooling equipment by season and open windows.
+Gates heating and cooling equipment by season, switches and open windows.
 
-HVAC Interlock decides, for each group of equipment, whether it may run: the season must allow it, and in a group with openings, nothing may have been left open. It reads the season from the device [HVAC Season Manager](../HvacSeasonManager/README.md) creates. A group is a set of equipment that shares the same season policy and the same openings, usually one scheduler or one directly driven unit.
+HVAC Interlock decides, for each group of equipment, whether it may run: the season (or another source) must allow it, no block switch may hold, and in a group with openings, nothing may have been left open. It reads the season from the device [HVAC Season Manager](../HvacSeasonManager/README.md) creates; the Season device is optional. A group is a set of equipment that shares the same season policy and the same openings, usually one scheduler or one directly driven unit.
 
 A group works in one of two ways:
 
 - **Permit:** a scheduler owns the thermostats (setpoints and mode). The group only drives a switch the scheduler pauses on.
-- **Direct:** the group sets the thermostat mode itself, for equipment without a scheduler or with one that leaves the mode alone.
+- **Direct:** the group sets the thermostat mode itself, for equipment without a scheduler or with one that leaves the mode alone. The mode comes from the season, from any device attribute, or from a String hub variable.
 
 ## Files
 
@@ -25,7 +25,7 @@ A group works in one of two ways:
 ## Install
 
 1. Add the driver in **Drivers Code**, then the two apps in **Apps Code**: the parent first, then the group.
-2. In **Apps**, choose **Add user app** and pick **HVAC Interlock**. Pick the Season device and, if you want alerts, the notification and speech devices.
+2. In **Apps**, choose **Add user app** and pick **HVAC Interlock**. Pick the Season device if groups use the season and, if you want alerts, the notification and speech devices.
 3. Choose **Add a group** for each group of equipment. Name it, pick the style, the season policy and the openings, and press **Done**.
 
 Saving a group creates its device **"<group> status"**. The device belongs to the group, follows its name, and is deleted with it.
@@ -37,21 +37,27 @@ Saving a group creates its device **"<group> status"**. The device belongs to th
 | Group name | | Required; names the status device |
 | Control style | Permit | Permit or Direct |
 | Thermostats | | Direct only |
+| Use the season | On | Permit only. Off: the group is allowed unless a block switch or an opening stops it |
 | Season policy | Permit: allowed in winter, spring and fall, not in summer. Direct: off in every season | Permit: allowed or not per season. Direct: off, heat, cool or auto per season |
+| Mode from | The season | Direct only: the season, a device attribute, or a String hub variable |
+| Device, attribute | | *A device attribute*: any device and one of its attributes. An enum attribute lists its values; for any other type, type the values |
+| Hub variable | | *A hub variable*: a String hub variable; type its values |
+| Mode when *value* | blank | Off, heat, cool or auto for each value. Blank changes nothing |
+| Block while any of these is on / off | none | Switches that stop the equipment while any of the first list is on or any of the second is off |
 | Contact sensors | none | The openings this group cares about |
 | When something is open | Block | Block turns the equipment off; Warn only raises the alert |
 | Open for at least | 10 minutes | How long an opening must stay open before the alert |
 
 ## How a group decides
 
-1. The season policy gives what the group **wants** this season: run or not (permit), or a mode (direct).
+1. The source gives what the group **wants**: run or not (permit, from the season policy, or always run without the season), or a mode (direct, from the season policy or the value's mode). A value with a blank mode, a value not in the list, a season outside the four, or a source that's gone (Season device removed, device or hub variable deleted) keeps the group's last state; the last two log a warning and show on the status device's `source`.
 2. The **openings alert** is raised when an opening has been open for the open delay while the group wants to run. It clears when everything has been closed for 5 minutes (fixed), or when the season stops the group. A window opened again during those 5 minutes keeps the alert up.
 3. With **Block**, the alert stops the equipment. With **Warn**, the equipment keeps running and only the alert is raised.
-4. The **effective state** is off when the season or a blocking alert stops the group, and what the group wants otherwise.
+4. The **effective state** is off when the source, a block switch or a blocking alert stops the group, and what the group wants otherwise.
 
 An open window in summer next to a baseboard group stays quiet, since the group does not want to run then; the same window next to a cooling mini-split raises the alert.
 
-Before the group has received a season, it changes nothing and logs a warning. A window already open when the group starts counts from when it opened.
+Before the group has a value from its source, it changes nothing and logs a warning. A window already open when the group starts counts from when it opened.
 
 ## Permit groups and schedulers
 
@@ -81,7 +87,8 @@ A direct group writes the thermostat mode when its effective state changes, and 
 |---|---|
 | `switch` | `on` while the equipment may run |
 | `contact` | `open` while the openings alert is raised, `closed` otherwise |
-| `blockReason` | `none`, `season`, `openings` |
+| `blockReason` | `none`, `season` (the season policy), `source` (the attribute or variable's mode is off), `switches` (a block switch), `openings` |
+| `source` | `ok`, `missing` (no value: no Season device, device or variable gone), `unmapped` (a value not in the list, or not a season) |
 | `openContacts` | The openings behind the alert, comma-separated, or `none` |
 
 The `on` and `off` commands do nothing: the group is the switch's only writer.
@@ -93,4 +100,4 @@ With notification or speech devices set on the parent, a group raising its alert
 ## Tests
 
 - `tests/test_core.groovy`: unit tests of the season policy, alert timing and mode decisions, run off the hub under Groovy 2.4.21: `java -cp groovy-all-2.4.21.jar groovy.ui.GroovyMain tests/test_core.groovy`.
-- `tests/test-ilk-permit.sh` and `tests/test-ilk-direct.sh`: behavior tests on a hub, generated from the two `tests/spec-interlock-*.yaml` files: `bash tests/test-ilk-permit.sh [@hub]`. They take the season from HVAC Season Manager's test device, so HVAC Season Manager's test rig must exist, and a debug-only close delay in seconds keeps them short.
+- `tests/test-ilk-permit.sh`, `tests/test-ilk-direct.sh` and `tests/test-ilk-source.sh` (a direct group following another thermostat's mode, with a block switch): behavior tests on a hub, generated from the `tests/spec-interlock-*.yaml` files: `bash tests/test-ilk-permit.sh [@hub]`. They take the season from HVAC Season Manager's test device, so HVAC Season Manager's test rig must exist, and a debug-only close delay in seconds keeps them short.

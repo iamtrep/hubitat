@@ -4,14 +4,14 @@
 /*
  HVAC Interlock
 
- Gates heating and cooling equipment by season and by open windows. Holds the Season
- device and the alert notification setting; one child app per equipment group.
+ Gates heating and cooling equipment by season, switches and open windows. Holds the
+ optional Season device and the alert notification setting; one child app per equipment group.
  Not single-threaded: groups call back into it while it forwards a season change.
 */
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.3"
+@Field static final String CODE_VERSION = "0.2.0"
 
 definition(
     name: "HVAC Interlock",
@@ -35,7 +35,7 @@ String esc(Object s) { s == null ? '' : s.toString().replace('&', '&amp;').repla
 Map mainPage() {
     dynamicPage(name: "mainPage", install: true, uninstall: true) {
         section {
-            input "seasonDevice", "capability.actuator", title: "Season device (the one HVAC Season Manager created)", required: true, submitOnChange: true
+            input "seasonDevice", "capability.actuator", title: "Season device (the one HVAC Season Manager created; optional)", required: false, submitOnChange: true
             if (seasonDevice && !seasonDevice.hasAttribute("season"))
                 paragraph "<div class='p-message p-message-error p-3 border-round'>${esc(seasonDevice.displayName)} has no season attribute. Pick the device HVAC Season Manager created.</div>"
             else if (seasonDevice) paragraph "Season now: ${esc(seasonDevice.currentValue('season') ?: 'not set')}"
@@ -64,8 +64,9 @@ void updated() { checkVersion(false); unsubscribe(); unschedule(); initialize() 
 void initialize() {
     if (seasonDevice) subscribe(seasonDevice, "season", "seasonHandler")
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
+    // Forwarded even when null: a group that uses the season then warns and keeps its state.
     String s = currentSeason()
-    if (s) getChildApps().each { it.seasonChanged(s) }
+    getChildApps().each { it.seasonChanged(s) }
 }
 
 void logsOff() {

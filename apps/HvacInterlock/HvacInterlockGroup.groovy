@@ -4,9 +4,10 @@
 /*
  HVAC Interlock Group
 
- One group of equipment that shares a season policy and the same openings. A permit
- group drives a status switch that its schedulers pause on; a direct group sets the
- thermostat mode itself. Publishes its state on a "<group> status" device.
+ One group of equipment that shares a policy and the same openings. A permit group
+ drives a status switch that its schedulers pause on; a direct group sets the
+ thermostat mode itself, from the season, a device attribute or a hub variable.
+ Block lists of switches stop either style. Publishes its state on a "<group> status" device.
 */
 
 import com.hubitat.app.ChildDeviceWrapper
@@ -14,7 +15,7 @@ import com.hubitat.hub.domain.State
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.4"
+@Field static final String CODE_VERSION = "0.2.0"
 
 definition(
     name: "HVAC Interlock Group",
@@ -32,6 +33,7 @@ definition(
 @Field static final Map STYLE_OPTS = [permit: "Permit: schedulers own the thermostats; the group drives a switch they pause on",
                                       direct: "Direct: the group sets the thermostat mode"]
 @Field static final List<String> MODE_OPTS = ["off", "heat", "cool", "auto"]
+@Field static final Map SOURCE_OPTS = [season: "The season", attribute: "A device attribute", variable: "A hub variable"]
 @Field static final Map RESPONSE_OPTS = [block: "Block: turn the equipment off", warn: "Warn: raise the alert only"]
 
 preferences {
@@ -54,11 +56,20 @@ Map mainPage() {
             input "style", "enum", title: "Control style", options: STYLE_OPTS, defaultValue: "permit", required: true, submitOnChange: true
             if (styleOf() == "direct") input "thermostats", "capability.thermostat", title: "Thermostats", multiple: true, required: true
         }
-        section("Season policy") {
-            seasonList().each { String k ->
-                if (styleOf() == "direct") input "mode${k.capitalize()}".toString(), "enum", title: "Mode in ${k}", options: MODE_OPTS, defaultValue: "off", width: 3
-                else input "allow${k.capitalize()}".toString(), "bool", title: "Allowed in ${k}", defaultValue: k != "summer", width: 3
+        if (styleOf() == "direct") section("Mode") {
+            input "modeFrom", "enum", title: "Mode from", options: SOURCE_OPTS, defaultValue: "season", required: true, submitOnChange: true
+            if (sourceKind() == "season") seasonList().each { String k ->
+                input "mode${k.capitalize()}".toString(), "enum", title: "Mode in ${k}", options: MODE_OPTS, defaultValue: "off", width: 3
+            } else sourceInputs()
+        } else section("Season") {
+            input "useSeason", "bool", title: "Use the season", defaultValue: true, submitOnChange: true
+            if (settings.useSeason != false) seasonList().each { String k ->
+                input "allow${k.capitalize()}".toString(), "bool", title: "Allowed in ${k}", defaultValue: k != "summer", width: 3
             }
+        }
+        section("Block") {
+            input "blockWhenOn", "capability.switch", title: "Block while any of these is on", multiple: true, required: false, width: 6
+            input "blockWhenOff", "capability.switch", title: "Block while any of these is off", multiple: true, required: false, width: 6
         }
         section("Openings") {
             input "openings", "capability.contactSensor", title: "Contact sensors", multiple: true, required: false
@@ -81,6 +92,48 @@ Map mainPage() {
     }
 }
 
+String sourceKind() { return styleOf() == 'direct' ? ((settings.modeFrom ?: 'season') as String) : 'season' }
+
+void sourceInputs() {
+    if (sourceKind() == "attribute") {
+        input "srcDevice", "capability.*", title: "Device", required: true, submitOnChange: true
+        if (srcDevice) input "srcAttribute", "enum", title: "Attribute", options: srcDevice.getSupportedAttributes().collect { it.name as String }.unique().sort(), required: true, submitOnChange: true
+    } else {
+        input "srcVariable", "enum", title: "Hub variable (String)", options: getAllGlobalVars().findAll { k, v -> v.type == 'string' }.keySet().sort(), required: true, submitOnChange: true
+    }
+    List<String> vals = sourceValues()
+    if (sourceKind() == "variable" || !enumValues()) input "srcValues", "text", title: "Values (comma-separated)", required: false, submitOnChange: true
+    vals.each { String v ->
+        input mapKey(v), "enum", title: "Mode when ${esc(v)}", options: MODE_OPTS, required: false, width: 3
+    }
+    if (vals) paragraph "A value left blank changes nothing. A value not listed keeps the current mode and logs a warning."
+    Object cur = sourceValue()
+    if (cur != null) paragraph "Value now: ${esc(cur)}"
+}
+
+// Allowed values of an ENUM attribute, or null for other types.
+List<String> enumValues() {
+    if (sourceKind() != "attribute" || !srcDevice || !settings.srcAttribute) return null
+    Object a = srcDevice.getSupportedAttributes().find { it.name == settings.srcAttribute && it.dataType == 'ENUM' }
+    return (a?.getValues() as List)?.collect { it as String }
+}
+
+List<String> sourceValues() {
+    List<String> e = enumValues()
+    if (e) return e
+    return splitValues(settings.srcValues)
+}
+
+Object sourceValue() {
+    switch (sourceKind()) {
+        case "attribute": return (srcDevice && settings.srcAttribute) ? srcDevice.currentValue(settings.srcAttribute as String) : null
+        case "variable": return settings.srcVariable ? getGlobalVar(settings.srcVariable as String)?.value : null
+        default: return state.season
+    }
+}
+
+Map sourceMap() { return sourceValues().collectEntries { String v -> [(v): settings[mapKey(v)]] } }
+
 String permitInstructions() {
     String dev = esc(getChildDevice(dni())?.displayName ?: "${app.getLabel()} status")
     return "Set this once on each scheduler in the group.<br>" +
@@ -92,7 +145,9 @@ String permitInstructions() {
 
 String statusHtml() {
     List<String> rows = []
-    rows << "Season: ${esc(state.season ?: 'not received yet')}".toString()
+    if (sourceKind() == 'season') rows << "Season: ${esc(state.season ?: 'not received yet')}".toString()
+    else rows << "Source value: ${esc(sourceValue() ?: 'none')}".toString()
+    if (state.sourceStatus && state.sourceStatus != 'ok') rows << "Source: ${esc(state.sourceStatus)}; keeping the last state".toString()
     rows << "State: ${esc(state.effective ?: 'not evaluated yet')}".toString()
     if (state.raised) rows << "Openings alert raised: ${esc(openList(contactList()))}".toString()
     return rows.join('<br>')
@@ -105,6 +160,7 @@ void installed() { checkVersion(false); state.knownThermostats = []; initialize(
 void updated() { checkVersion(false); unsubscribe(); unschedule(); initialize() }
 
 void uninstalled() {
+    removeAllInUseGlobalVar()
     if (getChildDevice(dni())) deleteChildDevice(dni())
 }
 
@@ -112,10 +168,16 @@ void initialize() {
     statusDevice()
     rebuildOpenings()
     if (openings) subscribe(openings, "contact", "contactHandler")
+    [blockWhenOn, blockWhenOff].each { if (it) subscribe(it, "switch", "blockHandler") }
+    removeAllInUseGlobalVar()
+    if (sourceKind() == 'attribute' && srcDevice && settings.srcAttribute) subscribe(srcDevice, settings.srcAttribute as String, "sourceHandler")
+    if (sourceKind() == 'variable' && settings.srcVariable) {
+        addInUseGlobalVar(settings.srcVariable as String)
+        subscribe(location, "variable:${settings.srcVariable}".toString(), "sourceHandler")
+    }
     subscribe(location, "systemStart", "startHandler")
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
-    String s = parent?.currentSeason()
-    if (s) state.season = s
+    state.season = parent?.currentSeason()
     // A thermostat added to a direct group gets the group's mode on this save; the others
     // keep a mode changed by hand. Before the first save that records the list (an install
     // that predates it), nothing counts as added.
@@ -208,13 +270,44 @@ void seasonChanged(String season) {
 
 void timerHandler() { checkVersion(); evaluateGroup("timer") }
 
+void blockHandler(evt) { checkVersion(); logEvt "block switch ${evt.displayName} ${evt.value}"; evaluateGroup("block switch") }
+
+void sourceHandler(evt) { checkVersion(); logEvt "source ${evt.value}"; evaluateGroup("source") }
+
+// Hub variable renames arrive here; the setting follows the new name.
+void renameVariable(String oldName, String newName) {
+    if (settings.srcVariable == oldName) { app.updateSetting("srcVariable", [type: "enum", value: newName]); updated() }
+}
+
+boolean blocked() {
+    return (blockWhenOn ?: []).any { it.currentValue("switch") == "on" } ||
+           (blockWhenOff ?: []).any { it.currentValue("switch") == "off" }
+}
+
 void startHandler(evt) { checkVersion(); rebuildOpenings(); evaluateGroup("restart") }
 
 void evaluateGroup(String why, List<String> added = []) {
     String style = styleOf()
+    String kind = sourceKind()
+    Object value = sourceValue()
+    Map w = wantedFrom(style, kind, style == 'permit' && settings.useSeason == false ? null : policyFrom(style, settings),
+                       sourceMap(), value)
+    String status = w.status as String
+    String lastStatus = state.sourceStatus as String
+    if (status != 'ok' && (status != lastStatus || value?.toString() != state.lastSourceValue)) {
+        logWarn status == 'missing' ? "no ${kind} value; keeping the last state" : "${kind} value '${value}' has no mapping; keeping the last state"
+    }
+    state.sourceStatus = status
+    state.lastSourceValue = value?.toString()
+    String wanted = w.wanted as String
+    if (w.keep) wanted = state.wanted as String
+    if (wanted == null) {
+        statusDevice()?.updateStatus([source: status])
+        if (status == 'ok') logWarn "no state yet"
+        return
+    }
+    state.wanted = wanted
     String season = state.season as String
-    String wanted = wantedFor(style, policyFrom(style, settings), season)
-    if (wanted == null) { logWarn "no season yet; set the Season device on the HVAC Interlock parent"; return }
     List<Map> contacts = contactList()
     boolean wasRaised = state.raised == true
     Map a = alertStep([raised: wasRaised, wanted: wanted, openSince: earliestOpen(contacts),
@@ -228,15 +321,15 @@ void evaluateGroup(String why, List<String> added = []) {
     if (!raised && wasRaised) { logInfo "openings alert cleared"; parent?.notifyAlert(clearText(app.getLabel())) }
     if (a.nextCheck != null) runIn(Math.max(1L, ((a.nextCheck as long) - now()).intdiv(1000L) + 1L), "timerHandler")
     else unschedule("timerHandler")
-    Map eff = effective(wanted, raised, (settings.response ?: 'block') as String)
+    Map eff = effective(wanted, raised, (settings.response ?: 'block') as String, blocked(), kind)
     statusDevice()?.updateStatus([switch: eff.state == 'off' ? 'off' : 'on', contact: raised ? 'open' : 'closed',
-                                 blockReason: eff.blockReason, openContacts: open ?: 'none'])
+                                 blockReason: eff.blockReason, openContacts: open ?: 'none', source: status])
     if (style == 'direct') {
         if (eff.state != state.effective || why == 'restart') applyModes(eff.state as String)
         else if (added) applyModes(eff.state as String, added)
     }
     state.effective = eff.state
-    logDebug "${why}: season ${season}, wanted ${wanted}, effective ${eff.state}, alert ${raised}"
+    logDebug "${why}: ${kind} ${value}, wanted ${wanted}, effective ${eff.state}, alert ${raised}"
 }
 
 // only: limit the writes to these thermostat ids; null = every thermostat.
@@ -300,12 +393,44 @@ String wantedFor(String style, Map policy, String season) {
     return ['heat', 'cool', 'auto'].contains(p) ? (p as String) : 'off'
 }
 
+// What the group wants from its source. wanted: 'on'/'off' (permit) or a mode/'off' (direct).
+// keep: the source gave nothing usable or a blank mapping; the caller keeps its last state.
+// status: 'ok', 'missing' (no value) or 'unmapped' (a value outside the list).
+// policy null on a permit group: the season is not used and the group is allowed.
 @CompileStatic
-Map effective(String wanted, boolean raised, String response) {
-    if (wanted == 'off') return [state: 'off', blockReason: 'season']
+Map wantedFrom(String style, String kind, Map policy, Map mapping, Object value) {
+    if (style == 'permit' && policy == null) return [wanted: 'on', keep: false, status: 'ok']
+    if (value == null) return [wanted: null, keep: true, status: 'missing']
+    String v = value.toString()
+    if (kind == 'season' || style == 'permit') {
+        String w = wantedFor(style, policy, v)
+        return w == null ? [wanted: null, keep: true, status: 'unmapped'] : [wanted: w, keep: false, status: 'ok']
+    }
+    if (!mapping.containsKey(v)) return [wanted: null, keep: true, status: 'unmapped']
+    Object m = mapping.get(v)
+    if (m == null || m.toString() == '') return [wanted: null, keep: true, status: 'ok']
+    return [wanted: ['off', 'heat', 'cool', 'auto'].contains(m.toString()) ? m.toString() : 'off', keep: false, status: 'ok']
+}
+
+@CompileStatic
+Map effective(String wanted, boolean raised, String response, boolean blocked = false, String kind = 'season') {
+    if (wanted == 'off') return [state: 'off', blockReason: kind == 'season' ? 'season' : 'source']
+    if (blocked) return [state: 'off', blockReason: 'switches']
     if (raised && response != 'warn') return [state: 'off', blockReason: 'openings']
     return [state: wanted, blockReason: 'none']
 }
+
+@CompileStatic
+List<String> splitValues(Object text) {
+    if (text == null) return []
+    List<String> out = []
+    text.toString().split(',').each { String v -> String t = v.trim(); if (t && !out.contains(t)) out << t }
+    return out
+}
+
+// A stable input name for a value's mode picker.
+@CompileStatic
+String mapKey(String value) { return "map_${Integer.toHexString(value.hashCode())}".toString() }
 
 // Raise when an opening has been open for the open delay while the group wants to run;
 // clear when everything has been closed for the close delay, or when the group no longer

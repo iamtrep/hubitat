@@ -81,6 +81,32 @@ check('closeDelay test not set', core.closeDelayMs(true, 'none'), 300000L)
 check('statusLabel', core.statusLabel('Véranda'), 'Véranda status')
 check('statusLabel null before the first save', core.statusLabel(null), null)
 check('statusLabel blank', core.statusLabel('  '), null)
+// ── sources (0.2.0) ──
+pol = [winter: true, spring: true, summer: false, fall: true]
+dpol = [winter: 'heat', spring: 'off', summer: 'cool', fall: 'off']
+mp = [heating: 'off', idle: 'heat', 'pending heat': null]
+check('permit season allowed', core.wantedFrom('permit', 'season', pol, [:], 'winter'), [wanted: 'on', keep: false, status: 'ok'])
+check('permit season not allowed', core.wantedFrom('permit', 'season', pol, [:], 'summer'), [wanted: 'off', keep: false, status: 'ok'])
+check('permit without season is allowed', core.wantedFrom('permit', 'season', null, [:], null), [wanted: 'on', keep: false, status: 'ok'])
+check('permit no season yet keeps', core.wantedFrom('permit', 'season', pol, [:], null), [wanted: null, keep: true, status: 'missing'])
+check('permit bad season keeps', core.wantedFrom('permit', 'season', pol, [:], 'monsoon'), [wanted: null, keep: true, status: 'unmapped'])
+check('direct season mode', core.wantedFrom('direct', 'season', dpol, [:], 'summer'), [wanted: 'cool', keep: false, status: 'ok'])
+check('direct bad season keeps', core.wantedFrom('direct', 'season', dpol, [:], 'monsoon'), [wanted: null, keep: true, status: 'unmapped'])
+check('attribute mapped', core.wantedFrom('direct', 'attribute', null, mp, 'idle'), [wanted: 'heat', keep: false, status: 'ok'])
+check('attribute mapped off', core.wantedFrom('direct', 'attribute', null, mp, 'heating'), [wanted: 'off', keep: false, status: 'ok'])
+check('attribute blank mapping changes nothing', core.wantedFrom('direct', 'attribute', null, mp, 'pending heat'), [wanted: null, keep: true, status: 'ok'])
+check('attribute value not listed keeps and warns', core.wantedFrom('direct', 'attribute', null, mp, 'cooling'), [wanted: null, keep: true, status: 'unmapped'])
+check('attribute no value keeps', core.wantedFrom('direct', 'attribute', null, mp, null), [wanted: null, keep: true, status: 'missing'])
+check('variable mapped', core.wantedFrom('direct', 'variable', null, [hiver: 'heat'], 'hiver'), [wanted: 'heat', keep: false, status: 'ok'])
+check('number value compared as text', core.wantedFrom('direct', 'attribute', null, ['1': 'heat'], 1), [wanted: 'heat', keep: false, status: 'ok'])
+check('switches block', core.effective('heat', false, 'block', true), [state: 'off', blockReason: 'switches'])
+check('source off before switches', core.effective('off', false, 'block', true, 'attribute'), [state: 'off', blockReason: 'source'])
+check('season off reason', core.effective('off', false, 'block', true, 'season'), [state: 'off', blockReason: 'season'])
+check('switches before openings', core.effective('on', true, 'block', true), [state: 'off', blockReason: 'switches'])
+check('splitValues', core.splitValues(' a, b ,,a,c '), ['a', 'b', 'c'])
+check('splitValues null', core.splitValues(null), [])
+check('mapKey stable', core.mapKey('pending heat'), core.mapKey('pending heat'))
+check('mapKey differs', core.mapKey('heat') != core.mapKey('cool'), true)
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)

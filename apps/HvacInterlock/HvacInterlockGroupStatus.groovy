@@ -10,7 +10,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.2"
+@Field static final String CODE_VERSION = "0.2.0"
 
 metadata {
     definition(name: "HVAC Interlock Group Status", namespace: "iamtrep", author: "pj", component: true,
@@ -18,7 +18,8 @@ metadata {
         capability "Actuator"
         capability "Switch"
         capability "ContactSensor"
-        attribute "blockReason", "enum", ["none", "season", "openings"]
+        attribute "blockReason", "enum", ["none", "season", "source", "switches", "openings"]
+        attribute "source", "enum", ["ok", "missing", "unmapped"]
         attribute "openContacts", "string"
     }
     preferences {

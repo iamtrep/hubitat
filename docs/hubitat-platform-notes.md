@@ -271,6 +271,8 @@ The on-hub API reference (`/developer-docs/index.json`) lists each of these meth
 - `mappings { }` fails to compile in a driver (`No signature of method: Script1.mappings()`), so a driver has no OAuth HTTP endpoints *(regression 2.5.2.129–2.5.3.102, apps/tests/test-architecture-claims.sh)*.
 - Device selection: see the `capability.*` input note under *Driver preferences* *(regression 2.5.2.129–2.5.3.102, apps/tests/test-architecture-claims.sh)*.
 
+- In an app, a `capability.*` input picks any device and yields a `DeviceWrapper`. `getSupportedAttributes()` on it lists each attribute's `name`, `dataType` and, for an `ENUM`, its allowed values from `getValues()` (a Virtual Thermostat's `thermostatOperatingState`: `[heating, pending cool, pending heat, vent economizer, idle, cooling, fan only]`); other types return null. The list can name an attribute twice (`temperature`) *(probed 2.5.3.108, C-8 Pro, throwaway app)*.
+
 With the preferences limits (no `dynamicPage`, `paragraph` or `href`), a driver can act only on its own device and on what its parent passes it. Logic that watches or commands other devices belongs in an app *(inferred from the limits above)*.
 
 ## Capabilities

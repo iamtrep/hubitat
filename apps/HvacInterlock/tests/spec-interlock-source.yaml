@@ -1,0 +1,92 @@
+# Copyright (c) 2026 PJ
+# SPDX-License-Identifier: MIT
+# HVAC Interlock, direct group with a device attribute as its source: the target
+# thermostat follows another thermostat's mode (heat → off, off → heat, cool left
+# blank: no change), and a block switch turns it off.
+app:
+  source: apps/HvacInterlock/HvacInterlockGroup.groovy
+  type_name: "HVAC Interlock Group"
+  instance_label: test-ilk-source
+  parent:
+    source: apps/HvacInterlock/HvacInterlock.groovy
+    type_name: "HVAC Interlock"
+    instance_label: test-interlock
+  config:
+    debugEnable: true
+    style: "direct"
+    modeFrom: "attribute"
+    srcAttribute: "thermostatMode"
+    map_30cdf0: "off"
+    map_1ad6f: "heat"
+    response: "block"
+    openDelay: 0
+inputs:
+  - { name: test-ilk-src-th, driver: Virtual Thermostat, role: thermostats }
+  - { name: test-ilk-src-lead, driver: Virtual Thermostat, role: srcDevice }
+  - { name: test-ilk-src-block, driver: Virtual Switch, role: blockWhenOn }
+outputs:
+  - { name: test-ilk-source status, child: true }
+maker_api:
+  label: test-ilk-maker
+cases:
+  - name: lead-off-heats
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-ilk-src-block, command: "off" }
+      - { device: test-ilk-src-lead, command: heat }
+    actions:
+      - { device: test-ilk-src-lead, command: "off" }
+    wait_seconds: 3
+    assert:
+      - { device: test-ilk-src-th, attribute: thermostatMode, value: heat }
+      - { device: test-ilk-source status, attribute: switch, value: "on" }
+      - { device: test-ilk-source status, attribute: source, value: ok }
+
+  - name: lead-heat-turns-off
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-ilk-src-block, command: "off" }
+      - { device: test-ilk-src-lead, command: "off" }
+    actions:
+      - { device: test-ilk-src-lead, command: heat }
+    wait_seconds: 3
+    assert:
+      - { device: test-ilk-src-th, attribute: thermostatMode, value: "off" }
+      - { device: test-ilk-source status, attribute: blockReason, value: source }
+
+  - name: blank-mapping-changes-nothing
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-ilk-src-block, command: "off" }
+      - { device: test-ilk-src-lead, command: "off" }
+    actions:
+      - { device: test-ilk-src-lead, command: cool }
+    wait_seconds: 3
+    assert:
+      - { device: test-ilk-src-th, attribute: thermostatMode, value: heat }
+      - { device: test-ilk-source status, attribute: source, value: ok }
+
+  - name: block-switch-turns-off
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-ilk-src-block, command: "off" }
+      - { device: test-ilk-src-lead, command: "off" }
+    actions:
+      - { device: test-ilk-src-block, command: "on" }
+    wait_seconds: 3
+    assert:
+      - { device: test-ilk-src-th, attribute: thermostatMode, value: "off" }
+      - { device: test-ilk-source status, attribute: blockReason, value: switches }
+
+  - name: block-clear-restores
+    setup:
+      - settings: { debugEnable: true }
+      - { device: test-ilk-src-lead, command: "off" }
+      - { device: test-ilk-src-block, command: "on" }
+    actions:
+      - { device: test-ilk-src-block, command: "off" }
+    wait_seconds: 3
+    assert:
+      - { device: test-ilk-src-th, attribute: thermostatMode, value: heat }
+      - { device: test-ilk-source status, attribute: blockReason, value: none }
+runtime_budget_seconds: 90
