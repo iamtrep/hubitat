@@ -100,7 +100,7 @@ Map mainPage() {
         section("Temperature") {
             input "sensors", "capability.temperatureMeasurement", title: "Temperature sensors", multiple: true, required: true
             input "aggregate", "enum", title: "Combine the readings by", options: AGG_OPTS, defaultValue: "average", required: true
-            input "quietAfter", "number", title: "Count a sensor as quiet after (minutes), until the app has learned its usual gaps", defaultValue: 120, range: "10..1440"
+            input "quietAfter", "number", title: "Count a sensor as quiet after at least (minutes; learned gaps can lengthen it)", defaultValue: 120, range: "10..1440"
         }
         section("When no sensor reports") {
             input "onSensorFault", "enum", title: "Heaters", options: SENSOR_FAULT_OPTS, defaultValue: "off", required: true, submitOnChange: true
@@ -731,13 +731,15 @@ Map recordActivity(Map s, Long at, Integer keep) {
     return [last: at, gaps: gaps]
 }
 
-// Twice the second-longest gap: one outage in the history does not stretch the limit.
-Long quietLimitMs(List gaps, Long fallbackMs, Long floorMs, Integer minGaps) {
-    if (gaps == null || gaps.size() < minGaps) return fallbackMs
+// Twice the second-longest gap: one outage in the history does not stretch the limit. The setting
+// applies while the app learns; a learned limit is never under the setting (a sensor that reports
+// in bursts learns short gaps) nor under the floor.
+Long quietLimitMs(List gaps, Long settingMs, Long floorMs, Integer minGaps) {
+    if (gaps == null || gaps.size() < minGaps) return settingMs
     List<Long> sorted = []
     for (Object g : gaps) sorted << (g as Long)
     sorted.sort()
-    return Math.max(floorMs, 2L * sorted[sorted.size() - 2])
+    return Math.max(Math.max(settingMs, floorMs), 2L * sorted[sorted.size() - 2])
 }
 
 boolean isQuiet(Map s, Long now, Long limitMs) {
