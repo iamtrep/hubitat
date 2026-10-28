@@ -44,9 +44,11 @@ check('keeps the newest gaps', core.recordActivity([last: 10L, gaps: [1L, 2L, 3L
 // ── learned limit ──
 check('setting applies with too few gaps', core.quietLimitMs([10 * MIN, 10 * MIN], 60 * MIN, 30 * MIN, 5), 60 * MIN)
 check('setting applies with no gaps', core.quietLimitMs(null, 60 * MIN, 30 * MIN, 5), 60 * MIN)
-check('twice the second-longest gap', core.quietLimitMs([20 * MIN, 25 * MIN, 22 * MIN, 21 * MIN, 24 * MIN], 60 * MIN, 30 * MIN, 5), 48 * MIN)
-check('one outage does not stretch it', core.quietLimitMs([20 * MIN, 600 * MIN, 22 * MIN, 21 * MIN, 24 * MIN], 60 * MIN, 30 * MIN, 5), 48 * MIN)
-check('floor for chatty sensors', core.quietLimitMs([1 * MIN, 1 * MIN, 1 * MIN, 1 * MIN, 1 * MIN], 60 * MIN, 30 * MIN, 5), 30 * MIN)
+check('twice the second-longest gap', core.quietLimitMs([20 * MIN, 25 * MIN, 22 * MIN, 21 * MIN, 24 * MIN], 30 * MIN, 30 * MIN, 5), 48 * MIN)
+check('one outage does not stretch it', core.quietLimitMs([20 * MIN, 600 * MIN, 22 * MIN, 21 * MIN, 24 * MIN], 30 * MIN, 30 * MIN, 5), 48 * MIN)
+check('setting is the minimum', core.quietLimitMs([20 * MIN, 25 * MIN, 22 * MIN, 21 * MIN, 24 * MIN], 60 * MIN, 30 * MIN, 5), 60 * MIN)
+check('door bursts keep the setting', core.quietLimitMs([619 * MIN, 12000L, 191666L, 246214L, 495787L, 16640L], 360 * MIN, 30 * MIN, 5), 360 * MIN)
+check('floor under a low setting', core.quietLimitMs([1 * MIN, 1 * MIN, 1 * MIN, 1 * MIN, 1 * MIN], 10 * MIN, 30 * MIN, 5), 30 * MIN)
 check('learned limit can exceed the setting', core.quietLimitMs([180 * MIN, 180 * MIN, 180 * MIN, 180 * MIN, 180 * MIN], 60 * MIN, 30 * MIN, 5), 360 * MIN)
 
 // ── quiet ──
@@ -54,6 +56,12 @@ check('never seen is quiet', core.isQuiet(null, 100 * MIN, 60 * MIN), true)
 check('within the limit', core.isQuiet([last: 50 * MIN], 100 * MIN, 60 * MIN), false)
 check('at the limit is not quiet', core.isQuiet([last: 40 * MIN], 100 * MIN, 60 * MIN), false)
 check('past the limit', core.isQuiet([last: 39 * MIN], 100 * MIN, 60 * MIN), true)
+
+// ── all-quiet transitions ──
+check('enters all quiet', core.noSensorChange(false, true), 'entered')
+check('stays all quiet: silent', core.noSensorChange(true, true), null)
+check('leaves all quiet', core.noSensorChange(true, false), 'left')
+check('stays reporting: silent', core.noSensorChange(false, false), null)
 
 println "\n${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)

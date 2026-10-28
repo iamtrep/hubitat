@@ -29,7 +29,7 @@ import com.hubitat.app.ChildDeviceWrapper
 //import com.hubitat.hub.domain.Capability // only available from 2.4.3.148 onward
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.4.0"
+@Field static final String CODE_VERSION = "0.4.1"
 @Field static final Integer QUIET_FLOOR_MIN = 30
 @Field static final Integer MIN_GAPS = 5
 @Field static final Integer KEEP_GAPS = 48
@@ -75,7 +75,7 @@ Map mainPage() {
             if (aggregationMethod == "threshold") {
                 input name: "thresholdPercent", type: "number", title: "Threshold percentage (1-100)", defaultValue: 50, range: "1..100", required: true
             }
-            input name: "excludeAfter", type: "number", title: "Exclude a sensor after this many minutes without activity, until the app has learned its usual gaps", defaultValue: 60, range: "0..1440", submitOnChange: true
+            input name: "excludeAfter", type: "number", title: "Exclude a sensor after at least this many minutes without activity (learned gaps can lengthen it)", defaultValue: 60, range: "0..1440", submitOnChange: true
         }
         section(title: "Sticky trigger (\"and stays\")", hideable: true, hidden: true) {
             paragraph "Mirrors Rule Machine's per-trigger 'And stays?' option, applied per sensor before aggregation. A sensor's state change must persist for the configured window before being committed (symmetric — applies in both directions). Composing this filter across multiple sensors and an aggregation method is the gap RM cannot bridge."
@@ -222,7 +222,7 @@ void initialize() {
     }
 
     // Silence sends no event: only a timer notices a sensor that stopped reporting.
-    schedule("${new Random().nextInt(60)} */5 * ? * *", "checkSensors")
+    schedule("${new Random().nextInt(60)} */15 * ? * *", "checkSensors")
 
     // Perform initial calculation
     if (!state.testingInProgress) {
@@ -431,16 +431,17 @@ private List<DeviceWrapper> refreshIncludedSensors() {
     return includedSensors
 }
 
-// Notifies once on entry and once on exit; the switch follows the state at every evaluation.
+// Notifies and logs once on entry and once on exit; the switch follows the state at every evaluation.
 private void noteNoSensor(boolean none, List<String> excludedIds) {
     // Before 0.4.0 there was no flag: derive it from the stored lists so an upgrade doesn't re-notify.
     boolean was = state.noSensor != null ? state.noSensor as boolean : (!state.includedSensors && state.excludedSensors)
     state.noSensor = none
-    if (none) {
+    String change = noSensorChange(was, none)
+    if (change == 'entered') {
         String message = "Sensor Aggregator '${app.label}': All sensors excluded due to inactivity"
-        if (!was && notificationDevice && notifyOnAllExcluded) notificationDevice.deviceNotification(message)
+        if (notificationDevice && notifyOnAllExcluded) notificationDevice.deviceNotification(message)
         logWarn(message)
-    } else if (was) {
+    } else if (change == 'left') {
         String message = "Sensor Aggregator '${app.label}': Sensors reporting again"
         if (notificationDevice && notifyOnAllExcluded) notificationDevice.deviceNotification(message)
         logInfo(message)
@@ -492,7 +493,8 @@ private boolean computeAggregateSensorValue() {
     Integer n = includedSensors.size()
 
     if (n < 1) {
-        logError "No sensors available for aggregation... aggregate value not updated (${state.aggregateValue})"
+        // All quiet is logged by noteNoSensor() on change; otherwise no sensor has a value yet.
+        if (!state.noSensor) logDebug "No sensor value to aggregate; aggregate value not updated (${state.aggregateValue})"
         return false
     }
 
@@ -615,12 +617,20 @@ Map recordActivity(Map s, Long at, Integer keep) {
 }
 
 // Twice the second-longest gap: one outage in the history does not stretch the limit.
-Long quietLimitMs(List gaps, Long fallbackMs, Long floorMs, Integer minGaps) {
-    if (gaps == null || gaps.size() < minGaps) return fallbackMs
+// The setting is the minimum: event-only sensors (contacts) learn short gaps from bursts.
+Long quietLimitMs(List gaps, Long settingMs, Long floorMs, Integer minGaps) {
+    Long least = Math.max(settingMs, floorMs)
+    if (gaps == null || gaps.size() < minGaps) return least
     List<Long> sorted = []
     for (Object g : gaps) sorted << (g as Long)
     sorted.sort()
-    return Math.max(floorMs, 2L * sorted[sorted.size() - 2])
+    return Math.max(least, 2L * sorted[sorted.size() - 2])
+}
+
+// 'entered' or 'left' when the all-quiet state changes, null while it holds.
+String noSensorChange(boolean was, boolean none) {
+    if (none == was) return null
+    return none ? 'entered' : 'left'
 }
 
 boolean isQuiet(Map s, Long now, Long limitMs) {

@@ -58,8 +58,8 @@ Aggregation methods:
 
 #### Common features
 
-- **Inactivity exclusion** — a sensor is left out of the result when its last activity (any event, including battery reports and check-ins) is older than its quiet limit. Until the app has seen 5 gaps between a sensor's activity, the limit is **Exclude a sensor after this many minutes** (default 60). After that, the limit is twice the second-longest of the last 48 gaps, never under 30 minutes. **Forget the sensors' learned gaps** goes back to the setting, for example after a sensor's reporting interval changes.
-- **Periodic check** — every 5 minutes the app re-reads each sensor's last activity and value and updates the output if the result changed. It sends no command to the sensors. A silent sensor is excluded on time even when no other sensor reports.
+- **Inactivity exclusion** — a sensor is left out of the result when its last activity (any event, including battery reports and check-ins) is older than its quiet limit. The limit is **Exclude a sensor after at least this many minutes** (default 60, never under 30). Once the app has seen 5 gaps between a sensor's activity, it lengthens the limit to twice the second-longest of the last 48 gaps when that is longer, so a sensor that reports rarely is not dropped early. **Forget the sensors' learned gaps** goes back to the setting, for example after a sensor's reporting interval changes.
+- **Periodic check** — every 15 minutes the app re-reads each sensor's last activity and value and updates the output if the result changed. It sends no command to the sensors. A silent sensor is excluded on time even when no other sensor reports.
 - **No sensor reports** — when every sensor is excluded, the output keeps its last value. A notification goes out when this starts and when a sensor reports again, and an optional switch is on while it lasts.
 - **Notifications** — optional alerts (via a notification device) when any sensor is excluded or when all sensors are excluded.
 - **Auto child device** — can automatically create a virtual child device as the output if none is selected.
