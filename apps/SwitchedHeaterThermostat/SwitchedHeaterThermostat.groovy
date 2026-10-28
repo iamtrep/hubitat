@@ -15,7 +15,7 @@ import com.hubitat.app.DeviceWrapper
 import groovy.json.JsonOutput
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.2"
+@Field static final String CODE_VERSION = "0.1.3"
 
 definition(
     name: "Switched Heater Thermostat",
@@ -48,22 +48,18 @@ String esc(Object s) { s == null ? '' : s.toString().replace('&', '&amp;').repla
 
 boolean anyMeter() { (heaters ?: []).any { DeviceWrapper d -> d.hasAttribute("power") } }
 
-// Command Retry is a per-device setting with no DeviceWrapper accessor; the device record has it.
-// Returns null when the record can't be read, so a failed check stays silent.
-private Map retryInfo(DeviceWrapper d) {
-    try {
-        Map rec = null
-        httpGet([uri: "http://127.0.0.1:8080", path: "/device/fullJson/${d.id}", contentType: "application/json", timeout: 5]) { resp -> rec = resp.data as Map }
-        Map dev = rec?.device as Map
-        if (dev == null || !dev.containsKey("retryAvailable")) return null
-        return [label: d.displayName as String, available: dev.retryAvailable == true, enabled: dev.retryEnabled == true]
-    } catch (Exception e) {
-        logDebug "command retry check for ${d.displayName}: ${e.message}"
-        return null
-    }
+// The heaters the last Command Retry check found without it (retryCheckCb). A changed selection
+// starts a new check, whose result shows on the next render: the page makes no HTTP call itself,
+// so the singleThreaded app's handlers never wait behind it.
+List<String> heatersWithoutRetry() {
+    List ids = (heaters ?: []).collect { it.id.toString() }.sort()
+    Map advice = (state.retryAdvice ?: [:]) as Map
+    Map scan = (state.retryScan ?: [:]) as Map
+    // A scan whose callbacks were lost (a reboot) is not waited on for long.
+    boolean scanning = scan && now() - ((scan.at ?: 0L) as long) < 30000L
+    if (advice.ids != ids && !scanning) retryCheck(false)
+    return advice.ids == ids ? ((advice.names ?: []) as List<String>) : []
 }
-
-List<String> heatersWithoutRetry() { retryAdvice((heaters ?: []).collect { DeviceWrapper d -> retryInfo(d) }.findAll { it != null }) }
 
 String retryAdviceText(List<String> names) {
     return "Command Retry is off for ${namesText(names)}. Turning it on (Settings, Command Retry) lets the hub resend a missed on or off before this app reports a load fault.".toString()
@@ -226,11 +222,16 @@ void initialize() {
     checkAll()
 }
 
+// Command Retry is a per-device setting with no DeviceWrapper accessor; the device record has it.
 // Async, so the singleThreaded app doesn't hold every handler behind one loopback call per heater.
-void retryCheck() {
+// warn: log the advice (on Done); a check started by the page only stores it.
+void retryCheck(boolean warn = true) {
     List<DeviceWrapper> hs = (heaters ?: []) as List<DeviceWrapper>
-    if (!hs) return
-    state.retryScan = [pending: hs.size(), infos: []]
+    if (!hs) {
+        state.remove("retryAdvice")
+        return
+    }
+    state.retryScan = [pending: hs.size(), infos: [], ids: hs.collect { it.id.toString() }.sort(), warn: warn, at: now()]
     hs.each { DeviceWrapper d ->
         asynchttpGet("retryCheckCb", [uri: "http://127.0.0.1:8080", path: "/device/fullJson/${d.id}", contentType: "application/json", timeout: 5],
                      [label: d.displayName as String])
@@ -255,12 +256,13 @@ void retryCheckCb(resp, Map data) {
     int pending = ((scan.pending ?: 1) as int) - 1
     List infos = ((scan.infos ?: []) as List) + (info ? [info] : [])
     if (pending > 0) {
-        state.retryScan = [pending: pending, infos: infos]
+        state.retryScan = scan + [pending: pending, infos: infos]
         return
     }
     state.remove("retryScan")
     List<String> noRetry = retryAdvice(infos)
-    if (noRetry) logWarn retryAdviceText(noRetry)
+    state.retryAdvice = [ids: scan.ids, names: noRetry]
+    if (noRetry && scan.warn != false) logWarn retryAdviceText(noRetry)
 }
 
 void checkVersion(boolean reinit = true) {
