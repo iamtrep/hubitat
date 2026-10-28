@@ -13,11 +13,12 @@ import com.hubitat.app.ChildDeviceWrapper
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.regex.Matcher
 import java.util.regex.Pattern
 
-@Field static final String CODE_VERSION = "1.2.0"
+@Field static final String CODE_VERSION = "1.2.1"
 @Field static final int MAX_BRIDGES = 5
 @Field static final int MAX_FILTERS = 10
 @Field static final int MAX_DEDUPE_HISTORY = 100
@@ -37,6 +38,18 @@ import java.util.regex.Pattern
 @Field static final ConcurrentHashMap<String, List<String>> NAME_ORDER = new ConcurrentHashMap<>()
 @Field static final int MAX_NAMES = 2000
 
+// Bridges call processLogEntry concurrently, and the app is not singleThreaded: every bridge would
+// wait behind the slowest log line. Matching, dedupe and rate limits are safe to run concurrently;
+// everything that changes state or a file goes in WORK and one thread at a time does it (drain()).
+// RUNTIME holds that thread's copies of the match counts, name aliases and POST backoff, and state
+// holds snapshots of them. All keyed by app id.
+@Field static final ConcurrentHashMap<String, ConcurrentLinkedQueue<Map>> WORK = new ConcurrentHashMap<>()
+@Field static final ConcurrentHashMap<String, Boolean> DRAINING = new ConcurrentHashMap<>()
+@Field static final ConcurrentHashMap<String, Map> RUNTIME = new ConcurrentHashMap<>()
+// The code version each instance has checked since the last push, so one log line runs checkVersion().
+@Field static final ConcurrentHashMap<String, String> VERSION_CHECKED = new ConcurrentHashMap<>()
+@Field static final int MAX_WORK_PER_PASS = 200
+
 definition(
     name: "Log Monitor",
     namespace: "iamtrep",
@@ -45,7 +58,6 @@ definition(
     menu: "Apps", // new in platform 2.5.0
     category: "Utility",
     singleInstance: true,
-    singleThreaded: true,   // bridges call processLogEntry concurrently; each call rewrites state.filters
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/apps/LogMonitor/LogMonitor.groovy",
     documentationLink: "https://github.com/iamtrep/hubitat/tree/main/apps/LogMonitor",
     iconUrl: "",
@@ -312,7 +324,7 @@ Map filterPage(Map params) {
         if (!isNew) {
             section {
                 List<Map> filters = state.filters ?: []
-                int matched = (idx >= 0 && idx < filters.size()) ? (filters[idx].eventsMatched ?: 0) : 0
+                long matched = (idx >= 0 && idx < filters.size()) ? matchCount(filters[idx]) : 0L
                 paragraph "Events matched: ${matched}"
                 href(name: "deleteFilter", page: "deleteFilterPage",
                     title: "Delete this filter",
@@ -348,8 +360,8 @@ Map deleteFilterPage(Map params) {
             }
         }
         state.filters = filters
-        Set<String> urls = filters.findAll { it.outputHttp && it.httpUrlEnc }.collect { it.httpUrlEnc as String } as Set
-        state.httpBackoff = ((state.httpBackoff ?: [:]) as Map).findAll { k, v -> k in urls }
+        queueWork([kind: "prune", keep: httpUrlKeys(filters)])
+        drain()
     }
 
     state.remove("editingFilterIndex")
@@ -410,8 +422,9 @@ private void initialize() {
         schedule("0 ${new Random().nextInt(60)} 4 * * ?", "seedNames")
     } else {
         // The salt stays, so most aliases come back the same if a filter hides names again.
-        state.remove("nameAliases")
+        queueWork([kind: "clearAliases"])
     }
+    drain()
 }
 
 private void checkVersion(boolean reinit = true) {
@@ -430,6 +443,13 @@ private void migrateFilters() {
     boolean plainUrls = false
     filters.each { Map f ->
         if (f.id == null) f.id = nextFilterId(filters)
+        // 1.2.1 keeps the count in state.matchCounts; the drain thread picks it up from here.
+        if (f.eventsMatched != null) {
+            Map counts = (state.matchCounts ?: [:]) as Map
+            counts.putIfAbsent(f.id.toString(), f.eventsMatched)
+            state.matchCounts = counts
+            f.remove("eventsMatched")
+        }
         f.remove("processedEvents")
         f.remove("eventsThisMinute")
         if (f.httpUrl) {
@@ -463,6 +483,11 @@ private void clearFilterRuntime(Map filter) {
     String key = filterKey(filter)
     RECENT_EVENTS.remove(key)
     EVENTS_THIS_MINUTE.remove(key)
+    (RUNTIME.get(app.id.toString())?.counts as Map)?.remove(filter.id?.toString())
+}
+
+private static Set<String> httpUrlKeys(List filters) {
+    return (filters ?: []).findAll { Map f -> f.outputHttp && f.httpUrlEnc }.collect { Map f -> f.httpUrlEnc as String } as Set
 }
 
 // IDs of every device used as a notification target, for the loop guard in
@@ -494,6 +519,8 @@ void uninstalled() {
     }
     URL_CACHE.keySet().removeIf { it.startsWith("${app.id}:") }
     NAME_ORDER.keySet().removeIf { it.startsWith("${app.id}:") }
+    String k = app.id.toString()
+    [WORK, DRAINING, RUNTIME, VERSION_CHECKED].each { Map m -> m.remove(k) }
 }
 
 // ============================================================================
@@ -607,19 +634,18 @@ private void savePendingFilter() {
 
     if (idx >= 0 && idx < filters.size()) {
         filter.id = filters[idx].id != null ? filters[idx].id : nextFilterId(filters)
-        filter.eventsMatched = filters[idx].eventsMatched ?: 0
         filters[idx] = filter
     } else {
         filter.id = nextFilterId(filters)
-        filter.eventsMatched = 0
         filters.add(filter)
     }
 
     state.filters = filters
     // Saving a filter retries its URL now; drop backoff for URLs no filter uses any more.
     // Backoff is keyed by the ciphertext: encrypt() is deterministic, so equal URLs share a key.
-    Set<String> urls = filters.findAll { it.outputHttp && it.httpUrlEnc }.collect { it.httpUrlEnc as String } as Set
-    state.httpBackoff = ((state.httpBackoff ?: [:]) as Map).findAll { k, v -> k in urls && k != filter.httpUrlEnc }
+    Set<String> urls = httpUrlKeys(filters)
+    if (filter.httpUrlEnc) urls.remove(filter.httpUrlEnc as String)
+    queueWork([kind: "prune", keep: urls])
     state.remove("editingFilterIndex")
     clearFilterSettings()
 }
@@ -661,36 +687,134 @@ private void clearFilterSettings() {
 // ============================================================================
 
 void processLogEntry(String bridgeDni, Map logEntry) {
-    checkVersion()
+    if (state.version != CODE_VERSION && VERSION_CHECKED.put(app.id.toString(), CODE_VERSION) != CODE_VERSION) checkVersion()
     // Self-monitoring guard: skip own app logs
     if (logEntry.type == "app" && logEntry.id?.toString() == app.id.toString()) return
 
     List<Map> filters = state.filters
     if (!filters) return
 
-    int size = filters.size()
-    boolean filtersModified = false
-    Map views = [:]   // masked forms of this entry, built once for all the filters that match
-
-    for (int i = 0; i < size; i++) {
-        Map filter = filters[i]
-
+    List filterIds = []
+    for (Map filter : filters) {
         // Check bridge source filter
         String filterBridge = filter.bridgeDni as String
         if (filterBridge && filterBridge != bridgeDni) continue
+        if (!matchesFilter(logEntry, filter)) continue
+        if (isDuplicate(logEntry, filter) || isRateLimited(filter)) continue
+        filterIds << filter.id
+    }
+    if (!filterIds) return
+    queueWork([kind: "match", entry: logEntry, bridgeDni: bridgeDni, filterIds: filterIds, at: now()])
+    drain()
+}
 
-        if (matchesFilter(logEntry, filter)) {
-            def matchedBefore = filter.eventsMatched
-            filter = executeOutputs(logEntry, filter, bridgeDni, views)
-            filters[i] = filter
-            // Duplicates and rate-limited lines leave the filter unchanged: skip the write
-            if (filter.eventsMatched != matchedBefore) filtersModified = true
+// ============================================================================
+// Queued work
+// ============================================================================
+
+private void queueWork(Map item) {
+    WORK.computeIfAbsent(app.id.toString(), { String k -> new ConcurrentLinkedQueue<Map>() } as java.util.function.Function).add(item)
+}
+
+// One thread at a time does the queued work, as a serial executor does: a caller that finds another
+// thread draining leaves its item for it and returns. The drainer looks at the queue again after
+// letting go, so an item added after its last poll is not stranded.
+private void drain() {
+    String k = app.id.toString()
+    ConcurrentLinkedQueue<Map> q = WORK.get(k)
+    while (q != null && !q.isEmpty()) {
+        if (DRAINING.putIfAbsent(k, Boolean.TRUE) != null) return
+        try {
+            drainPass(q)
+        } finally {
+            DRAINING.remove(k)
         }
     }
+}
 
-    if (filtersModified) {
-        state.filters = filters
+// The drain thread's runtime data, loaded from state after a push or reboot.
+private Map runtime() {
+    String k = app.id.toString()
+    Map rt = RUNTIME.get(k)
+    if (rt != null) return rt
+    if (!state.aliasSalt) atomicState.aliasSalt = UUID.randomUUID().toString()
+    ConcurrentHashMap<String, Long> counts = new ConcurrentHashMap<>()
+    ((state.matchCounts ?: [:]) as Map).each { id, n -> counts.put(id as String, n as Long) }
+    // Filters saved before 1.2.1 that checkVersion has not migrated yet
+    (state.filters ?: []).each { Map f -> if (f.eventsMatched != null) counts.putIfAbsent(f.id.toString(), f.eventsMatched as Long) }
+    rt = [counts: counts, aliases: new LinkedHashMap<String, String>((state.nameAliases ?: [:]) as Map),
+          backoff: new HashMap<String, Map>((state.httpBackoff ?: [:]) as Map), salt: atomicState.aliasSalt as String]
+    RUNTIME.put(k, rt)
+    return rt
+}
+
+private long matchCount(Map filter) {
+    String id = filter.id?.toString()
+    Map counts = RUNTIME.get(app.id.toString())?.counts as Map
+    Object n = counts != null ? counts[id] : ((state.matchCounts ?: [:]) as Map)[id]
+    return ((n ?: filter.eventsMatched ?: 0) as Long)
+}
+
+private void drainPass(ConcurrentLinkedQueue<Map> q) {
+    Map rt = runtime()
+    Map<String, StringBuilder> rows = [:]   // file name -> rows, written once per pass
+    Set<String> dirty = [] as Set
+    List<Map> filters = (state.filters ?: []) as List<Map>
+    Map item
+    int n = 0
+    while (n < MAX_WORK_PER_PASS && (item = q.poll()) != null) {
+        n++
+        try {
+            switch (item.kind) {
+                case "match":
+                    Map views = [:]   // masked forms of this entry, built once for all the filters that match
+                    (item.filterIds as List).each { id ->
+                        Map filter = filters.find { it.id?.toString() == id?.toString() }
+                        if (filter) {
+                            executeOutputs(item, filter, views, rt, rows)
+                            dirty << "counts"
+                        }
+                    }
+                    if (views.learned) dirty << "aliases"
+                    break
+                case "names":
+                    if (registerNames(rt, item.names as List, (item.skip ?: []) as List)) dirty << "aliases"
+                    break
+                case "clearAliases":
+                    (rt.aliases as Map).clear()
+                    dirty << "aliases"
+                    break
+                case "post":
+                    recordPostResult(rt, item)
+                    dirty << "backoff"
+                    break
+                case "prune":
+                    Set keep = (item.keep ?: []) as Set
+                    if ((rt.backoff as Map).keySet().removeIf { !(it in keep) }) dirty << "backoff"
+                    break
+            }
+        } catch (Exception e) {
+            logWarn "Queued ${item.kind} failed: ${maskSecrets(e.message)}"
+        }
     }
+    rows.each { String file, StringBuilder sb ->
+        try {
+            appendToFile(file, sb.toString())
+        } catch (Exception e) {
+            logDebug "Log file error for ${file}: ${maskSecrets(e.message)}"
+        }
+    }
+    // atomicState, written while this thread holds the drain: a state write would be saved when this
+    // execution ends, and two executions can end in the other order, leaving the older snapshot.
+    if ("counts" in dirty) {
+        Set ids = filters.collect { it.id?.toString() } as Set
+        atomicState.matchCounts = (rt.counts as Map).findAll { k, v -> k in ids }
+    }
+    if ("aliases" in dirty) {
+        if (rt.aliases) atomicState.nameAliases = new LinkedHashMap(rt.aliases as Map)
+        else atomicState.remove("nameAliases")
+    }
+    if ("backoff" in dirty) atomicState.httpBackoff = new HashMap(rt.backoff as Map)
 }
 
 // ============================================================================
@@ -739,7 +863,8 @@ private static boolean matchesFilter(Map logEntry, Map filter) {
 }
 
 private boolean isDuplicate(Map logEntry, Map filter) {
-    int window = (filter.dedupeWindow as int) ?: 5
+    // 0 turns dedupe off, so only a missing value takes the default
+    int window = filter.dedupeWindow != null ? filter.dedupeWindow as int : 5
     if (window == 0) return false
 
     long ts = now()
@@ -786,17 +911,17 @@ private boolean isRateLimited(Map filter) {
 
 // The entry as outputs see it: secrets masked always, and with hidePrivate also names aliased
 // and identifiers masked. Matching and dedupe use the raw entry.
-private Map entryView(Map logEntry, String bridgeDni, boolean hidePrivate, Map views) {
+private Map entryView(Map logEntry, String bridgeDni, boolean hidePrivate, Map views, Map rt) {
     String key = hidePrivate ? "private" : "secrets"
     if (views[key]) return views[key] as Map
     String bridge = bridgeLabelForDni(bridgeDni)
     String name = logEntry.name as String ?: ""
     String msg = maskSecrets(logEntry.msg as String ?: "")
     if (hidePrivate) {
-        Map<String, String> aliases = nameAliases()
+        Map<String, String> aliases = rt.aliases as Map<String, String>
         boolean learn = logEntry.type == "dev" || logEntry.type == "app"
-        if (learn && name) registerNames(aliases, [name])
-        registerNames(aliases, [bridge])
+        if (learn && name && registerNames(rt, [name])) views.learned = true
+        if (registerNames(rt, [bridge])) views.learned = true
         List<String> order = nameOrder(aliases)
         bridge = aliases[bridge] ?: bridge
         if (learn) name = aliases[name] ?: name
@@ -807,15 +932,15 @@ private Map entryView(Map logEntry, String bridgeDni, boolean hidePrivate, Map v
     return v
 }
 
-private Map executeOutputs(Map logEntry, Map filter, String bridgeDni, Map views) {
-    if (isDuplicate(logEntry, filter)) return filter
-    if (isRateLimited(filter)) return filter
+// Runs on the drain thread only. Dedupe and the rate limit were applied when the entry was queued.
+private void executeOutputs(Map item, Map filter, Map views, Map rt, Map<String, StringBuilder> rows) {
+    Map logEntry = item.entry as Map
+    String bridgeDni = item.bridgeDni as String
+    (rt.counts as Map).merge(filter.id.toString(), 1L, { Long a, Long b -> a + b } as java.util.function.BiFunction)
 
-    filter.eventsMatched = ((filter.eventsMatched as int) ?: 0) + 1
-
-    Map own = entryView(logEntry, bridgeDni, false, views)
+    Map own = entryView(logEntry, bridgeDni, false, views, rt)
     logInfo "${filter.label}: [${own.bridge}/${logEntry.type}/${logEntry.level}] ${own.name}: ${own.msg}"
-    Map v = filter.hidePrivate ? entryView(logEntry, bridgeDni, true, views) : own
+    Map v = filter.hidePrivate ? entryView(logEntry, bridgeDni, true, views, rt) : own
     String bridgeLabel = v.bridge
     String formatted = "[${bridgeLabel}/${logEntry.type}/${logEntry.level}] ${v.name}: ${v.msg}"
 
@@ -836,22 +961,18 @@ private Map executeOutputs(Map logEntry, Map filter, String bridgeDni, Map views
         }
     }
 
-    // Log file
+    // Log file: rows are collected and each file is rewritten once per drain pass
     if (filter.outputLog && filter.logFile) {
-        try {
-            String timestamp = new Date().format("yyyy-MM-dd HH:mm:ss")
-            String escapedName = (v.name as String).replace('"', '""')
-            String escapedMsg = (v.msg as String).replace('"', '""')
-            String line = "${timestamp},${bridgeLabel},${logEntry.type},${logEntry.level},\"${escapedName}\",\"${escapedMsg}\"\n"
-            appendToFile(filter.logFile as String, line)
-        } catch (Exception e) {
-            logDebug "Log file error for ${filter.label}: ${maskSecrets(e.message)}"
-        }
+        String timestamp = new Date(item.at as long).format("yyyy-MM-dd HH:mm:ss")
+        String escapedName = (v.name as String).replace('"', '""')
+        String escapedMsg = (v.msg as String).replace('"', '""')
+        String line = "${timestamp},${bridgeLabel},${logEntry.type},${logEntry.level},\"${escapedName}\",\"${escapedMsg}\"\n"
+        rows.computeIfAbsent(filter.logFile as String, { String f -> new StringBuilder() } as java.util.function.Function).append(line)
     }
 
     // HTTP POST
     String httpUrl = filter.outputHttp ? filterHttpUrl(filter) : null
-    if (httpUrl && httpPaused(filter.httpUrlEnc as String)) {
+    if (httpUrl && httpPaused(rt, filter.httpUrlEnc as String)) {
         logNet "HTTP POST for ${filter.label} skipped: URL paused after failures"
     } else if (httpUrl) {
         try {
@@ -876,49 +997,49 @@ private Map executeOutputs(Map logEntry, Map filter, String bridgeDni, Map views
             logNet "HTTP POST error for ${filter.label}: ${maskSecrets(e.message)}"
         }
     }
-
-    return filter
 }
 
 // Failed POSTs back off per URL so a dead or overloaded endpoint (e.g. a cloud
 // relay URL) isn't hit at the full per-filter rate. 401/403/404/410 won't fix
 // themselves: POSTs stop until a filter using the URL is saved again.
+// Callbacks run concurrently, so the result goes to the drain thread, which owns the backoff.
 void httpPostCallback(resp, data) {
-    String url = data?.url as String    // the ciphertext, which keys state.httpBackoff
-    String shown = data?.shown as String
     int status = resp.getStatus()
-    if (!resp.hasError() && status >= 200 && status < 300) {
-        if (url && state.httpBackoff?.containsKey(url)) {
-            Map all = state.httpBackoff as Map
-            all.remove(url)
-            state.httpBackoff = all
-        }
-        return
-    }
-    String reason = resp.hasError() ? "HTTP ${status}: ${maskSecrets(resp.getErrorMessage())}" : "HTTP ${status}"
-    if (!url) {
-        logWarn "HTTP POST failed: ${reason}"
-        return
-    }
-    Map all = (state.httpBackoff ?: [:]) as Map
-    Map b = (all[url] ?: [failures: 0]) as Map
-    b.failures = (b.failures as int) + 1
-    if (status in HTTP_STOP_STATUSES) {
-        b.stopped = true
-        logWarn "HTTP POST to ${shown} failed (${reason}); POSTs to this URL stopped until a filter using it is saved again"
-    } else {
-        long delayMs = Math.min(1L << Math.min((b.failures as int) - 1, 6), (long) HTTP_MAX_BACKOFF_MIN) * 60000L
-        Long retryAfter = retryAfterSeconds(resp)
-        if (retryAfter) delayMs = Math.max(delayMs, retryAfter * 1000L)
-        b.until = now() + delayMs
-        logWarn "HTTP POST to ${shown} failed (${reason}); pausing POSTs to this URL for ${delayMs.intdiv(1000L)} s (failure ${b.failures})"
-    }
-    all[url] = b
-    state.httpBackoff = all
+    boolean ok = !resp.hasError() && status >= 200 && status < 300
+    String reason = ok ? null : (resp.hasError() ? "HTTP ${status}: ${maskSecrets(resp.getErrorMessage())}" : "HTTP ${status}")
+    queueWork([kind: "post", url: data?.url as String, shown: data?.shown as String, status: status, ok: ok, reason: reason,
+               retryAfter: ok ? null : retryAfterSeconds(resp)])
+    drain()
 }
 
-private boolean httpPaused(String url) {
-    Map b = (state.httpBackoff ?: [:])[url] as Map
+private void recordPostResult(Map rt, Map r) {
+    String url = r.url as String    // the ciphertext, which keys the backoff
+    Map all = rt.backoff as Map
+    if (r.ok) {
+        if (url) all.remove(url)
+        return
+    }
+    if (!url) {
+        logWarn "HTTP POST failed: ${r.reason}"
+        return
+    }
+    Map b = (all[url] ?: [failures: 0]) as Map
+    b.failures = (b.failures as int) + 1
+    if ((r.status as int) in HTTP_STOP_STATUSES) {
+        b.stopped = true
+        logWarn "HTTP POST to ${r.shown} failed (${r.reason}); POSTs to this URL stopped until a filter using it is saved again"
+    } else {
+        long delayMs = Math.min(1L << Math.min((b.failures as int) - 1, 6), (long) HTTP_MAX_BACKOFF_MIN) * 60000L
+        Long retryAfter = r.retryAfter as Long
+        if (retryAfter) delayMs = Math.max(delayMs, retryAfter * 1000L)
+        b.until = now() + delayMs
+        logWarn "HTTP POST to ${r.shown} failed (${r.reason}); pausing POSTs to this URL for ${delayMs.intdiv(1000L)} s (failure ${b.failures})"
+    }
+    all[url] = b
+}
+
+private boolean httpPaused(Map rt, String url) {
+    Map b = (rt.backoff as Map)[url] as Map
     if (!b) return false
     return b.stopped || now() < ((b.until ?: 0) as long)
 }
@@ -1227,14 +1348,10 @@ static String newAlias(String name, String salt, Set<String> used) {
 // Generic names that would only make messages harder to read if replaced.
 @Field static final List<String> GENERIC_NAMES = ["Home", "Hubitat", "Hub", "Local Hub"]
 
-private Map<String, String> nameAliases() {
-    if (!state.aliasSalt) state.aliasSalt = UUID.randomUUID().toString()
-    return (state.nameAliases ?: [:]) as Map<String, String>
-}
-
-// Adds the names not known yet. A name in skip (a driver or app type name, a mode) maps to
-// itself and is never replaced.
-private void registerNames(Map<String, String> aliases, Collection names, Collection skip = []) {
+// Adds the names not known yet, on the drain thread. A name in skip (a driver or app type name,
+// a mode) maps to itself and is never replaced. True when a name was added.
+private static boolean registerNames(Map rt, Collection names, Collection skip = []) {
+    Map<String, String> aliases = rt.aliases as Map<String, String>
     Set<String> used = null
     boolean added = false
     names.each { n ->
@@ -1244,13 +1361,13 @@ private void registerNames(Map<String, String> aliases, Collection names, Collec
             aliases[k] = k
         } else {
             if (used == null) used = new HashSet<String>(aliases.values())
-            String a = newAlias(k, state.aliasSalt as String, used)
+            String a = newAlias(k, rt.salt as String, used)
             used << a
             aliases[k] = a
         }
         added = true
     }
-    if (added) state.nameAliases = aliases
+    return added
 }
 
 private List<String> nameOrder(Map<String, String> aliases) {
@@ -1267,9 +1384,9 @@ private List<String> nameOrder(Map<String, String> aliases) {
 // Names come from the log entries themselves, and from the local hub's device and app lists so
 // a name is replaced in another app's message before its own device or app has logged.
 void seedNames() {
-    Map<String, String> aliases = nameAliases()
-    registerNames(aliases, location.modes*.name, location.modes*.name)
-    registerNames(aliases, [location.name, location.hub.name] + (state.bridges ?: []).collect { it.label })
+    queueWork([kind: "names", names: location.modes*.name, skip: location.modes*.name])
+    queueWork([kind: "names", names: [location.name, location.hub.name] + (state.bridges ?: []).collect { it.label }])
+    drain()
     asynchttpGet("seedDevicesCallback", [uri: "http://127.0.0.1:8080", path: "/hub2/devicesList", timeout: 30])
     asynchttpGet("seedAppsCallback", [uri: "http://127.0.0.1:8080", path: "/hub2/appsList", timeout: 30])
 }
@@ -1281,7 +1398,8 @@ void seedDevicesCallback(resp, data) {
     }
     List names = [], skip = []
     collectDeviceNames((resp.getJson()?.devices ?: []) as List, names, skip)
-    registerNames(nameAliases(), skip + names, skip)
+    queueWork([kind: "names", names: skip + names, skip: skip])
+    drain()
     logDebug "Name aliases: ${names.size()} device and room names read"
 }
 
@@ -1304,7 +1422,8 @@ void seedAppsCallback(resp, data) {
     ((json.systemAppTypes ?: []) + (json.userAppTypes ?: [])).each { Map t -> typeNames[t.id as String] = t.name as String }
     List names = [], skip = typeNames.values() as List
     collectAppNames((json.apps ?: []) as List, typeNames, names, skip)
-    registerNames(nameAliases(), skip + names, skip)
+    queueWork([kind: "names", names: skip + names, skip: skip])
+    drain()
     logDebug "Name aliases: ${names.size()} app names read"
 }
 
