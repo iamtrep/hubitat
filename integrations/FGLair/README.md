@@ -34,7 +34,7 @@ Region (US / EU) is configurable on the manager page; the region setting drives 
 **Standard capability surface (canonical values only):**
 - `thermostatMode` — `off`, `heat`, `cool`, `auto`. The unit's `dry` mode reports as `cool` (the compressor runs its cooling cycle) and `fan_only` as `off` (no compressor).
 - `thermostatFanMode` — `auto`, or `on` when the unit runs a fixed fan speed
-- `temperature` — room temperature from `display_temperature`, corrected by the sensor offset if one is set
+- `temperature` — room temperature from `display_temperature`, corrected by the sensor offset if one is set; under room control, the room sensors' reading
 - `heatingSetpoint` / `coolingSetpoint` / `thermostatSetpoint`
 - `thermostatOperatingState` — `idle` / `heating` / `cooling` / `fan only`. The cloud doesn't report whether the compressor is running, so this is estimated from room temperature and setpoint: heating starts once the room is 0.5°C below the setpoint and continues until it reaches it; cooling mirrors that above the setpoint. `dry` reports `idle`.
 
@@ -45,6 +45,8 @@ Region (US / EU) is configurable on the manager page; the region setting drives 
 - `errorCode` — raw Fujitsu error code (number; `0` = no fault). Transitions `0 → non-0` log a warning; `non-0 → 0` logs an info-level clear.
 - `opStatus` — raw operational status (number). Logged at info level on change.
 - `healthStatus` — `online` / `offline`, from the unit's cloud connection status. Also set to `offline` after 5 consecutive failed cloud requests, after 5 consecutive failed property reads for that unit, or when the manager stops polling on an auth failure. The event description gives the reason.
+- `unitTemperature` / `unitSetpoint` — the unit's own sensor reading and setpoint, before any offset or bias
+- `controlBias` — the heat bias room control currently applies (°C)
 - `commandStatus` — `ok` / `failed`, the outcome of the last write to the unit. Failed writes are not retried, since a retried write can jam the unit's cloud write queue; the next poll restores the real state.
 - `setFujitsuMode(String)` command — accepts the full mode enum
 - `setFanSpeed(String)` command — accepts the full fan-speed enum
@@ -80,6 +82,23 @@ The unit regulates on a sensor inside the indoor unit, which can read several de
 - Changing an offset while the unit is in that mode resends the setpoint, so the room setpoint stays where it was.
 
 Offsets are in 0.5°C steps because the unit only accepts setpoints on that grid. The IR remote and the FGLair app still show the unit's own values.
+
+### Room control (heat)
+
+The manager can regulate a unit on room sensors instead of its own sensor. Turn it on per unit under **Room control (heat)** on the manager page and pick:
+
+- **Room sensors**, combined as the median (default), the average or the coldest. A sensor with no activity for longer than the stale limit (default 120 min) is left out.
+- **Outdoor sensor** (optional). The unit's own `outdoorTemperature` is biased by the compressor and the sun, so it isn't used.
+- **Tuning** (optional): base bias, proportional, integral and outdoor gains.
+
+Every 5 minutes the manager computes a bias: a PI term on the room error (target minus room), plus an outdoor term, added to the base bias. The child uses it in place of the heating offset, so the unit's setpoint is the room target plus the bias, and the room target keeps working as before for schedules, HomeKit and dashboards. Writes are on the unit's 0.5°C grid, at most one per 15 minutes and 1.0°C per change, and only when the computed bias has moved 0.35°C from the one in use.
+
+- Off, cool, any other mode, or an offline unit freezes the controller.
+- With every room sensor stale, the bias returns to the base bias.
+- After a lowered target (a night setback) the integral is held until the room first reaches the new target, so the bias learned during the day survives the night.
+- Turning room control off restores the fixed heating offset.
+
+`temperature` shows the room sensors' reading while room control is on; `thermostatOperatingState` still compares the unit's reading with the setpoint written to it.
 
 ### Standard command policy
 

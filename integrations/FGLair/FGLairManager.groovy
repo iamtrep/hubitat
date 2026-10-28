@@ -33,7 +33,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "0.3.4"
+@Field static final String CODE_VERSION = "0.4.0"
 
 // Region-specific Ayla endpoints + app credentials, lifted from
 // ayla-iot-unofficial/src/ayla_iot_unofficial/const.py and fujitsu_consts.py.
@@ -146,6 +146,7 @@ Map mainPage() {
                          description: "Review and confirm before anything is deleted"
                 }
             }
+            renderRoomControl()
             section {
                 Map<String, Object> known = (atomicState.knownProperties ?: [:]) as Map<String, Object>
                 href "discoveredPropertiesPage",
@@ -230,6 +231,7 @@ void initialize()  {
         schedulePolling()
     }
     subscribe(location, "systemStart", "systemStartHandler")
+    initRoomControl()
 }
 
 // A code push doesn't run updated(); entry points call this so the first one after a
@@ -1365,6 +1367,208 @@ private static String formatDuration(long ms) {
     long minutes = ms.intdiv(60000L)
     if (minutes < 60) return "${minutes} min"
     return "${minutes.intdiv(60L)} h ${minutes % 60} min"
+}
+
+// --- Room control ---
+// Outer loop on room sensors: PI on the room error plus an outdoor term, after Versatile
+// Thermostat's over_climate self-regulation. It picks the bias the child adds to the room
+// target to get the unit's setpoint; the unit's own loop stays the inner one. All in °C.
+// No derivative: room sensors step coarsely and report irregularly.
+
+@Field static final Map CONTROL_DEFAULTS = [
+    b0: 2.0,               // bias with no error: the fixed offset this replaces
+    kp: 0.3,
+    ki: 0.3,               // per °C·h
+    iMax: 1.5,             // limit on ki·I (anti-windup)
+    ke: 0.03,              // per °C of target minus outdoor
+    biasMin: -1.0, biasMax: 5.0,
+    writeThreshold: 0.35,  // raw bias must be this far from the written one
+    minWriteMs: 900_000L,  // one write per sensor wake at most
+    maxStep: 1.0,          // largest change per write
+    maxDtH: 0.25           // longest interval the integral accumulates over
+]
+
+// One controller step. Pure: no hub calls, so the offline test and replays run it as is.
+//   st:  [integral, lastAt, lastBias (written), lastWriteAt, target, coast]; empty on the first step
+//   inp: [now (ms), active, target, room (null = stale), outdoor (null = none)]
+//   p:   CONTROL_DEFAULTS or overrides
+// Returns [state, bias (raw, null when frozen), write (bias to send, or null), e, reason].
+// Inactive (wrong mode, offline, a recent manual write) freezes everything. A stale room
+// falls back to b0 and drops the integral, so recovery starts clean.
+Map controlStep(Map st, Map inp, Map p) {
+    Map s = new LinkedHashMap(st ?: [:])
+    long t = inp.now as long
+    if (!inp.active) {
+        s.lastAt = t
+        return [state: s, bias: null, write: null, e: null, reason: "frozen"]
+    }
+    double written = s.lastBias != null ? (s.lastBias as double) : (p.b0 as double)
+    double target = inp.target as double
+    double raw
+    Double e = null
+    String reason
+    if (inp.room == null) {
+        s.integral = 0d
+        raw = p.b0 as double
+        reason = "fallback"
+    } else {
+        e = target - (inp.room as double)
+        double dtH = s.lastAt != null ? Math.min((t - (s.lastAt as long)) / 3_600_000d, p.maxDtH as double) : 0d
+        double integral = (s.integral ?: 0d) as double
+        // A lowered target leaves the room above it for hours. That is a setback, not an error:
+        // hold the integral until the room first reaches the new target, or the night unwinds
+        // what the day learned about the unit's sensor.
+        if (s.target != null && target < (s.target as double)) s.coast = true
+        if (s.coast && e >= 0) s.coast = false
+        if (!s.coast) {
+            if (e * integral < 0) integral /= 2
+            integral += e * dtH
+        }
+        double ki = p.ki as double
+        if (ki > 0) {
+            double lim = (p.iMax as double) / ki
+            integral = Math.max(-lim, Math.min(lim, integral))
+        }
+        s.integral = integral
+        double ext = inp.outdoor != null ? (p.ke as double) * (target - (inp.outdoor as double)) : 0d
+        raw = (p.b0 as double) + (p.kp as double) * e + ki * integral + ext
+        raw = Math.max(p.biasMin as double, Math.min(p.biasMax as double, raw))
+        reason = s.coast ? "coast" : "control"
+    }
+    s.target = target
+    s.lastAt = t
+    double step = Math.max(-(p.maxStep as double), Math.min(p.maxStep as double, Math.round(raw * 2) / 2d - written))
+    double q = written + step
+    boolean due = s.lastWriteAt == null || t - (s.lastWriteAt as long) >= (p.minWriteMs as long)
+    Double write = null
+    if (q != written && Math.abs(raw - written) >= (p.writeThreshold as double) && due) {
+        write = q
+        s.lastBias = q
+        s.lastWriteAt = t
+    }
+    return [state: s, bias: raw, write: write, e: e, reason: reason]
+}
+
+// Room control: settings, schedule and the hub side of each step.
+
+private void renderRoomControl() {
+    List<ChildDeviceWrapper> units = unitChildren()
+    if (!units) return
+    section("Room control (heat)") {
+        paragraph "Regulates a unit on room sensors instead of its own: every 5 minutes the unit's heat setpoint is set to the room target plus a bias the controller adjusts. Replaces the device's fixed heat offset while on."
+        units.each { ChildDeviceWrapper c ->
+            String k = "rc${c.id}"
+            input "${k}Enable", "bool", title: "<b>${c.displayName}</b>: control on room sensors", defaultValue: false, submitOnChange: true
+            if (!settings["${k}Enable"]) return
+            input "${k}Rooms", "capability.temperatureMeasurement", title: "Room sensors", multiple: true, required: true
+            input "${k}Combine", "enum", title: "Combine room sensors", options: ["median": "Median", "avg": "Average", "min": "Coldest"], defaultValue: "median"
+            input "${k}Outdoor", "capability.temperatureMeasurement", title: "Outdoor sensor (optional; not the unit's own)", required: false
+            input "${k}StaleMin", "number", title: "A sensor is stale after (minutes without activity)", defaultValue: 120, range: "10..1440"
+            input "${k}Tuning", "bool", title: "Show tuning", defaultValue: false, submitOnChange: true
+            if (settings["${k}Tuning"]) {
+                input "${k}B0", "decimal", title: "Base bias (°C): the fixed offset it starts from", defaultValue: CONTROL_DEFAULTS.b0
+                input "${k}Kp", "decimal", title: "Proportional gain (per °C)", defaultValue: CONTROL_DEFAULTS.kp
+                input "${k}Ki", "decimal", title: "Integral gain (per °C·h)", defaultValue: CONTROL_DEFAULTS.ki
+                input "${k}Ke", "decimal", title: "Outdoor gain (per °C of target minus outdoor)", defaultValue: CONTROL_DEFAULTS.ke
+            }
+            Map st = ((state.roomControl ?: [:]) as Map)[k] as Map
+            if (st?.lastBias != null) {
+                String at = st.lastWriteAt ? formatClock(st.lastWriteAt as long) : "start"
+                paragraph "Bias ${st.lastBias} °C (since ${at}), integral ${String.format('%.2f', (st.integral ?: 0) as double)} °C·h${st.coast ? ', coasting after a setback' : ''}"
+            }
+        }
+    }
+}
+
+private void initRoomControl() {
+    Map all = new LinkedHashMap((state.roomControl ?: [:]) as Map)
+    unitChildren().each { ChildDeviceWrapper c ->
+        String k = "rc${c.id}"
+        if (!settings["${k}Enable"] && all.containsKey(k)) {
+            all.remove(k)
+            c.clearControlBias()
+            logCfg "${c.displayName}: room control off"
+        }
+    }
+    state.roomControl = all
+    if (unitChildren().any { settings["rc${it.id}Enable"] }) {
+        runEvery5Minutes("roomControlTick")
+        runIn(5, "roomControlTick")
+    }
+}
+
+private Map controlParams(String k) {
+    Map p = new LinkedHashMap(CONTROL_DEFAULTS)
+    [b0: "B0", kp: "Kp", ki: "Ki", ke: "Ke"].each { String key, String suffix ->
+        def v = settings["${k}${suffix}"]
+        if (v != null) p[key] = v as double
+    }
+    return p
+}
+
+private Double toC(def v) {
+    if (v == null) return null
+    double d = v as double
+    return location.temperatureScale == "F" ? (d - 32) * 5 / 9 : d
+}
+
+private BigDecimal fromC(double c) {
+    double v = location.temperatureScale == "F" ? c * 9 / 5 + 32 : c
+    return new BigDecimal(v).setScale(1, java.math.RoundingMode.HALF_UP)
+}
+
+// Median by default: one sensor in the sun or by a door doesn't move it.
+private static Double combineTemps(List<Double> temps, String how) {
+    if (!temps) return null
+    if (how == "min") return temps.min()
+    if (how == "avg") return temps.sum() / temps.size()
+    List<Double> s = temps.sort(false)
+    int n = s.size()
+    return n % 2 ? s[n.intdiv(2)] : (s[n.intdiv(2) - 1] + s[n.intdiv(2)]) / 2
+}
+
+// A sensor counts when it has been active within the stale limit and reports a temperature.
+private Double freshTemp(def dev, long staleMs) {
+    Date last = dev?.getLastActivity()
+    if (last == null || now() - last.time > staleMs) return null
+    return toC(dev.currentValue("temperature"))
+}
+
+void roomControlTick() {
+    Map all = new LinkedHashMap((state.roomControl ?: [:]) as Map)
+    unitChildren().each { ChildDeviceWrapper c ->
+        String k = "rc${c.id}"
+        if (!settings["${k}Enable"]) return
+        long staleMs = ((settings["${k}StaleMin"] ?: 120) as long) * 60_000L
+        List<Double> temps = (settings["${k}Rooms"] ?: []).collect { freshTemp(it, staleMs) }.findAll { it != null }
+        Double room = combineTemps(temps, (settings["${k}Combine"] ?: "median") as String)
+        Double outdoor = settings["${k}Outdoor"] ? freshTemp(settings["${k}Outdoor"], staleMs) : null
+        Double target = toC(c.currentValue("heatingSetpoint"))
+        boolean active = c.currentValue("thermostatMode") == "heat" && c.currentValue("healthStatus") != "offline" && target != null
+        Map p = controlParams(k)
+        Map st = (all[k] ?: [:]) as Map
+        if (st.lastBias == null) {
+            // First step: start from the base bias, so switching on changes nothing at first.
+            st = st + [lastBias: p.b0 as double]
+            c.setControlBias(new BigDecimal(p.b0 as double).setScale(1, java.math.RoundingMode.HALF_UP))
+            logCfg "${c.displayName}: room control on, bias ${p.b0}°C"
+        }
+        Map r = controlStep(st, [now: now(), active: active, target: target, room: room, outdoor: outdoor], p)
+        all[k] = r.state
+        if (room != null) c.setRoomTemperature(fromC(room))
+        String line = "${c.displayName}: ${r.reason}, room ${room != null ? String.format('%.2f', room) : 'stale'}, target ${target}, " +
+            "outdoor ${outdoor != null ? String.format('%.1f', outdoor) : '-'}, e ${r.e != null ? String.format('%+.2f', r.e) : '-'}, " +
+            "I ${String.format('%.2f', (r.state.integral ?: 0) as double)}, bias ${r.bias != null ? String.format('%.2f', r.bias) : '-'}"
+        if (r.write != null) {
+            logCmd "${line} → writing bias ${r.write}°C (unit setpoint ${target + (r.write as double)}°C)"
+            c.setControlBias(new BigDecimal(r.write as double).setScale(1, java.math.RoundingMode.HALF_UP))
+        } else {
+            logDebug line
+        }
+        if (r.reason == "fallback" && st.reason != "fallback") logWarn "${c.displayName}: every room sensor is stale; bias back to ${p.b0}°C"
+        all[k].reason = r.reason
+    }
+    state.roomControl = all
 }
 
 // ── Logging (app) ─────────────────────────────────────────────────────

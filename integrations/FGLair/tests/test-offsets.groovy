@@ -150,6 +150,32 @@ settle(d)
 poll(d, 6, 180, 7200)
 check "held 15 sent once the unit reports heat (unit 17.0)", d.writes.contains(['adjust_temperature', 170])
 
+println "Room control bias from the parent"
+d = fresh([heatOffset: "2.0"])
+poll(d, 6, 210, 7200)   // heat, unit 21.0 = room 19.0, unit reads 22.2
+d.writes.clear()
+d.setControlBias(4.0)
+check "bias replaces the heat offset: 19 written as 23.0 (230)", d.writes == [['adjust_temperature', 230]]
+check "controlBias attribute", d.current.controlBias == 4.0
+check "heat bounds follow the bias (12-26)", d.current.minHeatingSetpoint == 12.0 && d.current.maxHeatingSetpoint == 26.0
+d.setRoomTemperature(18.6)
+check "temperature shows the room", d.current.temperature == 18.6
+settle(d)
+poll(d, 6, 230, 7200)
+check "poll keeps the room temperature", d.current.temperature == 18.6
+check "unitTemperature and unitSetpoint are the unit's", d.current.unitTemperature == 22.2 && d.current.unitSetpoint == 23.0
+check "setpoint in room terms", d.current.thermostatSetpoint == 19.0 && d.current.heatingSetpoint == 19.0
+check "operating state from the unit's reading vs written (22.2 vs 23.0: heating)", d.current.thermostatOperatingState == "heating"
+d.writes.clear()
+d.setHeatingSetpoint(20.5)
+check "new target passes through with the bias (24.5)", d.writes == [['adjust_temperature', 245]]
+d.writes.clear()
+d.clearControlBias()
+check "cleared: back to the heat offset (22.5)", d.writes == [['adjust_temperature', 225]]
+settle(d)
+poll(d, 6, 225, 7200)
+check "cleared: temperature is the unit's corrected reading again", d.current.temperature == 20.2
+
 println "Fahrenheit hub"
 d = fresh([heatOffset: "2.0"])
 d.scale = 'F'

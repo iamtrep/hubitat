@@ -49,6 +49,9 @@ metadata {
         attribute "maxHeatingSetpoint",          "number"
         attribute "minCoolingSetpoint",          "number"
         attribute "maxCoolingSetpoint",          "number"
+        attribute "unitTemperature",             "number"
+        attribute "unitSetpoint",                "number"
+        attribute "controlBias",                 "number"
 
         command "setFujitsuMode", [[name: "mode*", type: "ENUM",
                                     description: "Fujitsu operation mode",
@@ -77,7 +80,9 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.3.1"
+@Field static final String CODE_VERSION = "0.4.0"
+// Under room control, temperature shows the room reading the parent sent if it is this recent.
+@Field static final long ROOM_TEMP_MAX_AGE_MS = 900_000L
 // A held low setpoint is dropped if the unit hasn't reported heat by then.
 @Field static final long HELD_SETPOINT_MS = 600_000L
 // A poll can land before a write reaches the cloud and still report the old value.
@@ -144,8 +149,46 @@ private void emitBounds() {
 // the last heat or cool role.
 
 private BigDecimal offsetC(String role) {
-    BigDecimal c = toDecimal(settings["${role}Offset"]) ?: 0
+    // Room control in the parent replaces the fixed heat offset with the bias it computes.
+    BigDecimal c = role == "heat" && state.controlBias != null ? toDecimal(state.controlBias) : (toDecimal(settings["${role}Offset"]) ?: 0)
     return (c * 2).setScale(0, java.math.RoundingMode.HALF_UP) / 2
+}
+
+// --- Room control (from the parent) ---
+// The parent runs the control loop on room sensors and hands over the heat bias in °C; it is used
+// in place of heatOffset, so the setpoint resend and bounds follow it like a preference change.
+
+void setControlBias(BigDecimal biasC) {
+    state.controlBias = biasC
+    sendEvent(name: "controlBias", value: biasC, unit: "°C",
+              descriptionText: "${device} control bias is ${biasC}°C")
+    emitBounds()
+    applyOffsetChange()
+}
+
+void clearControlBias() {
+    if (state.controlBias == null) return
+    state.remove("controlBias")
+    state.remove("roomTemp")
+    logCfg "room control off: heat offset back to ${offsetC('heat')}°C"
+    sendEvent(name: "controlBias", value: offsetC("heat"), unit: "°C",
+              descriptionText: "${device} control bias is the fixed heat offset, ${offsetC('heat')}°C")
+    emitBounds()
+    applyOffsetChange()
+}
+
+// Room reading in the hub's scale; temperature shows it while room control is on.
+void setRoomTemperature(BigDecimal t) {
+    if (state.controlBias == null || t == null) return
+    state.roomTemp = [value: t, at: now()]
+    sendEvent(name: "temperature", value: t, unit: getTemperatureScale(),
+              descriptionText: "${device} temperature is ${t}${getTemperatureScale()} (room sensors)")
+}
+
+private BigDecimal roomTemperature() {
+    Map r = state.roomTemp as Map
+    if (state.controlBias == null || r == null || now() - (r.at as long) > ROOM_TEMP_MAX_AGE_MS) return null
+    return toDecimal(r.value)
 }
 
 private BigDecimal offsetInScale(String role) {
@@ -405,7 +448,20 @@ void updateState(Map data) {
     BigDecimal sp = adjustTemp != null ? (aylaSetpointToScale(adjustTemp) - off).setScale(1, java.math.RoundingMode.HALF_UP) : null
     // Temperature and setpoint go out before the mode and operating state, so a
     // subscriber to thermostatOperatingState reads the values it was derived from.
-    if (temp != null) {
+    if (unitTemp != null) {
+        sendEvent(name: "unitTemperature", value: unitTemp, unit: getTemperatureScale(),
+                  descriptionText: "${device} unit sensor is ${unitTemp}${getTemperatureScale()}")
+    }
+    if (adjustTemp != null) {
+        BigDecimal unitSp = aylaSetpointToScale(adjustTemp)
+        sendEvent(name: "unitSetpoint", value: unitSp, unit: getTemperatureScale(),
+                  descriptionText: "${device} unit setpoint is ${unitSp}${getTemperatureScale()}")
+    }
+    BigDecimal room = roomTemperature()
+    if (room != null) {
+        sendEvent(name: "temperature", value: room, unit: getTemperatureScale(),
+                  descriptionText: "${device} temperature is ${room}${getTemperatureScale()} (room sensors)")
+    } else if (temp != null) {
         String onUnit = off != 0 ? " (unit sensor ${unitTemp}${getTemperatureScale()})" : ""
         sendEvent(name: "temperature", value: temp, unit: getTemperatureScale(),
                   descriptionText: "${device} temperature is ${temp}${getTemperatureScale()}${onUnit}")
