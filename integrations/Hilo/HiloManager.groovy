@@ -43,7 +43,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "0.1.2"
+@Field static final String CODE_VERSION = "0.1.3"
 
 @Field static final String AUTH_URL = "https://connexion.hiloenergie.com/HiloDirectoryB2C.onmicrosoft.com/B2C_1A_SIGN_IN/oauth2/v2.0/"
 @Field static final String CLIENT_ID = "1ca9f585-4a55-4085-8e30-9746a65fa561"
@@ -69,8 +69,6 @@ definition(
 // The meter's live stream goes silent about 57 min after it opens; a fresh token reopens it first.
 @Field static final int STREAM_TOKEN_SECS = 3000
 @Field static final int HTTP_TIMEOUT = 20
-// A token refresh unanswered for this long counts as lost (a reboot), and another may start.
-@Field static final long TOKEN_REFRESH_STALE_MS = 60_000L
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 // How long the app page redraws itself while waiting for the device it asked for.
 @Field static final long CHILD_WAIT_MS = 30_000L
@@ -900,8 +898,9 @@ void logout() {
 
 // ── Tokens ────────────────────────────────────────────────────────────
 
-// Sync, for the setup pages only. Returns null when no token can be had; the reason is already
-// logged. fresh: refresh even when the token in memory is still valid.
+// Called by the polls. Returns null when
+// no token can be had; the reason is already logged.
+// fresh: refresh even when the token in memory is still valid.
 String hiloAccessToken(boolean fresh = false) {
     List cached = ACCESS.get(app.id.toString())
     if (!fresh && cached && (cached[1] as long) - now() > TOKEN_REFRESH_BUFFER_MS) return cached[0] as String
@@ -922,72 +921,10 @@ String hiloAccessToken(boolean fresh = false) {
 // as long as the app is busy, and the platform counts that wait as the child's own hub load.
 void pushStreamToken() {
     runIn(STREAM_TOKEN_SECS, "pushStreamToken")
-    if (meterChild()) refreshTokenThen("stream")
-}
-
-// The access token in memory, or null when there is none or it is about to expire.
-private String cachedAccessToken() {
-    List cached = ACCESS.get(app.id.toString())
-    return (cached && (cached[1] as long) - now() > TOKEN_REFRESH_BUFFER_MS) ? cached[0] as String : null
-}
-
-// Refreshes the token async, so this singleThreaded app isn't held for the round trip (up to
-// HTTP_TIMEOUT, longer when the hub is busy), then runs each follow-up: "poll", "stream" (hand the
-// token to the meter) or "history". One refresh at a time: Hilo rotates the refresh token, so a
-// second request would send one already used; a caller during a refresh adds its follow-up.
-private void refreshTokenThen(String then) {
-    Map r = (state.tokenRefresh ?: [:]) as Map
-    List thens = (r.then ?: []) as List
-    if (!(then in thens)) thens = thens + [then]
-    if (r.at && now() - (r.at as long) < TOKEN_REFRESH_STALE_MS) {
-        state.tokenRefresh = [at: r.at, then: thens]
-        return
-    }
-    String refresh = decryptState("refreshTokenEnc")
-    if (!refresh) {
-        state.remove("tokenRefresh")
-        return
-    }
-    state.tokenRefresh = [at: now(), then: thens]
-    // asynchttpPost sends a Map body as JSON whatever requestContentType says, so the form is encoded here.
-    String form = [grant_type: "refresh_token", client_id: CLIENT_ID, refresh_token: refresh, scope: SCOPE].collect { k, v ->
-        "${URLEncoder.encode(k as String, 'UTF-8')}=${URLEncoder.encode(v as String, 'UTF-8')}"
-    }.join("&")
-    asynchttpPost("tokenCallback", [uri: "${AUTH_URL}token", requestContentType: "application/x-www-form-urlencoded", contentType: "application/json",
-                                    headers: ["User-Agent": USER_AGENT], body: form, timeout: HTTP_TIMEOUT])
-}
-
-void tokenCallback(resp, data) {
-    List thens = (((state.tokenRefresh ?: [:]) as Map).then ?: []) as List
-    state.remove("tokenRefresh")
-    Map tokens = tokenAnswer(resp)
-    if (tokens.error) {
-        if (tokens.rejected) loginLost(tokens.error as String)
-        else logWarn "token refresh failed: ${tokens.error}"
-        if ("poll" in thens && isLoggedIn()) pollFailed("no access token")
-        return
-    }
-    storeTokens(tokens)
-    for (Object t : thens) {
-        switch (t) {
-            case "poll": poll(); break
-            case "stream": meterChild()?.streamToken(tokens.access_token as String); break
-            case "history": continueHistory(); break
-        }
-    }
-}
-
-// The token response, or [error: text, rejected: true when Hilo refused the grant], as tokenRequest.
-private Map tokenAnswer(resp) {
-    int status = resp.getStatus()
-    Map json = null
-    try { json = resp.getJson() as Map } catch (Exception ignored) { }
-    if (resp.hasError() || status < 200 || status >= 300) {
-        String why = json?.error_description ?: json?.error ?: (resp.hasError() ? resp.getErrorMessage() : null)
-        return [error: "HTTP ${status}${why ? ': ' + why : ''}", rejected: status == 400 || status == 401]
-    }
-    if (!json?.access_token) return [error: "no access token in Hilo's answer"]
-    return json
+    ChildDeviceWrapper meter = meterChild()
+    if (!meter) return
+    String token = hiloAccessToken(true)
+    if (token) meter.streamToken(token)
 }
 
 // Sync: the caller needs the token before it can do anything else.
@@ -1094,11 +1031,8 @@ void poll() {
     checkVersion()
     if (!isLoggedIn() || !state.locationId) return
     if (state.pausedUntil && now() < (state.pausedUntil as long)) { logDebug "paused by Retry-After"; return }
-    String token = cachedAccessToken()
-    if (!token) {
-        refreshTokenThen("poll")
-        return
-    }
+    String token = hiloAccessToken()
+    if (!token) { if (isLoggedIn()) pollFailed("no access token"); return }
     Date nowDate = new Date()
     String today = nowDate.format("yyyy-MM-dd", location.timeZone)
     String yesterday = (nowDate - 1).format("yyyy-MM-dd", location.timeZone)
@@ -1194,12 +1128,8 @@ private void continueHistory() {
 // Steps back a week at a time until a week has no data at all. Week answers give 0.0, not
 // null, for days before the data starts (Day answers give null), so 0 counts as no data.
 private void fetchWeek(String start, int weeks, String laterFirst) {
-    String token = cachedAccessToken()
-    if (!token) {
-        state.remove("historyBusy")
-        refreshTokenThen("history")
-        return
-    }
+    String token = hiloAccessToken()
+    if (!token) { state.remove("historyBusy"); return }
     logNet "Energy2 week from ${start}"
     asynchttpGet("weekCallback", [uri: "${API_URL}/Locations/${state.locationId}/History/Energy2",
                                   query: [date: start, timescale: "Week"], headers: apiHeaders(token),
@@ -1250,12 +1180,8 @@ private void backfillNext() {
         state.remove("historyBusy")
         return
     }
-    String token = cachedAccessToken()
-    if (!token) {
-        state.remove("historyBusy")
-        refreshTokenThen("history")
-        return
-    }
+    String token = hiloAccessToken()
+    if (!token) { state.remove("historyBusy"); return }
     state.historyBusy = now()
     state.backfilling = true
     logNet "Energy2 ${next} (history)"
