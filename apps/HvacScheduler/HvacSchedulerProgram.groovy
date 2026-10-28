@@ -15,7 +15,7 @@ import com.hubitat.hub.domain.State
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.4.0"
+@Field static final String CODE_VERSION = "0.5.0"
 
 definition(
     name: "HVAC Scheduler Program",
@@ -249,7 +249,7 @@ Map mainPage() {
                 if (err) paragraph err
                 paragraph "<div class='tsp-ctl'>" +
                           switchButton("btnPause", "Running", !rt.paused, "off pauses the program") +
-                          switchButton("btnEco", "Eco", rt.eco as boolean, "heat ${fmtT((cfg.eco as Map).offset)} ${unit()} lower, cool ${fmtT((cfg.eco as Map).offset)} ${unit()} higher") +
+                          switchButton("btnEco", "Eco", rt.eco as boolean, ctx.ecoSwitch ? "on by switch until the switch clears" : "heat ${fmtT((cfg.eco as Map).offset)} ${unit()} lower, cool ${fmtT((cfg.eco as Map).offset)} ${unit()} higher") +
                           "</div>", width: 9
                 input "btnApply", "button", title: "Apply now", width: 3, inputClass: SEC
                 Map holdOpts = (cfg.profiles as List<Map>).collectEntries { Map p -> [(p.name): profileText(cfg, p.name as String)] } + [custom: "Custom setpoints"]
@@ -336,7 +336,11 @@ String nowHtml(Map cfg, Map rt, Map target, Map ctx, Map sm) {
         if (v) h << " ${heatSpan(v.heat)}${v.cool != null ? ' / ' + coolSpan(v.cool) : ''}"
         h << "</div>"
     }
-    if (rt.eco) h << "<div>Eco is on: ${fmtT((cfg.eco as Map).offset)} ${unit()} applied</div>"
+    List<String> ecoBy = ecoSwitchesOn()
+    if (rt.eco || ecoBy) {
+        String by = ecoBy ? " while ${esc(ecoBy.join(', '))} ${ecoBy.size() > 1 ? 'call' : 'calls'} for it" : ''
+        h << "<div>Eco is on${by}: ${fmtT((cfg.eco as Map).offset)} ${unit()} applied</div>"
+    }
     return h.append("</div>").toString()
 }
 
@@ -824,7 +828,9 @@ Map advancedPage() {
         section("Eco") {
             input "ecoOffset", "decimal", title: "Eco offset (${unit()})", defaultValue: 2.0, width: 6, submitOnChange: true
             input "ecoOnOverrides", "bool", title: "Also apply eco on top of mode overrides", defaultValue: true, width: 6, submitOnChange: true
-            paragraph "<p class='tsp-note'>Eco lowers the heating setpoint and raises the cooling setpoint by the offset. Changing the offset while eco is on recalculates from the schedule.</p>"
+            input "ecoWhenOn", "capability.switch", title: "Eco while any of these is on", multiple: true, required: false, submitOnChange: true, width: 6
+            input "ecoWhenOff", "capability.switch", title: "Eco while any of these is off", multiple: true, required: false, submitOnChange: true, width: 6
+            paragraph "<p class='tsp-note'>Eco lowers the heating setpoint and raises the cooling setpoint by the offset. Changing the offset while eco is on recalculates from the schedule. Eco is on while the Eco switch on the main page is on or any switch above calls for it; turning the Eco switch off leaves the switches' eco in place.</p>"
         }
         section("Writing to thermostats") {
             input "separation", "decimal", title: "Required heat/cool separation (${unit()})", defaultValue: 2.0, width: 6, submitOnChange: true
@@ -851,7 +857,7 @@ Map advancedPage() {
 
 // Settings changed on a page apply on the next render, without waiting for Done: the occupied
 // profile picker writes the configuration, and any other change re-subscribes and re-evaluates.
-@Field static final List<String> LIVE_KEYS = ['thermostats', 'occupancySensor', 'occupiedAfter', 'vacantAfter', 'pauseWhenOn', 'pauseWhenOff',
+@Field static final List<String> LIVE_KEYS = ['thermostats', 'occupancySensor', 'occupiedAfter', 'vacantAfter', 'pauseWhenOn', 'pauseWhenOff', 'ecoWhenOn', 'ecoWhenOff',
     'restrictFrom', 'restrictFromAt', 'restrictFromOffset', 'restrictTo', 'restrictToAt', 'restrictToOffset', 'restrictDays', 'restrictModes',
     'whilePaused', 'onResume', 'ecoOffset', 'ecoOnOverrides', 'separation', 'verifyWrites', 'applyOnStart']
 
@@ -1229,6 +1235,7 @@ void subscribeAll() {
     subscribe(location, "mode", "modeHandler")
     subscribe(location, "systemStart", "startHandler")
     [pauseWhenOn, pauseWhenOff].each { if (it) subscribe(it, "switch", "pauseSwitchHandler") }
+    [ecoWhenOn, ecoWhenOff].each { if (it) subscribe(it, "switch", "ecoSwitchHandler") }
     if (occupancySensor) subscribe(occupancySensor, "motion", "occupancyHandler")
     List<String> vars = varNames((state.config ?: [:]) as Map)
     removeAllInUseGlobalVar()
@@ -1318,6 +1325,7 @@ Map buildCtx(Map cfg) {
     Map ctx = [now: t, tz: tz, modeId: location.currentMode?.id as Long, sun: sun, vars: vars,
                occupied: occupancySensor ? (((state.rt as Map)?.occ as Map)?.state == 'occupied') : null]
     ctx.restricted = restrictedNow(cfg.restrictions as Map, ctx) || switchRestricted()
+    ctx.ecoSwitch = !ecoSwitchesOn().isEmpty()
     return ctx
 }
 
@@ -1385,6 +1393,12 @@ void commitOccupancy() {
 boolean switchRestricted() {
     return (pauseWhenOn ?: []).any { it.currentValue("switch") == "on" } ||
            (pauseWhenOff ?: []).any { it.currentValue("switch") == "off" }
+}
+
+// The eco list switches now calling for eco.
+List<String> ecoSwitchesOn() {
+    return ((ecoWhenOn ?: []).findAll { it.currentValue("switch") == "on" } +
+            (ecoWhenOff ?: []).findAll { it.currentValue("switch") == "off" }).collect { it.displayName as String }
 }
 
 List<Map> thermostatStates(Map modeOverride = [:]) {
@@ -1542,7 +1556,7 @@ Map statusMap(Map cfg, Map rt, Map target, Map ctx) {
         switch: rt.paused ? 'off' : 'on', status: status, schedule: cfg.active, profile: target.profile ?: 'none',
         heatingTarget: target.heat, coolingTarget: target.cool, holdEnd: holdEnd,
         nextTransition: next ? iso.format(new Date(next.at as long)) : 'none', nextProfile: next?.profile ?: 'none',
-        eco: rt.eco ? 'on' : 'off', ecoOffset: (cfg.eco as Map).offset, lastApply: rt.lastApply,
+        eco: rt.eco || ctx.ecoSwitch ? 'on' : 'off', ecoOffset: (cfg.eco as Map).offset, lastApply: rt.lastApply,
         occupancy: occupancySensor ? (((rt.occ as Map)?.state ?: 'none') as String) : 'none']
 }
 
@@ -1555,6 +1569,7 @@ void publish(Map cfg, Map rt, Map target, Map ctx) {
 void wakeHandler() { checkVersion(); evaluate("wake", false) }
 void modeHandler(evt) { checkVersion(); logEvt "mode ${evt.value}"; evaluate("mode", false) }
 void pauseSwitchHandler(evt) { checkVersion(); logEvt "pause switch ${evt.displayName} ${evt.value}"; evaluate("pause switch", false) }
+void ecoSwitchHandler(evt) { checkVersion(); logEvt "eco switch ${evt.displayName} ${evt.value}"; evaluate("eco switch", false) }
 void startHandler(evt = null) {
     checkVersion()
     Map rt = state.rt as Map
@@ -1963,7 +1978,7 @@ Map resolveTarget(Map cfg, Map rt, Map ctx) {
         base = merged
     }
     Map eco = (cfg.eco ?: [:]) as Map
-    boolean ecoOn = rt.eco == true && (layer != 'mode' || eco.onOverrides != false)
+    boolean ecoOn = (rt.eco == true || ctx.ecoSwitch == true) && (layer != 'mode' || eco.onOverrides != false)
     BigDecimal off = numOrNull(eco.offset) ?: 0.0G
     BigDecimal heat = base.heat as BigDecimal
     BigDecimal cool = base.cool as BigDecimal

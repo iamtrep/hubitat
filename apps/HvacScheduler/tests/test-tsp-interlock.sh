@@ -10,7 +10,9 @@
 # pausing the program through its status switch (thermostat off, then mode
 # restored and current setpoints applied); the program paused by the group
 # and by its own switch at once, lifted in both orders; the program paused by
-# the group (pause while off) and by a second switch (pause while on).
+# the group (pause while off) and by a second switch (pause while on); that
+# switch moved to the eco list (eco while on), alone and with eco set by
+# command.
 #
 # Rig (set up once): virtual thermostat "test-tsp-ilk-th", virtual switch
 # "test-tsp-ilk-sw", virtual contact "test-tsp-ilk-window", HVAC Interlock group "test-ilk-tsp" (permit, that
@@ -255,6 +257,7 @@ def save_settings(app_id, page, fields_in):
             fields += [(f"{n}.type", typ), (f"{n}.multiple", "true" if i.get("multiple") else "false")]
             if typ.startswith(("capability.", "device.")):
                 if v: fields.append((f"settings[{n}]", ",".join(str(x) for x in v)))
+                elif n in fields_in: fields.append((f"settings[{n}]", ""))   # an empty value clears the input
                 fields += [("deviceList", n), ("", "")]
                 continue
             if v is None or v == "" or v == "[]": continue
@@ -427,6 +430,26 @@ try:
     maker(peak_id, "off")
     check("both lists clear: mode restored", wait_for(therm_id, "thermostatMode", "heat"), "heat")
     check("and setpoint applied", wait_for(therm_id, "heatingSetpoint", 22.0), 22.0)
+
+    # ── Eco lists ─────────────────────────────────────────────────────
+    section("Eco lists")
+    save_settings(prog_id, page_of(prog_id, "pauseWhenOn"), {"pauseWhenOn": []})
+    save_settings(prog_id, page_of(prog_id, "ecoWhenOn"), {"ecoWhenOn": [peak_id]})
+    maker(peak_id, "on")
+    check("a switch in the eco list lowers the setpoint", wait_for(therm_id, "heatingSetpoint", 20.0), 20.0)
+    check("program device eco on", wait_for(prog_dev, "eco", "on"), "on")
+    check("the program is not paused", prog_status(), "schedule")
+    check("mode left in heat", attr(therm_id, "thermostatMode"), "heat")
+    run_method(prog_dev, "setEco", "off")
+    time.sleep(5)
+    check("eco off by command leaves the switch's eco", float(attr(therm_id, "heatingSetpoint")), 20.0)
+    run_method(prog_dev, "setEco", "on")
+    maker(peak_id, "off")
+    time.sleep(5)
+    check("switch clear leaves the commanded eco", float(attr(therm_id, "heatingSetpoint")), 20.0)
+    run_method(prog_dev, "setEco", "off")
+    check("both clear: setpoint restored", wait_for(therm_id, "heatingSetpoint", 22.0), 22.0)
+    check("program device eco off", wait_for(prog_dev, "eco", "off"), "off")
 finally:
     maker(window_id, "close")
     maker(peak_id, "off")

@@ -54,6 +54,8 @@ An override maps a hub mode to a profile and applies on top of any schedule whil
 
 Eco lowers the heating setpoint and raises the cooling setpoint by the offset (default 2.0 °C or °F, in the hub's scale). It is applied to whatever the schedule, override or hold resolves to and is never stored as a setpoint, so changing the offset while eco is on recalculates from the schedule. By default eco also applies on top of mode overrides; the **Also apply eco on top of mode overrides** option turns that off.
 
+Eco can also follow switches: **Eco while any of these is on** and **Eco while any of these is off** (a peak-event switch, for example). Eco is on while the **Eco** switch on the main page is on or any of these switches calls for it. The two are independent: turning the **Eco** switch off leaves the switches' eco in place, and a switch clearing leaves an eco turned on by hand or by `setEco`.
+
 ### Occupancy
 
 A program can take one motion sensor as its occupancy sensor, on the *When it changes* page. The zone counts as occupied once the sensor has been active for **Occupied after** minutes (default 5) and as vacant once it has been inactive for **Vacant after** minutes (default 30). To use several sensors, or presence sensors, combine them first with Zone Motion Controller or Sensor Aggregator and pick that device.
@@ -121,7 +123,7 @@ The device is how rules, Maker API, dashboards and other apps reach one program;
 | `holdEnd` | `next`, `indefinite`, an ISO time, or `none` |
 | `nextTransition` | ISO time of the next period, or `none` |
 | `nextProfile` | Profile of the next period, or `none` |
-| `eco` | `on`, `off` |
+| `eco` | `on` while eco is set by `setEco` (or the **Eco** switch) or by an eco list switch, otherwise `off` |
 | `ecoOffset` | Offset in °C or °F (hub's scale) |
 | `lastApply` | `ok`, `partial`, `failed` |
 | `occupancy` | `occupied`, `vacant`, or `none` without an occupancy sensor |
@@ -186,7 +188,7 @@ Run from the repository root. On-hub tests target the default hub in `.hubitat.j
 | `RUN_SLOW_TESTS=1 bash apps/HvacScheduler/tests/test-tsp-retry.sh` | Write check, with the Stubborn Thermostat test driver |
 | `bash apps/HvacScheduler/tests/test-tsp-api.sh` | HTTP API, on the program `test-tsp.sh` provisions |
 | `bash apps/HvacScheduler/tests/test-tsp-import.sh` | Importing the built-in scheduler the parity test uses |
-| `bash apps/HvacScheduler/tests/test-tsp-interlock.sh` | Hub variable setpoints, eco by device command, pausing on an HVAC Interlock group |
+| `bash apps/HvacScheduler/tests/test-tsp-interlock.sh` | Hub variable setpoints, eco by device command and by eco lists, pausing on an HVAC Interlock group |
 | `RUN_SLOW_TESTS=1 bash apps/HvacScheduler/tests/test-tsp-occupancy.sh` | Occupancy: both delays, the occupied profile, eco, holds, pauses |
 | `RUN_SLOW_TESTS=1 bash apps/HvacScheduler/tests/test-tsp-parity.sh` | Side by side with a built-in Thermostat Scheduler |
 
