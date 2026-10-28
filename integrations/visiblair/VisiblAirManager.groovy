@@ -23,7 +23,6 @@ definition(
     category: "Convenience",
     singleInstance: true,
     // Polls, config fetches and child config saves all rewrite state.sensorConfigs; no handler blocks.
-    singleThreaded: true,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/integrations/visiblair/VisiblAirManager.groovy",
     iconUrl: "",
     iconX2Url: ""

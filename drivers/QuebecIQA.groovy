@@ -36,7 +36,6 @@ metadata {
         name: "Québec Air Quality Index (IQA)",
         namespace: "iamtrep",
         author: "pj",
-        singleThreaded: true,
         description: "Hourly Québec air quality index (IQA) from the nearest provincial or Montréal monitoring station",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/QuebecIQA.groovy"
     ) {
