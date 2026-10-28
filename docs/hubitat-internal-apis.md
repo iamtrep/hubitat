@@ -110,6 +110,7 @@ Downloading a release so it becomes restorable is a main-platform endpoint:
 ## Live logs and events
 
 - `ws://{hub_ip}/logsocket` — WebSocket for real-time hub log stream (each frame's `msg` is HTML-escaped: `&amp; &lt; &gt; &quot; &apos;`; `/logs/past/json` keeps the text raw) *(probed 2.5.2.135)*
+- **`/logsocket` drops lines in a burst, for every client.** An app logging 400 `warn` lines at once (10 scheduled jobs of 40 lines each) reached a socket client on the host as 309 and 337 of them, and two Log Monitor bridges on the hub as 301 to 361 (5 runs); `/logs/past/json` had all 400. Nothing on the socket marks the gap, so a consumer can't count on seeing every line of a burst *(probed 2.5.3.108, C-8 Pro, throwaway app)*.
 - `ws://{hub_ip}:80/eventsocket` — WebSocket for real-time device-state events (used by the admin UI). One text frame per event, a flat JSON object with this fixed key order *(probed 2.5.2.135)*:
 
   `{ "source":"DEVICE","name":"switch","displayName" : "Kitchen", "value" : "on", "type" : "null", "unit":"null","deviceId":795,"hubId":0,"installedAppId":0,"descriptionText" : "null"}` *(probed 2.5.2.135)*
