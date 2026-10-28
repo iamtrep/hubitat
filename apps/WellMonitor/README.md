@@ -25,7 +25,7 @@ The flow meter sits *downstream* of the pressure tank, so it measures household 
 
 ### Emergency Shutoff
 - Automatically turns off the pump switch if it runs beyond a configurable timeout
-- Defense-in-depth: both scheduled callback and power-event-driven check
+- Defense-in-depth: a scheduled callback at the timeout, a check every minute while the pump runs (so a callback the hub drops under load, as in the minutes after a restart, is retried), and a check when the pump stops
 - Activates an optional virtual leak sensor (for integration with other automations)
 - Sends push notifications on shutoff
 

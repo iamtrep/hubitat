@@ -19,7 +19,7 @@ import com.hubitat.hub.domain.Hub
 import java.nio.file.AccessDeniedException
 
 @Field static final String APP_NAME = "Well Monitor"
-@Field static final String CODE_VERSION = "0.11.6"
+@Field static final String CODE_VERSION = "0.11.7"
 @Field static final String DASHBOARD_FILE = "wellmonitor-dashboard.html"
 @Field static final String CHARTJS_FILE = "wellpump-chart.min.js"
 
@@ -454,6 +454,7 @@ private void recoverPumpState() {
             if (remaining > 0) {
                 int remainingSeconds = Math.round(remaining / 1000.0) as int
                 runIn(remainingSeconds, "emergencyShutoff")
+                runEvery1Minute("pumpWatchdog")
                 logInfo("Recovered running pump state, emergency timer rescheduled (${remainingSeconds}s remaining)")
             } else {
                 logWarn("Recovered running pump state but emergency timeout already exceeded - triggering shutoff")
@@ -530,6 +531,7 @@ private void handlePumpStarted(long currentTime) {
     if (enableEmergencyShutoff != false) {
         int timeout = (emergencyTimeoutSeconds ?: 300) as int
         runIn(timeout, "emergencyShutoff")
+        runEvery1Minute("pumpWatchdog")
         logSched("Emergency shutoff scheduled in ${timeout}s")
     }
 }
@@ -539,6 +541,7 @@ private void handlePumpStopped(long currentTime) {
 
     // Cancel emergency timer
     unschedule("emergencyShutoff")
+    unschedule("pumpWatchdog")
 
     if (pumpActiveSwitch) pumpActiveSwitch.off()
 
@@ -652,6 +655,20 @@ private void performEmergencyShutoff(BigDecimal durationSeconds) {
 
     state.pumpRunning = false
     unschedule("emergencyShutoff")
+    unschedule("pumpWatchdog")
+}
+
+// Checks the time limit every minute while the pump runs. The one-shot emergencyShutoff job is
+// dropped when this singleThreaded app is held up for more than 120 s (as in a hub's startup
+// rush, systemStart recovery included); the watchdog then shuts off at most a minute late.
+void pumpWatchdog() {
+    checkVersion()
+    if (!state.pumpRunning || enableEmergencyShutoff == false) {
+        unschedule("pumpWatchdog")
+        return
+    }
+    long elapsedMs = now() - (state.pumpBegin as long)
+    if (elapsedMs > ((emergencyTimeoutSeconds ?: 300) as int) * 1000L) emergencyShutoff()
 }
 
 // ==================== Volume Tracking ====================
