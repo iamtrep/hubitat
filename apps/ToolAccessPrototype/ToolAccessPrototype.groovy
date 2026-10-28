@@ -78,7 +78,6 @@ definition(
     menu: "Apps",
     category: "Convenience",
     singleInstance: false,
-    singleThreaded: true,
     oauth: true,
     importUrl: "",
     iconUrl: "",

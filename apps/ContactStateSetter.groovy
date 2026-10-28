@@ -27,7 +27,6 @@ definition(
     menu: "Automations",
     category: "Convenience",
     singleInstance: false,
-    singleThreaded: true,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/ContactStateSetter.groovy",
     iconUrl: "",
     iconX2Url: "",
