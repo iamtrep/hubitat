@@ -39,7 +39,7 @@ definition(
 
 // --- Constants ---
 
-@Field static final String CODE_VERSION = "1.1.7"
+@Field static final String CODE_VERSION = "1.1.8"
 
 @Field static final String OAUTH_BASE_URL = "https://api.oauth.blink.com"
 @Field static final String CLIENT_ID = "ios"
@@ -633,17 +633,14 @@ void exchangeCodeForTokens(String code) {
     }
 }
 
+// Sync, inside the execution that needs the token. Refresh tokens rotate: the request spends the old one, and under
+// singleThreaded an async callback that waits more than 120 s (a hub restart's startup rush) is dropped, which would
+// lose the new one and the sign-in with it. The flag also keeps two refreshes from running at once.
 void refreshAccessToken() {
     checkVersion()
     logNet "refreshing access token"
     if (!hasToken("refreshToken")) {
         logError "no refresh token available"
-        return
-    }
-    // Refresh tokens rotate: a second request with the same token would be rejected and clear auth.
-    Long sentAt = atomicState.tokenRefreshSentAt as Long
-    if (sentAt && now() - sentAt < (HTTP_TIMEOUT + 5) * 1000L) {
-        logNet "token refresh already in flight"
         return
     }
 
@@ -655,20 +652,55 @@ void refreshAccessToken() {
         scope        : SCOPE
     ])
 
-    atomicState.tokenRefreshSentAt = now()
-    asynchttpPost("refreshTokenResponse", [
-        uri               : "${OAUTH_BASE_URL}/oauth/token",
-        headers           : [
-            "User-Agent": UA_TOKEN,
-            "Accept"    : "application/json"
-        ],
-        body              : postBody,
-        requestContentType: "application/x-www-form-urlencoded",
-        contentType       : "application/json",
-        timeout           : HTTP_TIMEOUT
-    ])
+    Map json = null
+    try {
+        httpPost([
+            uri               : "${OAUTH_BASE_URL}/oauth/token",
+            headers           : [
+                "User-Agent": UA_TOKEN,
+                "Accept"    : "application/json"
+            ],
+            body              : postBody,
+            requestContentType: "application/x-www-form-urlencoded",
+            contentType       : "application/json",
+            timeout           : HTTP_TIMEOUT
+        ]) { r ->
+            if (r.status == 200) json = r.data as Map
+            else logError "token refresh failed: HTTP ${r.status}"
+        }
+    } catch (groovyx.net.http.HttpResponseException e) {
+        int status = e.statusCode
+        if (isTransientStatus(status)) {
+            noteRetryAfterSeconds(e.response?.getFirstHeader("Retry-After")?.getValue() as String)
+            noteCloudFailure("token refresh failed: HTTP ${status} ${e.message}")
+            return
+        }
+        logError "token refresh failed: HTTP ${status} ${e.message}${describeHttpBody(e.response)}"
+        if (status == 401 || status == 400) {
+            logWarn "refresh token rejected; tokens cleared (tier/accountId/hardwareId preserved for one-click re-auth)"
+            clearTokensOnly()
+            markChildrenOffline("signed out of Blink")
+        }
+        return
+    } catch (Exception e) {
+        // No answer (timeout, unreachable): transient, the token is unchanged.
+        noteCloudFailure("token refresh failed: ${e.message}")
+        return
+    }
+    if (json == null) return
+    try {
+        storeToken("accessToken", json.access_token as String)
+        if (json.refresh_token) storeToken("refreshToken", json.refresh_token as String)
+        long expiresIn = (json.expires_in ?: 3600L) as long
+        state.tokenExpiry = now() + (expiresIn * 1000L)
+        logInfo "token refreshed, expires in ${expiresIn}s"
+        scheduleTokenRefresh()
+    } catch (Exception e) {
+        logError "token refresh failed: ${e.message}"
+    }
 }
 
+// The async refresh's callback, before 1.1.8: kept so a refresh in flight across the update is still stored.
 void refreshTokenResponse(resp, data) {
     checkVersion()
     atomicState.remove("tokenRefreshSentAt")
@@ -1666,13 +1698,18 @@ private void markChildrenOffline(String reason) {
 
 // Honors a Retry-After in seconds by skipping polls until then.
 private void noteRetryAfter(resp) {
-    Long secs = null
+    String v = null
     try {
-        String v = resp.getHeaders()?.find { k, val -> (k as String)?.equalsIgnoreCase("Retry-After") }?.value as String
-        if (v?.trim()?.isLong()) secs = v.trim().toLong()
+        v = resp.getHeaders()?.find { k, val -> (k as String)?.equalsIgnoreCase("Retry-After") }?.value as String
     } catch (Exception e) {
         return
     }
+    noteRetryAfterSeconds(v)
+}
+
+// A Retry-After header's value in seconds, from an async response or a sync exception.
+private void noteRetryAfterSeconds(String v) {
+    Long secs = v?.trim()?.isLong() ? v.trim().toLong() : null
     if (secs == null || secs <= 0) return
     long ms = Math.min(secs * 1000L, RETRY_AFTER_MAX_MS)
     state.cloudPausedUntil = now() + ms
