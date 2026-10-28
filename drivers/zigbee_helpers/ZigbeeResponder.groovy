@@ -18,7 +18,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = '0.3.7'
+@Field static final String CODE_VERSION = '0.3.8'
 
 // Sub-second WS re-delivery dedup, keyed by hub device id, value = [sig, ts].
 // In-JVM only — lost on hub reboot, which is fine for sub-second dedup. Bounded
@@ -28,10 +28,16 @@ import java.util.concurrent.ConcurrentHashMap
 @Field static final ConcurrentHashMap<String, Map> timeRequestDedup = new ConcurrentHashMap<>()
 @Field static final ConcurrentHashMap<String, Map> otaRequestDedup  = new ConcurrentHashMap<>()
 
+// Per device, in memory: the allowed-id lists parse() reads (CFG) and the WebSocket flags (WS). parse() runs for every
+// Zigbee frame on the hub and never touches state: in a driver, a method that touches state writes the whole store back
+// when it ends, so concurrent frames would race on it, and singleThreaded would queue every frame behind the last.
+// Lost on a push or reboot; cfg() rebuilds the lists from settings.
+@Field static final ConcurrentHashMap<String, Map> CFG = new ConcurrentHashMap<>()
+@Field static final ConcurrentHashMap<String, ConcurrentHashMap<String, Boolean>> WS = new ConcurrentHashMap<>()
+
 metadata {
     definition(name: 'Zigbee Responder', namespace: 'iamtrep', author: 'pj',
-               importUrl: 'https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/zigbee_helpers/ZigbeeResponder.groovy',
-               singleThreaded: true) {
+               importUrl: 'https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/zigbee_helpers/ZigbeeResponder.groovy') {
         capability 'Initialize'
         capability 'Configuration'
         capability 'Refresh'
@@ -105,13 +111,14 @@ void initialize() {
 
     if (settings?.debugEnable || settings?.traceEnable) runIn(1800, 'logsOff', [overwrite: true])
 
-    state.timeAllowedIds   = parseAllowedIds(settings?.timeResponderDeviceIds as String)
-    state.timeUnixEpochIds = parseAllowedIds(settings?.timeResponderUnixEpochDeviceIds as String)
-    state.otaAllowedIds    = parseAllowedIds(settings?.otaResponderDeviceIds as String)
+    // 0.3.7 and earlier kept these in state.
+    ['timeAllowedIds', 'timeUnixEpochIds', 'otaAllowedIds', 'wsConnected', 'wsReconnectPending', 'wsIntentionalClose'].each { state.remove(it) }
+    Map c = buildCfg()
+    CFG.put(device.id.toString(), c)
     logCfg "Time responder: ${settings?.enableTimeResponder ? 'ENABLED' : 'disabled'}, " +
-            "allowedIds=${state.timeAllowedIds}, unixEpochIds=${state.timeUnixEpochIds}"
+            "allowedIds=${c.time}, unixEpochIds=${c.unix}"
     logCfg "OTA responder:  ${settings?.enableOtaResponder ? 'ENABLED' : 'disabled'}, " +
-            "allowedIds=${state.otaAllowedIds}"
+            "allowedIds=${c.ota}"
 
     runIn(2, 'connectZigbeeLogSocket', [overwrite: true])
 }
@@ -132,9 +139,34 @@ void configure() {
 }
 
 void refresh() {
-    if (txtEnable) logInfo "ws=${state.wsConnected}, " +
-            "time=${settings?.enableTimeResponder ? 'on' : 'off'} allowed=${state.timeAllowedIds} unixEpoch=${state.timeUnixEpochIds}, " +
-            "ota=${settings?.enableOtaResponder ? 'on' : 'off'} allowed=${state.otaAllowedIds}"
+    Map c = cfg()
+    if (txtEnable) logInfo "ws=${ws().connected}, " +
+            "time=${settings?.enableTimeResponder ? 'on' : 'off'} allowed=${c.time} unixEpoch=${c.unix}, " +
+            "ota=${settings?.enableOtaResponder ? 'on' : 'off'} allowed=${c.ota}"
+}
+
+private Map buildCfg() {
+    return [time: parseAllowedIds(settings?.timeResponderDeviceIds as String),
+            unix: parseAllowedIds(settings?.timeResponderUnixEpochDeviceIds as String),
+            ota : parseAllowedIds(settings?.otaResponderDeviceIds as String)]
+}
+
+// The allowed-id lists, from memory. Empty memory means a push or reboot: rebuild from settings, and once, from a job
+// that may touch state, re-initialize if the code version changed.
+private Map cfg() {
+    String k = device.id.toString()
+    Map c = CFG.get(k)
+    if (c != null) return c
+    if (CFG.putIfAbsent(k, buildCfg()) == null) runInMillis(100, 'checkCodeVersion')
+    return CFG.get(k)
+}
+
+void checkCodeVersion() {
+    if (state.version != CODE_VERSION) updated()  // updated() closes the open socket before reconnecting
+}
+
+private ConcurrentHashMap<String, Boolean> ws() {
+    return WS.computeIfAbsent(device.id.toString(), { String k -> new ConcurrentHashMap<String, Boolean>() } as java.util.function.Function)
 }
 
 void reconnect() {
@@ -148,16 +180,14 @@ void reconnect() {
 // ══════════════════════════════════════════════════════════════════════════
 
 void connectZigbeeLogSocket() {
-    state.wsReconnectPending = false
-    state.wsIntentionalClose = false
-    state.wsConnected = false
+    ws().putAll([reconnectPending: false, intentionalClose: false, connected: false])
     sendEvent(name: 'wsStatus', value: 'connecting')
     logNet 'connecting to ws://127.0.0.1:8080/zigbeeLogsocket'
     try {
         interfaces.webSocket.connect('ws://127.0.0.1:8080/zigbeeLogsocket')
         logInfo 'zigbeeLogsocket connect initiated'
     } catch (Exception e) {
-        state.wsConnected = false
+        ws().connected = false
         sendEvent(name: 'wsStatus', value: 'failed')
         logWarn "connect failed: ${e.message}"
         scheduleZigbeeLogSocketReconnect()
@@ -166,9 +196,7 @@ void connectZigbeeLogSocket() {
 
 void disconnectZigbeeLogSocket() {
     unschedule('connectZigbeeLogSocket')
-    state.wsReconnectPending = false
-    state.wsIntentionalClose = true
-    state.wsConnected = false
+    ws().putAll([reconnectPending: false, intentionalClose: true, connected: false])
     sendEvent(name: 'wsStatus', value: 'disconnected')
     try {
         interfaces.webSocket.close()
@@ -179,9 +207,9 @@ void disconnectZigbeeLogSocket() {
 }
 
 private void scheduleZigbeeLogSocketReconnect() {
-    if (state.wsIntentionalClose == true) return
-    if (state.wsReconnectPending == true) return
-    state.wsReconnectPending = true
+    if (ws().intentionalClose == true) return
+    // put() returns the previous value, so only one caller schedules the reconnect.
+    if (ws().put('reconnectPending', true) == true) return
     logWarn 'reconnect in 10s'
     runIn(10, 'connectZigbeeLogSocket', [overwrite: true])
 }
@@ -190,9 +218,7 @@ void webSocketStatus(String status) {
     String normalized = status?.trim()?.toLowerCase()
     logNet "webSocketStatus: ${status}"
     if (normalized in ['open', 'status: open']) {
-        state.wsConnected = true
-        state.wsReconnectPending = false
-        state.wsIntentionalClose = false
+        ws().putAll([connected: true, reconnectPending: false, intentionalClose: false])
         sendEvent(name: 'wsStatus', value: 'connected')
         logInfo 'zigbeeLogsocket connected'
         unschedule('connectZigbeeLogSocket')
@@ -203,9 +229,9 @@ void webSocketStatus(String status) {
     boolean isClosed  = normalized in ['closed', 'status: closed']
     boolean isFailure = normalized?.startsWith('failure')
     if (isClosed || isFailure) {
-        state.wsConnected = false
+        ws().connected = false
         sendEvent(name: 'wsStatus', value: 'disconnected')
-        if (state.wsIntentionalClose == true) {
+        if (ws().intentionalClose == true) {
             logNet 'closed intentionally'
             return
         }
@@ -222,7 +248,6 @@ void webSocketStatus(String status) {
 // ══════════════════════════════════════════════════════════════════════════
 
 void parse(String description) {
-    if (state.version != CODE_VERSION) runInMillis(100, 'updated')  // updated() closes the open socket before reconnecting
 
     // The only thing reaching parse() on this virtual device is the WebSocket
     // text frame (JSON). Anything else is a hub anomaly and gets dropped.
@@ -267,7 +292,7 @@ private void processTimeReadRequest(Map entry) {
     if (settings?.enableTimeResponder == false) return
 
     // Opt-in by hub device id. Empty list = respond to nobody (safe default).
-    List<String> allowedIds = (state.timeAllowedIds ?: []) as List<String>
+    List<String> allowedIds = (cfg().time ?: []) as List<String>
     String entryDeviceId = entry?.deviceId?.toString()
     if (!entryDeviceId) return
     if (!allowedIds.contains(entryDeviceId)) {
@@ -330,7 +355,7 @@ private void processTimeReadRequest(Map entry) {
 
     List<String> attrHexList = requestedAttrs.collect { String.format('0x%04X', it) }
     String devLabel = entry?.name?.toString() ?: "id=${entryDeviceId}"
-    boolean useUnixEpoch = ((state.timeUnixEpochIds ?: []) as List<String>).contains(entryDeviceId)
+    boolean useUnixEpoch = ((cfg().unix ?: []) as List<String>).contains(entryDeviceId)
     String epochTag = useUnixEpoch ? ' [unix-epoch]' : ''
     if (txtEnable) logInfo "<b>Time read</b>${epochTag} from ${devLabel} (dni=0x${srcDniHex}, seq=0x${zclSeq}, attrs=${attrHexList})"
 
@@ -422,7 +447,7 @@ private void sendTimeClusterResponse(String srcDniHex, String zclSeq, List<Integ
 private void processOtaQueryNextImageRequest(Map entry) {
     if (settings?.enableOtaResponder == false) return
 
-    List<String> allowedIds = (state.otaAllowedIds ?: []) as List<String>
+    List<String> allowedIds = (cfg().ota ?: []) as List<String>
     String entryDeviceId = entry?.deviceId?.toString()
     if (!entryDeviceId) return
     if (!allowedIds.contains(entryDeviceId)) {
