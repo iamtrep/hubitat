@@ -73,11 +73,19 @@ A battery sensor that dies mid-event keeps its last state forever. Typical cases
 
 **Daily check.** With a notification device selected, the app can check once a day at a set time and send the list of stuck sensors. It never resets on its own, so a dead battery stays visible until someone deals with it.
 
+### Reconnect Offline Devices (`ReconnectOfflineDevices.groovy`)
+
+Runs `initialize()` on a device that has reported `networkStatus` `offline` for longer than a set number of minutes (default 30), then again at that interval until it reports `online`.
+
+Matter drivers report `networkStatus`. When a Matter node drops, the hub usually reconnects it within minutes. Sometimes it stops trying, and the device stays offline even though it is still on the network and other controllers reach it. Running `initialize()` on the device makes the hub look the node up again and reconnect. Pick a delay longer than the drops your devices recover from on their own.
+
+Only devices with the `Initialize` capability can be selected. One whose driver has no `networkStatus` attribute is listed on the app page and ignored. The page shows each device's status, how long it has been offline and how many times `initialize()` ran. An optional notification device gets a message on each `initialize()` and when a device comes back after one.
+
 ## Installation
 
 1. Install the app code on your hub.
 2. Add the app from **Apps > Add User App**.
-3. Configure and use as needed. These apps act only when you use them, except Stuck Sensor Reset's trigger switch and daily check, when set.
+3. Configure and use as needed. These apps act only when you use them, except Stuck Sensor Reset's trigger switch and daily check, when set, and Reconnect Offline Devices, which acts on its own.
 
 ## License
 
