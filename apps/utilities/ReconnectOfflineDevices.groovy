@@ -9,12 +9,16 @@
  until it is back online. Meant for Matter devices: the hub usually reconnects
  a dropped node within minutes, but sometimes stops trying, and only
  initialize() brings the node back.
+
+ Every networkStatus event and every initialize() is appended to a log file in
+ File Manager, one per instance.
 */
 
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Reconnect Offline Devices"
 @Field static final String CODE_VERSION = "0.1.0"
+@Field static final int LOG_MAX_BYTES = 262144   // past this, the oldest half of the file is dropped
 
 definition(
     name: APP_NAME,
@@ -24,7 +28,7 @@ definition(
     menu: "Automations",
     category: "Convenience",
     singleInstance: false,
-    singleThreaded: true,
+    singleThreaded: true, // one writer per instance, so log appends never overlap
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/utilities/ReconnectOfflineDevices.groovy",
     documentationLink: "https://github.com/iamtrep/hubitat/tree/main/apps/utilities",
     iconUrl: "",
@@ -46,6 +50,10 @@ Map mainPage() {
         }
         section("Status") {
             paragraph statusReport()
+            if (app.id) {
+                String err = state.fileLogError ? "<br><span style='color:var(--hubitat-warning-color, #8a5a00)'>Last write failed: ${state.fileLogError}</span>" : ""
+                paragraph "<a href='/local/${logFileName()}' target='_blank'>Log file</a> (File Manager: ${logFileName()})${err}"
+            }
         }
         section("Notifications") {
             input name: "notificationDevice", type: "capability.notification",
@@ -131,6 +139,12 @@ void initialize() {
     state.offline = kept
     if (settings.devices) subscribe(settings.devices, "networkStatus", "networkStatusHandler")
     logCfg "watching ${settings.devices?.size() ?: 0} device(s), ${kept.size()} offline now"
+    List<String> lines = ["config | watching ${settings.devices?.size() ?: 0} device(s), initialize() after ${settings.offlineMinutes ?: 30} min offline"]
+    kept.each { String id, Map e ->
+        def dev = settings.devices.find { (it.id as String) == id }
+        lines << "${devRef(dev)} | offline at setup | since ${formatTs(e.since as long)}"
+    }
+    fileLog(lines)
     scheduleCheck()
 }
 
@@ -146,6 +160,7 @@ void networkStatusHandler(evt) {
     String id = evt.deviceId as String
     Map offline = state.offline ?: [:]
     logEvt "${evt.device.displayName} networkStatus ${evt.value}"
+    fileLog(["${devRef(evt.device)} | networkStatus ${evt.value} | event ${formatTs(evt.date.time)}${offline[id] && evt.value == 'offline' ? ', already offline' : ''}"])
     if (evt.value == "offline") {
         if (offline[id]) return
         offline[id] = [since: evt.date.time, attempts: 0, lastTry: null]
@@ -155,6 +170,7 @@ void networkStatusHandler(evt) {
         String msg = "${evt.device.displayName} back online after ${formatDuration(evt.date.time - (e.since as long))}"
         if (e.attempts) msg += ", ${e.attempts} initialize()"
         logInfo msg
+        fileLog(["${devRef(evt.device)} | back online | after ${formatDuration(evt.date.time - (e.since as long))}, ${e.attempts ?: 0} initialize()"])
         if (e.attempts) notify(msg)
     } else {
         return
@@ -194,17 +210,65 @@ void checkOffline() {
         String msg = "${dev.displayName} offline for ${formatDuration(t - (e.since as long))}: initialize() #${e.attempts}"
         logCmd msg
         notify(msg)
+        String outcome = "sent"
         try {
             dev.initialize()
         } catch (Exception ex) {
             logError "initialize() on ${dev.displayName} failed: ${ex.message}"
+            outcome = "failed: ${ex.message}"
         }
+        fileLog(["${devRef(dev)} | initialize() #${e.attempts} | offline ${formatDuration(t - (e.since as long))}, ${outcome}"])
     }
     // Drop entries for devices no longer selected.
     Set<String> selected = (settings.devices?.collect { it.id as String } ?: []) as Set
     offline.keySet().retainAll(selected)
     state.offline = offline
     scheduleCheck()
+}
+
+// ---- File log ----
+// File Manager has no append, so the file is read and written back whole. A missing file is
+// started fresh; any other read failure skips the write, so a log that can't be read is never
+// replaced by a partial one.
+
+private String logFileName() {
+    "reconnect_offline_devices_${app.id}.txt"
+}
+
+private String devRef(dev) {
+    dev ? "${dev.displayName} (${dev.id})" : "unknown device"
+}
+
+private String formatTs(long t) {
+    new Date(t).format("yyyy-MM-dd HH:mm:ss", location.timeZone)
+}
+
+private void fileLog(List<String> lines) {
+    if (!lines) return
+    String name = logFileName()
+    String ts = formatTs(now())
+    String existing = ""
+    try {
+        byte[] bytes = downloadHubFile(name)
+        if (bytes) existing = new String(bytes, "UTF-8")
+    } catch (Exception e) {
+        if (!getObjectClassName(e).endsWith(".NoSuchFileException")) {   // getObjectClassName returns the FQN
+            logWarn "log file not written: could not read ${name}: ${e}"
+            state.fileLogError = "could not read ${name} (${e.message})"
+            return
+        }
+    }
+    if (existing.length() > LOG_MAX_BYTES) {
+        int cut = existing.indexOf("\n", (int) (existing.length() / 2))
+        existing = cut >= 0 ? existing.substring(cut + 1) : ""
+    }
+    try {
+        uploadHubFile(name, (existing + lines.collect { "${ts} | ${it}" }.join("\n") + "\n").getBytes("UTF-8"))
+        state.remove("fileLogError")
+    } catch (Exception e) {
+        logWarn "log file not written: ${e}"
+        state.fileLogError = e.message ?: e.toString()
+    }
 }
 
 private void notify(String msg) {

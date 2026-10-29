@@ -81,6 +81,8 @@ Matter drivers report `networkStatus`. When a Matter node drops, the hub usually
 
 Only devices with the `Initialize` capability can be selected. One whose driver has no `networkStatus` attribute is listed on the app page and ignored. The page shows each device's status, how long it has been offline and how many times `initialize()` ran. An optional notification device gets a message on each `initialize()` and when a device comes back after one.
 
+Every `networkStatus` event, each `initialize()` and each settings change is appended to a log file in File Manager, `reconnect_offline_devices_<app id>.txt`, linked from the app page. Past 256 KB the oldest half of the file is dropped.
+
 ## Installation
 
 1. Install the app code on your hub.
