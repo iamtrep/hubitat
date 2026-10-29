@@ -4,13 +4,14 @@
 /*
  Reconnect Offline Devices
 
- Runs initialize() on a device whose driver reports networkStatus offline and
- has stayed offline for a set number of minutes, then again at that interval
- until it is back online. Meant for Matter devices: the hub usually reconnects
- a dropped node within minutes, but sometimes stops trying, and only
- initialize() brings the node back.
+ Sends a chosen command (initialize() by default) to a device whose driver
+ reports networkStatus offline and has stayed offline for a set number of
+ minutes, then, unless set to one attempt, again at that interval until it is
+ back online. Meant for Matter devices: the hub usually reconnects a dropped
+ node within minutes, but sometimes stops trying, and only initialize() brings
+ the node back.
 
- Every networkStatus event and every initialize() is appended to a log file in
+ Every networkStatus event and every command sent is appended to a log file in
  File Manager, one per instance.
 */
 
@@ -24,7 +25,7 @@ definition(
     name: APP_NAME,
     namespace: "iamtrep",
     author: "pj",
-    description: "Runs initialize() on devices that stay offline (networkStatus) longer than a set time.",
+    description: "Sends a command, initialize() by default, to devices that stay offline (networkStatus) longer than a set time.",
     menu: "Automations",
     category: "Convenience",
     singleInstance: false,
@@ -43,10 +44,21 @@ preferences {
 Map mainPage() {
     dynamicPage(name: "mainPage", title: "${APP_NAME} v${CODE_VERSION}", install: true, uninstall: true) {
         section("Devices") {
-            input name: "devices", type: "capability.initialize", title: "Devices to reconnect",
+            input name: "devices", type: "capability.*", title: "Devices to watch (their driver must report networkStatus)",
                   multiple: true, required: true, submitOnChange: true
-            input name: "offlineMinutes", type: "number", title: "Run initialize() after this many minutes offline, and again at this interval",
+        }
+        section("Revival") {
+            List<String> cmds = commonCommands()
+            if (settings.devices && !cmds) {
+                paragraph "The selected devices have no command without parameters in common."
+            }
+            input name: "reviveCommand", type: "enum", title: "Command to send",
+                  options: cmds, defaultValue: cmds.contains("initialize") ? "initialize" : null,
+                  required: true, submitOnChange: true
+            input name: "offlineMinutes", type: "number", title: "Send it after this many minutes offline",
                   range: "5..1440", defaultValue: 30, required: true, submitOnChange: true
+            input name: "retry", type: "bool", title: "Send it again at this interval until the device is back online (off: once per outage)",
+                  defaultValue: true, submitOnChange: true
         }
         section("Status") {
             paragraph statusReport()
@@ -57,7 +69,7 @@ Map mainPage() {
         }
         section("Notifications") {
             input name: "notificationDevice", type: "capability.notification",
-                  title: "Notify on each initialize() and on reconnection", multiple: false, required: false
+                  title: "Notify on each command sent and on reconnection", multiple: false, required: false
         }
         section("Options") {
             label title: "App name", required: false
@@ -83,7 +95,8 @@ private String statusReport() {
         Map e = offline[dev.id as String]
         if (e) {
             line += ", offline ${formatAge(e.since as long)}"
-            if (e.attempts) line += ", initialize() ×${e.attempts}, last ${formatAge(e.lastTry as long)}"
+            if (e.attempts) line += ", ${reviveCommand()}() ×${e.attempts}, last ${formatAge(e.lastTry as long)}"
+            if (dueAt(e) == null) line += ", no more attempts this outage"
         }
         lines << line
     }
@@ -110,6 +123,33 @@ private long delayMs() {
     (settings.offlineMinutes != null ? settings.offlineMinutes as long : 30L) * 60000L
 }
 
+private String reviveCommand() {
+    settings.reviveCommand ?: "initialize"
+}
+
+private boolean retryEnabled() {
+    settings.retry != false
+}
+
+// When the next command is due for an offline entry, or null when one-shot and already sent.
+private Long dueAt(Map e) {
+    if (!retryEnabled() && (e.attempts ?: 0) >= 1) return null
+    ((e.lastTry ?: e.since) as long) + delayMs()
+}
+
+// Names of the commands without parameters that every selected device supports.
+private List<String> commonCommands() {
+    List<Set<String>> perDevice = settings.devices?.collect { dev ->
+        dev.supportedCommands.findAll { !it.arguments }*.name as Set<String>
+    } ?: []
+    if (!perDevice) return []
+    perDevice.inject(perDevice[0]) { Set<String> acc, Set<String> s -> acc.intersect(s) as Set<String> }.sort()
+}
+
+private boolean supportsCommand(dev, String cmd) {
+    dev.supportedCommands.any { it.name == cmd && !it.arguments }
+}
+
 void installed() {
     initialize()
 }
@@ -130,6 +170,7 @@ void initialize() {
             logWarn "${dev.displayName} has no networkStatus attribute; ignored"
             return
         }
+        if (!supportsCommand(dev, reviveCommand())) logWarn "${dev.displayName} has no ${reviveCommand()}() command without parameters"
         String id = dev.id as String
         def cur = dev.currentState("networkStatus")
         if (cur?.value == "offline") {
@@ -139,7 +180,8 @@ void initialize() {
     state.offline = kept
     if (settings.devices) subscribe(settings.devices, "networkStatus", "networkStatusHandler")
     logCfg "watching ${settings.devices?.size() ?: 0} device(s), ${kept.size()} offline now"
-    List<String> lines = ["config | watching ${settings.devices?.size() ?: 0} device(s), initialize() after ${settings.offlineMinutes ?: 30} min offline"]
+    String when = retryEnabled() ? "every ${settings.offlineMinutes ?: 30} min offline" : "once, after ${settings.offlineMinutes ?: 30} min offline"
+    List<String> lines = ["config | watching ${settings.devices?.size() ?: 0} device(s), ${reviveCommand()}() ${when}"]
     kept.each { String id, Map e ->
         def dev = settings.devices.find { (it.id as String) == id }
         lines << "${devRef(dev)} | offline at setup | since ${formatTs(e.since as long)}"
@@ -168,9 +210,9 @@ void networkStatusHandler(evt) {
         Map e = offline.remove(id)
         if (!e) return
         String msg = "${evt.device.displayName} back online after ${formatDuration(evt.date.time - (e.since as long))}"
-        if (e.attempts) msg += ", ${e.attempts} initialize()"
+        if (e.attempts) msg += ", ${e.attempts} × ${reviveCommand()}()"
         logInfo msg
-        fileLog(["${devRef(evt.device)} | back online | after ${formatDuration(evt.date.time - (e.since as long))}, ${e.attempts ?: 0} initialize()"])
+        fileLog(["${devRef(evt.device)} | back online | after ${formatDuration(evt.date.time - (e.since as long))}, ${e.attempts ?: 0} × ${reviveCommand()}()"])
         if (e.attempts) notify(msg)
     } else {
         return
@@ -186,7 +228,12 @@ private void scheduleCheck() {
         unschedule("checkOffline")
         return
     }
-    long due = offline.values().collect { ((it.lastTry ?: it.since) as long) + delayMs() }.min()
+    List<Long> dues = offline.values().collect { dueAt(it as Map) }.findAll { it != null }
+    if (!dues) {
+        unschedule("checkOffline")
+        return
+    }
+    long due = dues.min()
     long secs = Math.max(1L, (long) ((due - now()) / 1000L) + 1L)
     logSched "next check in ${secs} s"
     runIn(secs, "checkOffline")
@@ -204,20 +251,27 @@ void checkOffline() {
             offline.remove(id)
             return
         }
-        if (((e.lastTry ?: e.since) as long) + delayMs() > t) return
+        Long due = dueAt(e)
+        if (due == null || due > t) return
+        String cmd = reviveCommand()
         e.attempts = (e.attempts ?: 0) + 1
         e.lastTry = t
-        String msg = "${dev.displayName} offline for ${formatDuration(t - (e.since as long))}: initialize() #${e.attempts}"
+        String msg = "${dev.displayName} offline for ${formatDuration(t - (e.since as long))}: ${cmd}() #${e.attempts}"
         logCmd msg
         notify(msg)
         String outcome = "sent"
-        try {
-            dev.initialize()
-        } catch (Exception ex) {
-            logError "initialize() on ${dev.displayName} failed: ${ex.message}"
-            outcome = "failed: ${ex.message}"
+        if (!supportsCommand(dev, cmd)) {
+            logWarn "${dev.displayName} has no ${cmd}() command without parameters"
+            outcome = "not sent: no such command"
+        } else {
+            try {
+                dev."${cmd}"()
+            } catch (Exception ex) {
+                logError "${cmd}() on ${dev.displayName} failed: ${ex.message}"
+                outcome = "failed: ${ex.message}"
+            }
         }
-        fileLog(["${devRef(dev)} | initialize() #${e.attempts} | offline ${formatDuration(t - (e.since as long))}, ${outcome}"])
+        fileLog(["${devRef(dev)} | ${cmd}() #${e.attempts} | offline ${formatDuration(t - (e.since as long))}, ${outcome}"])
     }
     // Drop entries for devices no longer selected.
     Set<String> selected = (settings.devices?.collect { it.id as String } ?: []) as Set
