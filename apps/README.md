@@ -17,7 +17,6 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 | **Battery Change Logger** | Monitors battery levels and logs replacements to app history and an on-hub JSON file |
 | **Contact State Setter** | Sets selected contact sensors open or closed by injecting a contact event via sendEvent. |
 | **Humidity-Based Fan Controller** | Controls a bathroom extractor fan based on humidity levels compared to a reference sensor |
-| **Hydro-Québec Peak Period Manager** | Manages devices during Hydro-Québec peak periods |
 | **Mirror Switch** | Keeps a group of on/off devices in sync; any member changing drives the rest to match. |
 | **mmWave Sensor Comparison** | Subscribes to several co-located presence/motion sensors and derives comparative metrics: activation latency, agreement, and sustained-occupancy hold. |
 | **Startup and Shutdown Monitor** | Controls a virtual contact sensor based on system events related to startup, shutdown and reboot |
@@ -33,6 +32,7 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 | [HvacInterlock/](./HvacInterlock/) | Gates heating and cooling equipment by season and open windows |
 | [HvacScheduler/](./HvacScheduler/) | Thermostat schedules with profiles, holds and an API |
 | [HvacSeasonManager/](./HvacSeasonManager/) | Publishes the heating and cooling season on a device, from dates and the outdoor temperature |
+| [HydroPeakEvents/](./HydroPeakEvents/) | Publishes Hydro-Québec peak events and their phases on a device |
 | [IndoorAirQualityController/](./IndoorAirQualityController/) | Runs ventilation in stages from indoor CO2 and warns when a window should be opened or the air is too dry |
 | [LocationEventMapper/](./LocationEventMapper/) | TBD |
 | [LogMonitor/](./LogMonitor/) | Monitor hub logs with multiple filters and output actions |
