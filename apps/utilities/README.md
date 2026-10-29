@@ -14,6 +14,7 @@ Hubitat Elevation apps for hub administration and maintenance. These are not aut
 |---|---|---|
 | `DeviceInUseEnumerator.groovy` | **Device "in use by" Enumerator** | For each device, enumerates the apps referencing them |
 | `DeviceSwapHelper.groovy` | **Device Swap Helper** | Swap a device in every app that uses it |
+| `ReconnectOfflineDevices.groovy` | **Reconnect Offline Devices** | Runs initialize() on devices that stay offline (networkStatus) longer than a set time. |
 | `StuckSensorReset.groovy` | **Stuck Sensor Reset** | Resets motion and contact sensors stuck active or open after going silent, e.g. on a dead battery. |
 <!-- /AUTO -->
 
