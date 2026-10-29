@@ -314,6 +314,13 @@ suggest "tune the reporting interval" or "configure Reportable Change" — there
 
 **Untested:** the herdsman schema lists a writable `coolDownTime` (`0xFFF1/0x0004`, UINT16, up to 7200 s in Zigbee2MQTT). It is unconfirmed whether it throttles the stream; we have not written it *(community: [zigbee-herdsman-converters `third_reality.ts`](https://github.com/Koenkk/zigbee-herdsman-converters/blob/master/src/devices/third_reality.ts))*.
 
+## Linptech / Moes ES1 (Tuya TS0225 presence sensor)
+
+Mains-powered 24 GHz presence sensor and Zigbee router, `_TZ3218_t9ynfz4x`, application version `0x45` *(probed 2.5.3.108, C-8 Pro, one unit)*.
+
+- **It can stop reporting while staying on the network.** For two days one unit sent no IAS zone status, illuminance (`0x0400`) or `E002` reports. It still sent link status, answered a ZDO Mgmt_Lqi_req, and answered writes to `E002:E004` with a Write Attributes Response, status SUCCESS, within 50 ms *(probed 2.5.3.108, C-8 Pro, one unit, one occurrence)*. Users of the `_TZ3218_awarhusb` variant report units that stay online but report no motion until power-cycled *(community: [ES1 driver thread](https://community.hubitat.com/t/release-linptech-moes-24ghz-presence-sensor-es1-ts0225-tz3218-awarhusb-drivers/124288?page=60))*.
+- **A sensitivity change did not revive it; a ZDO leave with rejoin did.** Writing motion sensitivity to medium and back to low got SUCCESS responses and no report. A Mgmt_Leave_req with the rejoin flag (`0x80`) got a SUCCESS response; the unit announced itself 1.3 s later on the same network address and sent a zone status report 5 s after that. It reported motion and distance again within 6 minutes *(probed 2.5.3.108, C-8 Pro, one unit, one occurrence)*. A daily sensitivity change, low then back, is reported to prevent the freeze *(community: [ES1 driver thread](https://community.hubitat.com/t/release-linptech-moes-24ghz-presence-sensor-es1-ts0225-tz3218-awarhusb-drivers/124288?page=60))*.
+
 ## Universal Electronics / Visonic URC4460BC0 (Xfinity contact sensor)
 
 Zigbee IAS contact sensor, model `URC4460BC0-X-R`, firmware `10EF-0001-20160921` on every unit seen *(probed firmware not recorded, C-7, 22 sensors)*.
