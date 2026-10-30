@@ -14,7 +14,7 @@ Hubitat Elevation apps for hub administration and maintenance. These are not aut
 |---|---|---|
 | `DeviceInUseEnumerator.groovy` | **Device "in use by" Enumerator** | For each device, enumerates the apps referencing them |
 | `DeviceSwapHelper.groovy` | **Device Swap Helper** | Swap a device in every app that uses it |
-| `ReconnectOfflineDevices.groovy` | **Reconnect Offline Devices** | Sends a command, initialize() by default, to devices that stay offline (networkStatus) longer than a set time. |
+| `ReconnectOfflineDevices.groovy` | **Reconnect Offline Devices** | Sends a command, initialize() by default, to devices that keep an attribute value, networkStatus offline by default, longer than a set time. |
 | `StuckSensorReset.groovy` | **Stuck Sensor Reset** | Resets motion and contact sensors stuck active or open after going silent, e.g. on a dead battery. |
 <!-- /AUTO -->
 
@@ -76,17 +76,18 @@ A battery sensor that dies mid-event keeps its last state forever. Typical cases
 
 ### Reconnect Offline Devices (`ReconnectOfflineDevices.groovy`)
 
-Sends a command to a device that has reported `networkStatus` `offline` for longer than a set number of minutes (default 30). By default the command is `initialize()` and it is sent again at that interval until the device reports `online`; it can instead be sent once per outage.
+Sends a command to a device whose watched attribute has held a chosen value for longer than a set number of minutes (default 30). By default it watches `networkStatus` for `offline` and sends `initialize()`, again at that interval until the value changes; it can instead be sent once per occurrence.
 
 Matter drivers report `networkStatus`. When a Matter node drops, the hub usually reconnects it within minutes. Sometimes it stops trying, and the device stays offline even though it is still on the network and other controllers reach it. Running `initialize()` on the device makes the hub look the node up again and reconnect. Pick a delay longer than the drops your devices recover from on their own.
 
-- **Devices:** any number. One whose driver has no `networkStatus` attribute is listed on the app page and ignored.
-- **Command:** chosen from the commands without parameters that all the selected devices have; `initialize` when they all have it. For devices that need different commands, add one instance per command.
-- **Retry:** on, the command is sent again at the same interval until the device is back online; off, once per outage.
+- **Devices:** any number. One without the watched attribute is listed on the app page and ignored.
+- **Attribute and value:** any attribute the selected devices all have. For an attribute with a fixed list of values the value is picked from that list; otherwise it is typed and must match exactly. Any other value ends the occurrence.
+- **Command:** chosen from the commands without parameters that all the selected devices have; `initialize` when they all have it. For devices that need different settings, add one instance per setting.
+- **Retry:** on, the command is sent again at the same interval until the value changes; off, once per occurrence.
 
-The page shows each device's status, how long it has been offline and how many times the command was sent. An optional notification device gets a message each time the command is sent and when a device comes back after one.
+The page shows each device's value, how long it has held the watched one and how many times the command was sent. An optional notification device gets a message each time the command is sent and when a device recovers after one.
 
-Every `networkStatus` event, each command sent and each settings change is appended to a log file in File Manager, `reconnect_offline_devices_<app id>.txt`, linked from the app page. Past 256 KB the oldest half of the file is dropped.
+Every event of the watched attribute, each command sent and each settings change is appended to a log file in File Manager, `reconnect_offline_devices_<app id>.txt`, linked from the app page. Past 256 KB the oldest half of the file is dropped.
 
 ## Installation
 
