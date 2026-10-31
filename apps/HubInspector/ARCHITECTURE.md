@@ -111,6 +111,10 @@ Data that must **survive a code push or reboot** is stored in `state` or File Ma
 - `state.zigbeeScanCache` — refreshed only on an explicit user scan (the scan perturbs Zigbee joins, so it is never auto-triggered); `fetchCachedZigbeeScan()` reads it without ever scanning.
 - `state.cachedZwaveSignals` — fallback so ghost-node signals still render when the Z-Wave details fetch fails; rewritten on each Dashboard or Health load that fetches them.
 
+### Memory the app holds
+
+Everything kept in `@Field static` fields is bounded. The largest steady holder is `TEMP_SAMPLES`, capped at 8,640 five-minute samples (30 days): the same structure at 10× that size held about 4.9 MiB of heap, so the cap costs about 0.5 MiB. The audit result, the API timings (20 per endpoint) and the TTL slots are replaced, not appended. The device enrichment cache keeps one entry per device ever enriched, deleted devices included, until the next `updated()`. Audits, checkpoints and snapshots allocate much more while they run and release it when done.
+
 ### Request-scoped shared cache
 
 `buildSharedCache()` is an orthogonal mechanism: a per-request map (no TTL) that coalesces duplicate fetches *within a single endpoint call*. It is the dedup layer; the TTL caches above are the cross-request layer. See *Required Patterns §2*.

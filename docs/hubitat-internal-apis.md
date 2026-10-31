@@ -265,6 +265,9 @@ The Logs page (`/logs`, tabs `?tab=past` etc.) is a Vue chunk (`/ui2/js/vue-hub2
 
 - The `freeOSMemoryHistory.csv` / `freeOSMemoryLast.csv` CPU column changed from load average to CPU % in firmware 2.4.4.129, so values on either side of that firmware are not comparable *(staff: [gopher.ny](https://community.hubitat.com/t/release-2-4-4-available/161597))*.
 - The `freeOSMemory*` CSV column **order** has drifted across firmwares (multiple times), which silently breaks positional parsers (`split(',')[index]`) with no exception: wrong values, not a crash. Parse by header-name→index: build a name→index map from the header row and look up each field by name; warn or bail if an expected header is absent. This likely applies to other `/hub/advanced/*` CSV endpoints too *(unmarked)*.
+- `freeOSMemoryHistory` has one row every 5 minutes, and its `Free OS`, `Total Java`, `Free Java` and `Direct Java` values are in KB: a 20 MiB array held by a throwaway app raised `Total Java − Free Java` by 20.4–20.9 MiB *(probed 2.5.3.108, C-8 Pro, throwaway app holding known allocations)*.
+- `Total Java − Free Java` counts garbage not yet collected, so it swings within each hour (about 15 MiB on a quiet C-8 Pro, more than 100 MiB on a busy one). The lowest value of each hour tracks what apps still hold: on the quiet hub, holding 5 and 2 MiB raised it by 5.1–5.3 and 1.5–2.1 MiB, against ±0.6 MiB between empty hours. No endpoint reports one app's share *(probed 2.5.3.108, C-8 Pro, throwaway app holding known allocations)*.
+- `Free OS` does not follow the Java heap: when `Total Java` grew by 16.6 MiB, the hourly peaks of `Free OS` stayed within 1 MiB of their earlier level. A falling `Free OS` curve is therefore no evidence of a growing heap, or the reverse *(probed 2.5.3.108, C-8 Pro, throwaway app holding known allocations)*.
 
 ## Hub database backups
 
