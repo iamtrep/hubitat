@@ -113,7 +113,7 @@ Data that must **survive a code push or reboot** is stored in `state` or File Ma
 
 ### Memory the app holds
 
-Everything kept in `@Field static` fields is bounded. The largest steady holder is `TEMP_SAMPLES`, capped at 8,640 five-minute samples (30 days): the same structure at 10× that size held about 4.9 MiB of heap, so the cap costs about 0.5 MiB. The audit result, the API timings (20 per endpoint) and the TTL slots are replaced, not appended. The device enrichment cache keeps one entry per device ever enriched, deleted devices included, until the next `updated()`. Audits, checkpoints and snapshots allocate much more while they run and release it when done.
+Everything kept in `@Field static` fields is bounded. The largest steady holder is `TEMP_SAMPLES`, capped at 8,640 five-minute samples (30 days): the same structure at 10× that size held about 4.9 MiB of heap, so the cap costs about 0.5 MiB. The audit result, the API timings (20 per endpoint) and the TTL slots are replaced, not appended. The device enrichment cache keeps one entry per device ever enriched, deleted devices included, until the next `updated()`. Audits, checkpoints and snapshots allocate much more while they run and release it when done. `uninstalled()` removes the instance's entries from the maps keyed by `app.id`.
 
 ### Request-scoped shared cache
 

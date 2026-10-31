@@ -5091,6 +5091,9 @@ void logsOff() {
 void uninstalled() {
     unschedule()
     unsubscribe()
+    // Per-instance entries in the type-wide static maps would otherwise stay until a reboot or code push.
+    TEMP_SAMPLES.remove(app.id as Long)
+    CONTROLLER_TYPE_CACHE.remove(app.id as Long)
     logCfg "Hub Inspector uninstalled"
 }
 
