@@ -446,7 +446,7 @@ void opStateHandler(evt) {
     applyLoads()
 }
 
-// The Virtual Thermostat only ends `heating` on a setTemperature, so a lowered setpoint would wait for the next sensor report.
+// A user-code copy of the Virtual Thermostat only re-evaluates on setTemperature; the built-in does it on the setpoint too.
 void setpointHandler(evt) {
     checkVersion()
     logEvt "thermostat ${evt.name} ${evt.value}"
