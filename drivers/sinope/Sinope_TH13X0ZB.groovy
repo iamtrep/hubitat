@@ -752,8 +752,16 @@ private void parseAttributeReport(Map descMap) {
     }
 
     if (map) {
-        // descriptionText already includes the device label — bypass logInfo() to avoid doubling
-        if (map.descriptionText && txtEnable != false) log.info(map.descriptionText)
+        // descriptionText already includes the device label — bypass logInfo() to avoid doubling.
+        // The thermostat re-reports an unchanged setpoint every few minutes and energy on each increment.
+        boolean routine = map.name == 'energy' || (map.name == 'heatingSetpoint' && map.value == device.currentValue('heatingSetpoint'))
+        if (map.descriptionText) {
+            if (routine) {
+                if (debugEnable) log.debug(map.descriptionText)
+            } else if (txtEnable != false) {
+                log.info(map.descriptionText)
+            }
+        }
         sendEvent(map)
     }
 }

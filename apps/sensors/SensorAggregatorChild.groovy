@@ -390,6 +390,7 @@ private boolean computeAggregateSensorValue() {
         return false
     }
 
+    def before = state.aggregateValue
     String attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute
     List sensorValues = includedSensors.collect { it.currentValue(attributeName) }
     state.minSensorValue = roundToDecimalPlaces(sensorValues.min())
@@ -431,13 +432,17 @@ private boolean computeAggregateSensorValue() {
             break
     }
 
+    if (state.aggregateValue != before) logAggregateChange()
     logStatistics()
     return true
 }
 
+// Sensors report far more often than the aggregate moves: info logs the changes only.
+private void logAggregateChange() {
+    logInfo("${CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute} ${aggregationMethod} (${state.includedSensors.size()}/${inputSensors.size()}): ${state.aggregateValue} ${getAttributeUnits(selectedSensorCapability)} [avg ${state.avgSensorValue}, stdev ${state.standardDeviation}, min ${state.minSensorValue}, max ${state.maxSensorValue}, median ${state.medianSensorValue}]")
+}
+
 private void logStatistics() {
-    logInfo("${CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute} ${aggregationMethod} (${state.includedSensors.size()}/${inputSensors.size()}): ${state.aggregateValue} ${getAttributeUnits(selectedSensorCapability)}")
-    logInfo("Avg: ${state.avgSensorValue} Stdev: ${state.standardDeviation} Min: ${state.minSensorValue} Max: ${state.maxSensorValue} Median: ${state.medianSensorValue}")
     if (state.includedSensors.size() > 0) {
         logDebug("Aggregated sensors (${sensorLabels(state.includedSensors).join(', ')})")
     } else {
