@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "6.2.3"
+@Field static final String CODE_VERSION = "6.2.4"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -173,11 +173,13 @@ import java.util.concurrent.atomic.AtomicInteger
 // because atomicState.checkpointInFlight serializes chains.
 @Field static volatile Map     asyncCheckpointStaging
 // v5.62.0: /logs/json (runtime stats) is the slow first leg of the async checkpoint chain
-// and occasionally crosses its 30s timeout under transient hub load. Rather than discard the
-// whole checkpoint (leaving a multi-interval gap in perf history), retry the leg once after a
-// short breather. checkpointInFlight (300s guard) comfortably covers the retry window.
+// and on a large hub at evening load it can outlast a 30s wait for many minutes. Rather than
+// discard the whole checkpoint (leaving a multi-interval gap in perf history), allow it 60s and
+// retry the leg once after a short breather. checkpointInFlight (300s guard) still covers both
+// attempts, the breather and the radio legs.
 @Field static final int        RUNTIME_STATS_MAX_ATTEMPTS = 2
 @Field static final int        RUNTIME_STATS_RETRY_S      = 60
+@Field static final int        RUNTIME_STATS_TIMEOUT_S    = 60
 @Field static final long       RADIO_CACHE_TTL_MS = 60_000L
 @Field static final long       HUB_LIST_CACHE_TTL_MS = 120_000L
 @Field static final long       HUB_DATA_CACHE_TTL_MS = 30_000L
@@ -2376,8 +2378,11 @@ List fetchUserBundles() {
     }
 }
 
+// Null when the fetch failed: a stored snapshot must not read as "no libraries". The hub computes
+// each library's users for this path, so it can take most of 10s with a couple dozen libraries.
 List fetchUserLibraries() {
-    Object resp = hubRequest(USER_LIBRARIES_PATH, "user libraries", "json", 10)
+    Object resp = hubRequest(USER_LIBRARIES_PATH, "user libraries", "json", 30)
+    if (resp instanceof Map && ((Map) resp).error) return null
     if (!(resp instanceof List)) return []
     return (resp as List).collect { Map l ->
         List usedByDevices = (l.usedByDeviceTypes as String)?.split(',\\s*')?.findAll { it } ?: []
@@ -3651,7 +3656,7 @@ private void fireAsyncCheckpointChain() {
 private void dispatchRuntimeStatsFetch() {
     if (asyncCheckpointStaging == null) return
     asyncCheckpointStaging.statsAttempt = ((asyncCheckpointStaging.statsAttempt ?: 0) as int) + 1
-    Map params = [uri: HUB_BASE, path: RUNTIME_STATS_PATH, contentType: "application/json", timeout: 30]
+    Map params = [uri: HUB_BASE, path: RUNTIME_STATS_PATH, contentType: "application/json", timeout: RUNTIME_STATS_TIMEOUT_S]
     try {
         asynchttpGet("asyncOnRuntimeStats", params, null)
     } catch (Exception e) {
@@ -3908,7 +3913,7 @@ void createSnapshot() {
         loadThreshold: fetchExcessiveLoadThreshold(),
         code: [
             bundles:   fetchUserBundles().collect   { Map b -> [id: b.id, name: b.name, namespace: b.namespace] },
-            libraries: fetchUserLibraries().collect { Map l -> [id: l.id, name: l.name, namespace: l.namespace, version: l.version] },
+            libraries: fetchUserLibraries()?.collect { Map l -> [id: l.id, name: l.name, namespace: l.namespace, version: l.version] },
             hubVariables: hvSlim
         ]
     ]

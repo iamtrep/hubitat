@@ -213,7 +213,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "6.2.3";
+const CODE_VERSION = "6.2.4";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -3792,12 +3792,15 @@ function computeSnapshotDiff(older, newer){
     };
     const bdl=diffById(oCode.bundles,nCode.bundles);
     if(bdl.added.length||bdl.removed.length)codeChanges.bundles=bdl;
-    const oLib=oCode.libraries||[],nLib=nCode.libraries||[];
-    const oLibById={};oLib.forEach(l=>{oLibById[l.id]=l});
-    const lib=diffById(oLib,nLib);
-    const versionChanged=nLib.filter(l=>oLibById[l.id]&&oLibById[l.id].version!==l.version)
-      .map(l=>({id:l.id,name:l.name,namespace:l.namespace,from:oLibById[l.id].version,to:l.version}));
-    if(lib.added.length||lib.removed.length||versionChanged.length)codeChanges.libraries={added:lib.added,removed:lib.removed,versionChanged};
+    // null libraries: that snapshot's fetch failed, so there is nothing to compare.
+    if(oCode.libraries&&nCode.libraries){
+      const oLib=oCode.libraries,nLib=nCode.libraries;
+      const oLibById={};oLib.forEach(l=>{oLibById[l.id]=l});
+      const lib=diffById(oLib,nLib);
+      const versionChanged=nLib.filter(l=>oLibById[l.id]&&oLibById[l.id].version!==l.version)
+        .map(l=>({id:l.id,name:l.name,namespace:l.namespace,from:oLibById[l.id].version,to:l.version}));
+      if(lib.added.length||lib.removed.length||versionChanged.length)codeChanges.libraries={added:lib.added,removed:lib.removed,versionChanged};
+    }
     const oHv=oCode.hubVariables||[],nHv=nCode.hubVariables||[];
     const oHvByName={};oHv.forEach(v=>{oHvByName[v.name]=v});
     const oNames=new Set(oHv.map(v=>v.name));const nNames=new Set(nHv.map(v=>v.name));
