@@ -44,7 +44,7 @@ Each case also fails on a warn or error log line from the rig that it does not e
 
 Both specs share the instance label, so the generator would name both scripts `test-sht.sh`; the fault script is rendered to `test-sht-faults.sh` by hand from the same template.
 
-### Phase B: control (`test-sht.sh`, 25 cases, 99 checks)
+### Phase B: control (`test-sht.sh`, 26 cases, 102 checks)
 
 | Case | What it checks |
 |---|---|

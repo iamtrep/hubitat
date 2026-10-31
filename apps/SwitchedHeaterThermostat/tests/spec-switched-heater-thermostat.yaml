@@ -453,3 +453,22 @@ cases:
     assert_events:
       - { attribute: "^switch$", value: "off", source: "test-sht-heater1" }
       - { attribute: "^lastMessage$", value: "test-sht: heaters on for 10 minutes, the limit. Off for 10 minutes.", source: "test-sht-notify" }
+
+  # Last: leaves the setpoint at 16; the first case resets it. No reading follows the setpoint.
+  - name: lowered-setpoint-stops-without-a-reading
+    setup:
+      - settings: { aggregate: "average", maxHeatMinutes: "none", minOnMinutes: "none", minOffMinutes: "none", frostTemp: -50, keepAliveMinutes: "none", noRiseMinutes: "none" }
+      - { device: test-sht-th, command: setHeatingSetpoint, args: [20] }
+      - { device: test-sht-th, command: heat }
+      - { device: test-sht-temp1, command: setTemperature, args: [21] }
+      - { device: test-sht-temp2, command: setTemperature, args: [21] }
+      - { device: test-sht-temp1, command: setTemperature, args: [18] }
+      - { device: test-sht-temp2, command: setTemperature, args: [18] }
+    command_spacing_seconds: 2
+    actions:
+      - { device: test-sht-th, command: setHeatingSetpoint, args: [16] }
+    wait_seconds: 5
+    assert:
+      - { device: test-sht-th, attribute: thermostatOperatingState, value: idle }
+      - { device: test-sht-heater1, attribute: switch, value: "off" }
+      - { device: test-sht-heater2, attribute: switch, value: "off" }

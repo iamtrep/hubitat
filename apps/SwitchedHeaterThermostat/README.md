@@ -30,7 +30,7 @@ Keep the Virtual Thermostat's **Enable demonstration mode** preference off. With
 
 ## How heating is decided
 
-The app writes the combined sensor reading to the thermostat with `setTemperature`. The sensors are combined by average (default) or minimum, rounded to 0.1 degree (°C or °F, following the hub's scale), ignoring sensors that are quiet (see Quiet sensors). The thermostat decides `heating` or `idle` itself, using its hysteresis preference (default 0.5 degree). With heat mode, setpoint 20 and the default hysteresis (checked on firmware 2.5.2.134), heating starts at 19.4, continues through 20.4, stops at 20.6 and stays off down to 19.6. Change the hysteresis on the thermostat to change that band.
+The app writes the combined sensor reading to the thermostat with `setTemperature`. The sensors are combined by average (default) or minimum, rounded to 0.1 degree (°C or °F, following the hub's scale), ignoring sensors that are quiet (see Quiet sensors). The thermostat decides `heating` or `idle` itself, using its hysteresis preference (default 0.5 degree). With heat mode, setpoint 20 and the default hysteresis (checked on firmware 2.5.2.134), heating starts at 19.4, continues through 20.4, stops at 20.6 and stays off down to 19.6. Change the hysteresis on the thermostat to change that band. When the heating setpoint changes, the app writes the last reading again, because the thermostat only leaves `heating` on a new reading.
 
 The heaters' wanted state, in order of precedence:
 

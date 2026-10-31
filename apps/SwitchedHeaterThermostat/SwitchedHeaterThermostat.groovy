@@ -15,7 +15,7 @@ import com.hubitat.app.DeviceWrapper
 import groovy.json.JsonOutput
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.3"
+@Field static final String CODE_VERSION = "0.1.4"
 
 definition(
     name: "Switched Heater Thermostat",
@@ -214,6 +214,7 @@ void initialize() {
     subscribe(sensors, "temperature", "sensorHandler")
     subscribe(t, "thermostatOperatingState", "opStateHandler")
     subscribe(t, "thermostatMode", "opStateHandler")
+    subscribe(t, "heatingSetpoint", "setpointHandler")
     subscribe(heaters, "switch", "heaterHandler")
     List metered = (heaters ?: []).findAll { DeviceWrapper d -> d.hasAttribute("power") }
     if (usePower != false && metered) subscribe(metered, "power", "powerHandler")
@@ -443,6 +444,13 @@ void opStateHandler(evt) {
     checkVersion()
     logEvt "thermostat ${evt.name} ${evt.value}"
     applyLoads()
+}
+
+// The Virtual Thermostat only ends `heating` on a setTemperature, so a lowered setpoint would wait for the next sensor report.
+void setpointHandler(evt) {
+    checkVersion()
+    logEvt "thermostat ${evt.name} ${evt.value}"
+    if (state.temp != null) thermostatDevice()?.setTemperature(state.temp as BigDecimal)
 }
 
 private Integer verifySeconds() { ((verifyTimeout ?: 30) as Integer) }
