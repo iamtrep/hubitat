@@ -455,6 +455,7 @@ it pairs. Leading zero bytes of each number are dropped before hashing *(spec: [
   `manufacturer=Samsung`, `model=UTU7000`, `fv` (the firmware), `serialNumber`, `deviceid` and `pi`
   (both MAC-shaped), and `pk`, `gid`, `psi`, `features`, `flags`, `srcvers`, `protovers`, `rsf`,
   `gcgl` and `acl` *(probed 2.5.2.139, C-7, throwaway driver and avahi-browse from the LAN)*.
+- With the TV on, the same TU7000 answers SSDP as a DIAL receiver and a media renderer, and gives no reply to a search for `urn:samsung.com:device:RemoteControlReceiver:1`, so discovery on that type alone misses it (four `M-SEARCH` at 5 s spacing, while a DIAL search got its reply). Its server string is `Samsung-Linux/4.1, UPnP/1.0, Samsung_UPnP_SDK/1.0` and its DIAL description is at `:7678/nservice/` *(probed firmware not recorded, M-SEARCH from a LAN host, no hub involved)*.
 - Neither `deviceid` nor `pi` is the TV's MAC: both differ from the `wifiMac` that
   `GET :8001/api/v2/` reports and from the MAC the TV answers ARP with, and no TXT value matches the
   REST `id` (`uuid:...`). `deviceid` equals the device network ID the hub's built-in AirPlay
