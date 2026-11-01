@@ -478,13 +478,14 @@ private boolean computeAggregateSensorValue() {
     String targetValue = attributeValue
     String oppositeValue = possibleValues.find { it != targetValue }
 
+    def before = state.aggregateValue
     state.aggregateValue = aggregateOf(sensorValues, aggregationMethod as String, targetValue, oppositeValue, thresholdPercent as Number)
     if (aggregationMethod == "threshold") {
         int countTarget = sensorValues.count { it == targetValue }
         logDebug("Threshold check: ${countTarget}/${n} = ${roundToDecimalPlaces((countTarget / (double) n) * 100.0, 1)}% (threshold: ${thresholdPercent}%)")
     }
 
-    logStatistics()
+    logStatistics(state.aggregateValue != before)
     return true
 }
 
@@ -503,7 +504,8 @@ void appButtonHandler(String buttonName) {
     }
 }
 
-void logStatistics() {
+// Sensors report far more often than the aggregate moves: info logs the changes only.
+void logStatistics(boolean changed) {
     String attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability].attribute
     int includedCount = state.includedSensors?.size() ?: 0
     int totalCount = inputSensors?.size() ?: 0
@@ -513,7 +515,9 @@ void logStatistics() {
         methodDisplay = "${aggregationMethod} (${thresholdPercent}%)"
     }
 
-    logInfo("${attributeName} ${methodDisplay} (${includedCount}/${totalCount}): ${state.aggregateValue}")
+    String line = "${attributeName} ${methodDisplay} (${includedCount}/${totalCount}): ${state.aggregateValue}"
+    if (changed) logInfo(line)
+    else logDebug(line)
 
     if (includedCount > 0) {
         logDebug("Aggregated sensors: ${sensorLabels(state.includedSensors).join(', ')}")
