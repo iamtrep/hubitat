@@ -110,7 +110,7 @@ VerbNav lists user drivers/apps and Hub Mesh peers. The repo has actionable "ext
 | Persistence | No backend → no snapshots, no history beyond what the hub itself returns. Memory sparkline is the only history, and it comes from the hub. | Hub Inspector File-Manager persistence `:3089`, `:3108`, `:3121`, `:3132`, `:3168–3187` |
 | Scheduling | Pure client; can't run periodic snapshots/checkpoints. | Hub Inspector scheduled jobs (README L325–341) |
 | Version sync | No mechanism to detect a stale UI on the hub. | Hub Inspector UI auto-download `:3229–3260` |
-| Multi-hub | Single hub IP in `localStorage`; the rest of the repo (per `MEMORY.md`) supports a 4-hub config. | `.hubitat.json`, `default_hub` |
+| Multi-hub | Single hub IP in `localStorage`; the repo's tooling supports several hubs. | `.hubitat.json`, `default_hub` |
 | Caching | Every load re-fetches the full bundle in parallel. Fine for prototype, painful at scale. | n/a |
 | Write actions | Read-only by design. Replacement Helper, app config edits, etc. would need writes. | n/a |
 

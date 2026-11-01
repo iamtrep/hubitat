@@ -94,7 +94,7 @@ Architectural audit triggered by the user's intuition that too much CPU was bein
 
 **Side effect on N1:** v5.29.1 added `cachedSystemResources` + `cachedSystemResourcesAt` static fields. They are NOT cleared in `updated()` either, extending N1's scope. Roll into the same fix.
 
-**Test coverage carried as a known gap.** See `~/.claude/projects/-Users-trep-Documents-GitHub-iamtrep-hubitat/memory/project_hubdiag_test_coverage.md`. The bash API test only verifies hub-side contracts; SPA-side derivations (`composeAlerts`, `computeSnapshotDiff`, the report builder, plus anything LB-* lands) are unverified by automation. Decision recorded: option A (manual verification) for now; trigger to revisit is the start of Tier 2 work (LB1).
+**Test coverage carried as a known gap.** The bash API test only verifies hub-side contracts; SPA-side derivations (`composeAlerts`, `computeSnapshotDiff`, the report builder, plus anything LB-* lands) are unverified by automation. Decision recorded: option A (manual verification) for now; trigger to revisit is the start of Tier 2 work (LB1).
 
 ---
 

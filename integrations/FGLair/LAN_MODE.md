@@ -227,8 +227,8 @@ state back.
 ```python
 # rough sketch — not a usable implementation
 import http.server, json, requests
-UNIT_IP = "192.168.1.110"
-MY_IP   = "192.168.1.X"
+UNIT_IP = "192.0.2.110"
+MY_IP   = "192.0.2.X"
 MY_PORT = 10275
 requests.post(f"http://{UNIT_IP}/local_reg.json",
               json={"local_reg":{"uri":"/local_lan","notify":1,

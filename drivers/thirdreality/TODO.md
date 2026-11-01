@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT
 
 # ThirdReality Presence Sensor R3 (3RPL01084Z) — TODO
 
-Remaining work after the v0.2.9 review/verification pass.
+Remaining work.
 
 ## Color control
 - [x] Color model confirmed (live, fw counter 0x28). Legacy Hue/Saturation works: `moveTo­Hue­And­Saturation`

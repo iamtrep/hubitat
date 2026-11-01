@@ -1,7 +1,6 @@
 # Multi-Hub Inventory — TODO
 
-Backlog for the app. v0.1.0 is functional (deployed + verified on the test hub); this is the
-remaining work.
+Backlog for the app.
 
 ## Done
 

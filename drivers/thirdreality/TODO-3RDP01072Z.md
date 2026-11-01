@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT
 
 # Third Reality Dual Smart Plug (3RDP01072Z) — TODO
 
-v0.0.1. Remaining before release:
+Remaining before release:
 
 ## Hardware validation (blocks mirror publish)
 - [x] **Scaling under load.** Verified on a live load — V·I·PF is internally consistent
@@ -25,4 +25,3 @@ v0.0.1. Remaining before release:
 
 ## After validation
 - [x] Mirror-publish to the other hubs.
-- [ ] Bump CODE_VERSION off 0.0.1 once load-validated.

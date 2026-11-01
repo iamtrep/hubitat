@@ -234,7 +234,7 @@ Same four-byte header (Status, RoutingTableEntries, StartIndex, RoutingTableList
 | 2   | status octet | bits 0–2 route status: 0=Active, 1=Discovery Underway, 2=Discovery Failed, 3=Inactive, 4=Validation Underway; bit 3 memoryConstrained, bit 4 manyToOne, bit 5 routeRecordRequired |
 | 3–4 | nextHop | reversed |
 
-Many routers (including some smart plugs) reply NOT_SUPPORTED to `Mgmt_Rtg_req` — handle that case *(probed firmware not recorded, ZDO probes of ThirdReality plugs)*; the request is optional per spec, and a NOT_SUPPORTED reply omits every field after Status *(spec: Zigbee Specification (05-3474-22), Table 2-80 and 2.4.4.4.3)*.
+Many routers (including some smart plugs) reply NOT_SUPPORTED to `Mgmt_Rtg_req` — handle that case *(probed firmware not recorded, ZDO probes of ThirdReality plugs)*. A ThirdReality 3RSP02064Z answered it in full, 53 entries over several pages *(probed firmware not recorded, one plug)*. The request is optional per spec, and a NOT_SUPPORTED reply omits every field after Status *(spec: Zigbee Specification (05-3474-22), Table 2-80 and 2.4.4.4.3)*.
 
 ### StartIndex pagination + dedup
 

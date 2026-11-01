@@ -78,6 +78,8 @@ A refresh procedure must be documented next to the snapshot — typically a `--s
 
 The repo-root `tests/` directory is reserved for cross-project tooling.
 
+[`TEST_COVERAGE.md`](TEST_COVERAGE.md) lists every app, driver and integration with its tests; update it in the same commit as a new test.
+
 ## 2. Apps
 
 ### 2.1 The five test modes (behavior first)
@@ -140,7 +142,7 @@ The spec maps directly onto the procedure below — for [`apps/sensors/SensorAgg
 **Pattern:** Python file with a comment header pointing at the Groovy source line range it shadows; `pytest` or a `__main__` harness; assertions on the mirror, periodic manual cross-check against the Groovy.
 
 **Canonical examples:**
-- [`apps/HubInspector/test_classification.py`](apps/HubInspector/test_classification.py) — mirrors the `INTEGRATION_TABLE` classification logic.
+- [`apps/HubInspector/tests/test_classification.py`](apps/HubInspector/tests/test_classification.py) — mirrors the `INTEGRATION_TABLE` classification logic.
 
 **Closed-loop notes:** when the Groovy is the source of truth and the Python mirror drifts, the mirror is wrong by definition. Keep the source-line-range comment in the mirror up-to-date; periodic review is a code-review concern, not an automated one.
 

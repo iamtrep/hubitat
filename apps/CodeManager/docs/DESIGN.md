@@ -293,7 +293,7 @@ HubDiagnostics' SPA is this repository's reference implementation (CONTRIBUTING.
 
 ## 11. Driver alternatives by fingerprint
 
-An index built off-hub and fetched by the SPA only. Source of truth: every driver location reachable from the catalog (all `packageManifest.json` `drivers[]` of all repositories in the master list plus subscribed custom repositories), fetched by tooling in the host repository (`tools/fingerprint-index/`), parsed for `fingerprint(...)` lines, and published as one JSON file on GitHub under the mirror. Schema contract:
+An index built off-hub and fetched by the SPA only. Source of truth: every driver location reachable from the catalog (all `packageManifest.json` `drivers[]` of all repositories in the master list plus subscribed custom repositories), fetched by an off-hub index generator, parsed for `fingerprint(...)` lines, and published as one JSON file on GitHub under the mirror. Schema contract:
 
 ```
 { "schemaVersion": 1, "generatedAt": epochMs, "catalogCommit": "…",

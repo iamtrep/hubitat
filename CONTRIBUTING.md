@@ -72,7 +72,7 @@ Some apps in this repo aren't automations — they're **dashboards**: a Groovy a
 
 ## Platform reference docs
 
-`docs/hubitat-*.md` record what the hub does where Hubitat's documentation is silent or wrong. [`docs/EVIDENCE.md`](docs/EVIDENCE.md) says which file a fact belongs in and how to mark its evidence: every fact says whether it was probed on a hub (with the firmware), read from the hub's own code, stated by Hubitat staff or the docs, reported by another user, or inferred. `scripts/check-doc-evidence.py` checks the marks.
+`docs/hubitat-*.md`, indexed in [`docs/README.md`](docs/README.md), record what the hub does where Hubitat's documentation is silent or wrong. [`docs/EVIDENCE.md`](docs/EVIDENCE.md) says which file a fact belongs in and how to mark its evidence: every fact says whether it was probed on a hub (with the firmware), read from the hub's own code, stated by Hubitat staff or the docs, reported by another user, or inferred. `scripts/check-doc-evidence.py` checks the marks.
 
 ## Submitting changes
 

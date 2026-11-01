@@ -24,11 +24,11 @@ Replace each with an `href` to a confirmation page that lists what will be remov
 
 `diagnosticsPage` renders a multi-line `"""` paragraph that also uses `<br>`, so pre-wrap doubles every line break. Add `rawHtml: true`.
 
-### 4. SwitchMonitor group delete
+### 3. SwitchMonitor group delete
 
 `removeGroupPage` has a confirm button and a Cancel link, but its `nextPage` button is a third exit that does nothing. Hide it, or drop `nextPage`.
 
-### 6. Status colors (opportunistic)
+### 4. Status colors (opportunistic)
 
 Inline `color:red/orange/green` appears in HubInspector, WellMonitor, SensorAggregatorDiscreteChild and the integration managers. Switch to PrimeFlex color classes only when already editing those pages.
 

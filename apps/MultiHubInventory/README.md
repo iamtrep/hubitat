@@ -95,7 +95,7 @@ above). In the app's settings page, click **"Add hub"**. Paste that hub's Hub In
 base URL with its access token**, for example:
 
 ```
-http://192.168.0.10/apps/api/123/api/?access_token=<token>
+http://192.0.2.10/apps/api/123/api/?access_token=<token>
 ```
 
 This is the `/api/` path, not the `ui.html` dashboard link. To build it, take the **Open

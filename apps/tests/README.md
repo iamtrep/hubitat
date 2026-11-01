@@ -62,7 +62,7 @@ Sends batches of UDP messages to an echo server and measures round-trip latency.
 | Calls per batch | 8 | UDP messages per batch |
 | Pacing | 1 ms | Delay between messages within a batch |
 | Log threshold | 250 ms | Round-trip times above this are logged as warnings |
-| Request URL | `192.168.25.100:31337` | Echo server address (`ip:port`) |
+| Request URL | `192.0.2.100:31337` | Echo server address (`ip:port`) |
 
 Uses `sendHubCommand` with `HubAction` (LAN UDP client). The payload encodes batch/iteration/timestamp; the echo server returns it so the app can compute round-trip time. Runs on a 2-second cron schedule. A **Stop** button in the UI cancels the current run.
 

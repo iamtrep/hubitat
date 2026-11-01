@@ -298,6 +298,10 @@ ThirdReality Presence Sensor R3 / Multi-Function Night Light. Confirmed protocol
 
 Read Reporting Configuration of OnOff (0x0006:0x0000) returned a record of type 0x10 with minimum interval 0 s on both plugs. The maximum interval was 60 s on a 3RSP019BZ and 600 s on a 3RSP02064Z *(probed 2.5.2.139, C-7, one plug of each model)*.
 
+Cluster 0xFF03 takes manufacturer code `0x1233` on Gen2 models (`3RSP02028BZ`, `3RSPE01044BZ`) and `0x1407` on Gen3. A write with the wrong code is refused with Unsupported Attribute *(probed firmware not recorded, driver on a plug of each generation; community: [zigbee-herdsman-converters `third_reality.ts`](https://github.com/Koenkk/zigbee-herdsman-converters/blob/master/src/devices/third_reality.ts))*.
+
+On a 3RSP02064Z with plug firmware 1.00.47, writes to `powerRiseThreshold` (0x0040), `powerDropThreshold` (0x0041) and `meteringOnlyMode` (0x0050) return Success and are discarded: read-back stays 3200 W, 3200 W and 0. Both thresholds ship at 3200 W, so on-change power reporting is off and power follows the maximum interval *(probed firmware not recorded, plug firmware 1.00.47)*.
+
 ## ThirdReality vibration sensor
 
 ThirdReality vibration sensors (mfr `1233`) emit a flood of `FFF1:0000/0001/0002/0003` Report
