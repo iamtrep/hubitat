@@ -70,4 +70,41 @@ cases:
     assert:
       - { device: test-sac-out, attribute: temperature, value: 20.0, tolerance: 0.05 }
 
-runtime_budget_seconds: 30
+  # Methods: each case saves the method, then moves one input so the child recomputes.
+  - name: method-median
+    setup:
+      - { settings: { aggregationMethod: median } }
+      - { device: test-sac-in-1, command: setTemperature, args: [10.0] }
+      - { device: test-sac-in-3, command: setTemperature, args: [60.0] }
+    wait_seconds: 2
+    assert:
+      - { device: test-sac-out, attribute: temperature, value: 20.0, tolerance: 0.05 }
+
+  - name: method-min
+    setup:
+      - { settings: { aggregationMethod: min } }
+    actions:
+      - { device: test-sac-in-1, command: setTemperature, args: [11.0] }
+    wait_seconds: 2
+    assert:
+      - { device: test-sac-out, attribute: temperature, value: 11.0, tolerance: 0.05 }
+
+  - name: method-max
+    setup:
+      - { settings: { aggregationMethod: max } }
+    actions:
+      - { device: test-sac-in-3, command: setTemperature, args: [61.0] }
+    wait_seconds: 2
+    assert:
+      - { device: test-sac-out, attribute: temperature, value: 61.0, tolerance: 0.05 }
+
+  - name: method-average-restored
+    setup:
+      - { settings: { aggregationMethod: average } }
+    actions:
+      - { device: test-sac-in-3, command: setTemperature, args: [29.0] }
+    wait_seconds: 2
+    assert:
+      - { device: test-sac-out, attribute: temperature, value: 20.0, tolerance: 0.05 }
+
+runtime_budget_seconds: 60
