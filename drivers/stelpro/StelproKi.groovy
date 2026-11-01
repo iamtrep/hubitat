@@ -529,8 +529,13 @@ private void parseAttributeReport(Map descMap) {
     }
 
     if (map) {
+        // The thermostat re-reports its heat demand and setpoint often: info logs the changes only.
+        boolean repeat = map.name in ['thermostatOperatingState', 'heatingSetpoint'] && map.value == device.currentValue(map.name)
         sendEvent(map)
-        if (map.descriptionText) logInfo("${map.descriptionText}")
+        if (map.descriptionText) {
+            if (repeat) logDebug("${map.descriptionText}")
+            else logInfo("${map.descriptionText}")
+        }
         logRx("event sent: ${map}")
     } else {
         logTrace("Unhandled attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
