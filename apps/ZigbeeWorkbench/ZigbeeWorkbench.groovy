@@ -18,10 +18,9 @@ import java.util.concurrent.ConcurrentHashMap
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
 @Field static final String RADIO_DNI = "zbworkbench-radio"
 @Field static final String RADIO_DRIVER = "Zigbee Workbench Radio"
-@Field static final String MONITOR_DRIVER = "Zigbee Workbench Monitor"
 @Field static final long REPLY_TIMEOUT_MS = 10000L
 // The app is singleThreaded, so a frame or a sweep can wait behind a slow call (a 15 s hub read)
-// and run after a deadline it met. Page renders, buttons and monitor polls expire requests only
+// and run after a deadline it met. Page renders and buttons expire requests only
 // this long past their deadline: they are the backstop for a sweep lost to a reboot.
 @Field static final long BACKSTOP_GRACE_MS = 60000L
 @Field static final long HUB_CACHE_MS = 60000L
@@ -1145,12 +1144,31 @@ static List<String> watchFor(Map pending) {
     return ((pending ?: [:]).values().collect { it.addr.toString().toUpperCase() } as List<String>).unique().sort()
 }
 
-// What flushRadio does with requests ready to send: "send" while the radio's socket (always kept
-// open) is connected, otherwise "fail": the requests are reported lost rather than sent with nobody
-// listening for the reply.
-@CompileStatic
-static String flushDecision(String wsStatus) {
-    return wsStatus == "connected" ? "send" : "fail"
+// How long requests wait for the radio's socket to open before they are reported lost.
+@Field static final long CONNECT_WAIT_MS = 15000L
+// Results are dropped after a day. The hub loads and rewrites `state` on every run of the app, at
+// about 3.4 ms per KB; the node descriptor stays, since it sets a device's timeout text and type.
+@Field static final long RESULT_KEEP_MS = 86400000L
+
+// results without the entries older than cutoff (epoch ms), or null when none is that old. An
+// entry with no time counts as old. Devices left with nothing are dropped.
+static Map pruneResults(Map results, long cutoff) {
+    boolean changed = false
+    Map out = [:]
+    (results ?: [:]).each { dev, Map kinds ->
+        Map keep = kinds.findAll { kind, entry -> kind == 'node' || ((entry instanceof Map && entry.time instanceof Number) && (entry.time as long) >= cutoff) }
+        if (keep.size() != kinds.size()) changed = true
+        if (keep) out[dev] = keep
+    }
+    return changed ? out : null
+}
+
+// What flushRadio does with requests ready to send: "send" while the radio's socket is connected,
+// "wait" while it opens for up to CONNECT_WAIT_MS, then "fail": the requests are reported lost
+// rather than sent with nobody listening for the reply.
+static String flushDecision(String wsStatus, long waitedMs) {
+    if (wsStatus == "connected") return "send"
+    return waitedMs < CONNECT_WAIT_MS ? "wait" : "fail"
 }
 
 // A picked device: [zigbee: true, ieee, ep] for a Zigbee device (ep falls back to 01), or
@@ -1485,33 +1503,13 @@ static Map zclResult(Map req, Map header, Map d) {
     return [status: 'ok', data: [op: 'configure', ep: req.ep, cluster: req.cluster, attr: req.attr, type: req.type, min: req.min, max: req.max,
                                  change: req.change, records: records]]
 }
-// ---- monitor devices ----
+// ---- health ----
 
-@Field static final String MONITOR_PREFIX = "zbworkbench-mon-"
-@Field static final List<String> POLL_MINUTES = ['15', '30', '60', '180']
-
-static String monitorDni(String ieee) {
-    return MONITOR_PREFIX + ieee.toUpperCase()
-}
-
-// The IEEE address in a monitor DNI, or null when the DNI is not a monitor's.
-static String monitorIeee(String dni) {
-    if (dni == null || !dni.startsWith(MONITOR_PREFIX)) return null
-    String ieee = dni.substring(MONITOR_PREFIX.length())
-    return ieee ==~ /[0-9A-F]{16}/ ? ieee : null
-}
-
-// IEEE addresses of monitor devices whose device is no longer picked, sorted. They are listed for
-// the user to remove; they are never deleted on their own.
-static List<String> orphanMonitors(List<String> dnis, Collection<String> picked) {
-    return (dnis ?: []).collect { monitorIeee(it) }.findAll { it != null && !(it in (picked ?: [])) }.unique().sort()
-}
-
-// The monitor attributes a neighbour table (and a routing table) gives: neighborCount (the
+// The summary a neighbour table (and a routing table) gives: neighborCount (the
 // table's total), childCount (entries whose relationship is Child), parent (the Parent entry's
 // name, "none" without one), lowestLqi ("<lqi> <name>"), routeCount (Active routes). Keys it cannot
 // fill are left out. names: [byNwk: [nwk: name], byIeee: [ieee: name]].
-static Map monitorValues(Map neighbors, Map routes, Map names) {
+static Map meshSummary(Map neighbors, Map routes, Map names) {
     Map out = [:]
     Closure nameOf = { Map e ->
         String n = e.ieee ? names?.byIeee?.get(e.ieee.toString().toUpperCase()) : null
@@ -1554,13 +1552,6 @@ static String healthFor(Map details, String ieee, int inactiveMinutes, long now)
     return healthFrom(rec.lastMessage?.toString(), inactiveMinutes, now)
 }
 
-// The kinds a scheduled poll sends that are not already pending for this device: a poll never
-// cancels a request the user started (a new request of the same kind replaces the pending one).
-static List<String> pollKinds(List<String> wanted, Map pending, String ieee) {
-    Set<String> busy = ((pending ?: [:]).values().findAll { it instanceof Map && it.ieee == ieee }.collect { it.kind?.toString() }) as Set<String>
-    return wanted.findAll { !(it in busy) }
-}
-
 static Long isoMillis(String iso) {
     def m = iso == null ? null : (iso =~ /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?([+-]\d{4}|[+-]\d{2}:\d{2}|Z)$/)
     if (m == null || !m.find()) return null
@@ -1581,16 +1572,6 @@ static Long isoMillis(String iso) {
 static int defaultInactiveMinutes(Map node) {
     if (node?.macCapability != null) return ((node.macCapability as int) & 0x04) != 0 ? 60 : 720
     return node?.logicalType == 'End Device' ? 720 : 60
-}
-
-// One poll per interval at a random second and minute offset (ARCHITECTURE: random jitter on
-// recurring schedules). minutes: 15, 30, 60 or 180.
-static String pollCron(int minutes, int second, int minute) {
-    int s = Math.abs(second) % 60
-    if (minutes >= 180) return "${s} ${Math.abs(minute) % 60} ${Math.abs(minute) % 3}/3 ? * *".toString()
-    if (minutes >= 60) return "${s} ${Math.abs(minute) % 60} * ? * *".toString()
-    int m = minutes >= 30 ? 30 : 15
-    return "${s} ${Math.abs(minute) % m}/${m} * ? * *".toString()
 }
 
 // ---- interview ----
@@ -2100,10 +2081,9 @@ void initialize() {
     checkVersion(false)
     if (debugEnable) runIn(1800, "logsOff")
     ensureRadio()
-    ensureRadioSocket()
     syncTargets()
     subscribe(location, "systemStart", "systemStartHandler")
-    scheduleMonitors()
+    state.remove("monitorPolls")
     state.watchSent = null
     if (state.pending) flushRadio()
 }
@@ -2142,24 +2122,6 @@ private void ensureRadio() {
     }
 }
 
-// The radio keeps its log socket open from its own initialize(); after a code push or a radio
-// created before that rule, nothing has opened it yet. radio.initialize() only schedules the
-// connect, so the radio never reports back to the app from inside this call.
-private void ensureRadioSocket() {
-    def radio = getChildDevice(RADIO_DNI)
-    if (radio == null) return
-    String known = radio.socketKnownStatus()?.toString()
-    String ws = (known ?: radio.currentValue("wsStatus", true))?.toString()
-    if (ws == null || ws == "disconnected") {
-        logCfg "opening the ${RADIO_DRIVER} log socket (was ${ws})"
-        radio.initialize()
-    } else if (ws == "failed" || (known == null && ws == "connecting")) {
-        // after a radio code push only the attribute is left, and it can be stale: close and reopen
-        logCfg "reopening the ${RADIO_DRIVER} log socket (was ${ws}${known == null ? ', from the attribute' : ''})"
-        radio.reopen()
-    }
-}
-
 // Rebuilds state.targets ([ieee: [deviceId, name, ep]]) from the picked devices, and drops results
 // for devices no longer picked. Never stores the DeviceWrapper.
 private void syncTargets() {
@@ -2181,9 +2143,9 @@ private void syncTargets() {
     }
     state.targets = targets
     state.nonZigbee = other
-    markOrphansUnknown()
     if (state.results) state.results = state.results.findAll { k, v -> targets.containsKey(k) }
     if (state.interviews) state.interviews = state.interviews.findAll { k, v -> targets.containsKey(k) }
+    dropOldResults()
 }
 
 // HUB DATA (loopback, cached HUB_CACHE_MS per app)
@@ -2234,6 +2196,14 @@ void appButtonHandler(String btn) {
         refreshHubTables(0)
         return
     }
+    if (action == 'sessionStart') {
+        getChildDevice(RADIO_DNI)?.startSession()
+        return
+    }
+    if (action == 'sessionEnd') {
+        getChildDevice(RADIO_DNI)?.endSession()
+        return
+    }
     if (parts.size() < 3) return
     expireOverdue()
     if (action == 'confirm') {
@@ -2247,20 +2217,8 @@ void appButtonHandler(String btn) {
     }
     String ieee = parts[2].toUpperCase()
     List<String> args = parts.size() > 3 ? parts.subList(3, parts.size()) : []
-    if (action == 'unmonitor') {
-        prepareUnmonitor(ieee)
-        return
-    }
     if (action in CHANGE_ACTIONS) {
         prepareChange(ieee, action, args)
-        return
-    }
-    if (action == 'monitor') {
-        createMonitor(ieee)
-        return
-    }
-    if (action == 'poll') {
-        pollDevice(ieee)
         return
     }
     if (action == 'interview') {
@@ -2282,7 +2240,7 @@ void appButtonHandler(String btn) {
 // The buttons that change a device. Each goes through the confirmation page.
 @Field static final List<String> CHANGE_ACTIONS = ['write', 'configReport', 'cmd', 'bind', 'unbind', 'raw', 'leave', 'ota']
 
-// CONFIRMATION (every action that changes a device, and monitor removal)
+// CONFIRMATION (every action that changes a device)
 //
 // Those buttons only prepare: they check the form, build the frame for the device's current
 // address, issue a single-use token valid for CONFIRM_TTL_MS and point state.confirmView at it.
@@ -2306,17 +2264,6 @@ private Map takeConfirmToken(String token) {
     Map e = tokenTake(tokens, token, now())
     state.confirmTokens = tokens
     return e
-}
-
-private void prepareUnmonitor(String ieee) {
-    def mon = getChildDevice(monitorDni(ieee))
-    if (mon == null) {
-        logWarn "${ieee} has no monitor device"
-        return
-    }
-    String token = issueConfirmToken('unmonitor', ieee, [:])
-    state.confirmView = [token: token, action: 'unmonitor', ieee: ieee, args: [:], issued: now()]
-    logCfg "${mon.displayName}: removal waits for confirmation"
 }
 
 private void prepareChange(String ieee, String action, List<String> args) {
@@ -2369,11 +2316,6 @@ private void confirmAction(String token) {
         return
     }
     String ieee = (String) e.ieee
-    if (e.action == 'unmonitor') {
-        confirmDone(token)
-        removeMonitor(ieee)
-        return
-    }
     Map t = currentTarget(ieee, true)
     if (t == null) {
         confirmFailed(token, "The device is no longer on the Zigbee network. Nothing was sent.")
@@ -2399,161 +2341,13 @@ private void confirmFailed(String token, String msg) {
     if (state.confirmView?.token == token) state.confirmView = state.confirmView + [error: msg]
 }
 
-// MONITOR DEVICES
-//
-// One optional child device per watched device (DNI zbworkbench-mon-<IEEE>), output only: the app
-// pushes values with updateValues(); its refresh() calls monitorRefresh() from its own execution.
-// A monitor whose device was dropped from the picker is listed as orphaned and only removed when
-// the user confirms; removal always goes through the confirmation page.
-
-private List monitorDevices() {
-    return getChildDevices().findAll { monitorIeee(it.deviceNetworkId?.toString()) != null }
-}
-
-private void createMonitor(String ieee) {
-    Map tgt = (Map) state.targets?.get(ieee)
-    if (tgt == null) {
-        logWarn "${ieee} is not one of the picked devices"
-        return
-    }
-    if (getChildDevice(monitorDni(ieee))) return
-    try {
-        addChildDevice("iamtrep", MONITOR_DRIVER, monitorDni(ieee), [name: MONITOR_DRIVER, label: "${tgt.name} monitor", isComponent: false])
-        state.remove("inputError")
-        logCfg "${tgt.name}: created its monitor device"
-    } catch (Exception e) {
-        inputError("Could not create the monitor device (is the ${MONITOR_DRIVER} driver installed?): ${e.message}")
-        return
-    }
-    scheduleMonitors()
-    pollDevice(ieee)
-}
-
-private void removeMonitor(String ieee) {
-    def mon = getChildDevice(monitorDni(ieee))
-    if (mon == null) return
-    String label = mon.displayName
-    try {
-        deleteChildDevice(monitorDni(ieee))
-    } catch (Exception e) {
-        logError "could not delete ${label}: ${e.message}"
-    }
-    if (getChildDevice(monitorDni(ieee))) {
-        logWarn "${label} is still there after the delete"
-    } else {
-        logCfg "removed the monitor device ${label}"
-        Map polls = (Map) (state.monitorPolls ?: [:])
-        polls.remove(ieee)
-        state.monitorPolls = polls
-    }
-    scheduleMonitors()
-}
-
-// One schedule for all monitors, at a random offset; none without monitors.
-private void scheduleMonitors() {
-    if (!monitorDevices()) {
-        unschedule("pollMonitors")
-        return
-    }
-    int minutes = ((settings.pollMinutes ?: '60') as String).toInteger()
-    Random rng = new Random()
-    schedule(pollCron(minutes, rng.nextInt(60), rng.nextInt(60)), "pollMonitors")
-}
-
-void pollMonitors() {
-    checkVersion()
-    expireOverdue()
-    Map targets = (Map) (state.targets ?: [:])
-    Map details = null
-    monitorDevices().each { mon ->
-        String ieee = monitorIeee(mon.deviceNetworkId?.toString())
-        if (targets.containsKey(ieee)) {
-            if (details == null) details = fetchZigbeeDetails(true)   // once per poll, shared by every device
-            pollDevice(ieee, details, false)
-        }
-    }
-    flushRadio()   // once for every device's requests
-    markOrphansUnknown()
-}
-
-// An orphaned monitor is no longer polled, so its health is unknown rather than its last value.
-private void markOrphansUnknown() {
-    Map targets = (Map) (state.targets ?: [:])
-    monitorDevices().each { mon ->
-        if (!targets.containsKey(monitorIeee(mon.deviceNetworkId?.toString()))) {
-            try { mon.updateValues([healthStatus: 'unknown']) } catch (Exception e) { logWarn "could not update ${mon.displayName}: ${e.message}" }
-        }
-    }
-}
-
-// Called by a monitor device's refresh(), in that device's own execution.
-void monitorRefresh(String dni) {
-    checkVersion()
-    String ieee = monitorIeee(dni)
-    if (ieee == null || !state.targets?.containsKey(ieee)) {
-        logWarn "refresh from ${dni}: its device is no longer picked"
-        return
-    }
-    expireOverdue()
-    pollDevice(ieee)
-}
-
-// Health from the hub's last message time, then, for routers and devices of unknown type, the
-// neighbour and routing tables (whose results update the monitor when they arrive). End devices
-// get health only.
-// lastPoll is the time of the poll attempt; the table values follow when the replies arrive. The
-// single-device paths (button, refresh) fetch their own details; pollMonitors passes one read.
-private void pollDevice(String ieee, Map details = null, boolean flush = true) {
-    if (!state.targets?.containsKey(ieee)) return
-    long t = now()
-    Map polls = (Map) (state.monitorPolls ?: [:])
-    polls[ieee] = t
-    state.monitorPolls = polls
-    if (details == null) details = fetchZigbeeDetails(true)
-    pushMonitor(ieee, [healthStatus: healthOf(ieee, details), lastPoll: isoTime(t)])
-    Map res = (Map) (state.results?.get(ieee) ?: [:])
-    String lt = res.node?.status == 'ok' ? res.node.data?.logicalType : null
-    if (lt == 'End Device') return
-    List<String> wanted = []
-    if (lt == null) wanted << 'node'
-    wanted << 'neighbors'
-    // a router that refused the routing table as NOT_SUPPORTED is not asked again
-    if (!(res.routes?.status == 'refused' && res.routes?.statusName == 'NOT_SUPPORTED')) wanted << 'routes'
-    pollKinds(wanted, (Map) state.pending, ieee).each { String k -> startRequest(ieee, k, [], false) }
-    if (flush) flushRadio()
-}
-
-private String healthOf(String ieee, Map details) {
-    return healthFor(details, ieee, inactiveFor(ieee), now())
-}
-
 private Map hubRecord(String ieee, Map details) {
     return (Map) ((List) (details?.devices ?: [])).find { it.zigbeeId?.toString()?.toUpperCase() == ieee }
 }
 
 private int inactiveFor(String ieee) {
-    Object v = settings["monInactive_${ieee}"]
-    if (v != null && v.toString().isInteger() && v.toString().toInteger() > 0) return v.toString().toInteger()
     Map node = (Map) state.results?.get(ieee)?.get('node')
     return defaultInactiveMinutes(node?.status == 'ok' ? (Map) node.data : null)
-}
-
-// Sends the monitor what the stored tables give, plus `extra`; the device keeps only changes.
-private void pushMonitor(String ieee, Map extra = [:]) {
-    def mon = getChildDevice(monitorDni(ieee))
-    if (mon == null) return
-    Map res = (Map) (state.results?.get(ieee) ?: [:])
-    Map v = monitorValues(res.neighbors?.status == 'ok' ? (Map) res.neighbors.data : null,
-                          res.routes?.status == 'ok' ? (Map) res.routes.data : null, nameMaps(fetchZigbeeDetails()))
-    try {
-        mon.updateValues(v + extra)
-    } catch (Exception e) {
-        logWarn "could not update ${mon.displayName}: ${e.message}"
-    }
-}
-
-private String isoTime(long t) {
-    return new Date(t).format("yyyy-MM-dd'T'HH:mm:ssXXX", location.timeZone ?: TimeZone.getTimeZone("UTC"))
 }
 
 // RAW COMMANDS: sent as typed, after rawCommandError and the confirmation; no reply is matched.
@@ -2572,7 +2366,7 @@ private void sendRawFrame(String ieee, String cmd) {
 
 // REQUEST ENGINE
 
-private void startRequest(String ieee, String action, List<String> args, boolean flush = true) {
+private void startRequest(String ieee, String action, List<String> args) {
     Map req = buildRequest(ieee, action, args)
     if (req == null) return
     Map t = currentTarget(ieee)
@@ -2580,7 +2374,7 @@ private void startRequest(String ieee, String action, List<String> args, boolean
         storeResult(ieee, (String) req.kind, [status: 'error', error: 'The device is not on the Zigbee network.'])
         return
     }
-    sendRequest(req, t, flush)
+    sendRequest(req, t)
 }
 
 // The request for a button, without its address, or null after showing why not.
@@ -2667,13 +2461,13 @@ private Map currentTarget(String ieee, boolean fresh = false) {
     return t ?: resolveTarget(ieee, fetchZigbeeDetails(true))
 }
 
-private void sendRequest(Map req, Map t, boolean flush = true) {
+private void sendRequest(Map req, Map t) {
     String ieee = (String) req.ieee
     Map r = req + [addr: t.nwk]
     cancelPending(ieee, (String) r.kind)
     issueRequest(r)
     logCmd "${state.targets?.get(ieee)?.name ?: ieee}: ${r.kind} request queued for ${t.nwk}"
-    if (flush) flushRadio()
+    flushRadio()
 }
 
 // The form fields for a ZCL request: from the button's arguments when it has them (write:
@@ -2726,8 +2520,9 @@ private void issueRequest(Map req) {
 }
 
 // Points the radio's watch list at the pending addresses and sends unsent frames while its socket is
-// connected (else they are lost), as pickSendable allows: one per device and
-// MAX_IN_FLIGHT in all. Calls into the radio child, so it runs only in the
+// connected, as pickSendable allows: one per device and MAX_IN_FLIGHT in all. A socket that is not
+// connected gets a session; unsent frames wait for radioUp, with a sweep as the backstop, and are
+// lost after CONNECT_WAIT_MS. Calls into the radio child, so it runs only in the
 // app's own executions, never inside radioFrame or radioDown, where the child is waiting on the app.
 void flushRadio() {
     checkVersion()
@@ -2745,12 +2540,23 @@ void flushRadio() {
     long t = now()
     Map pick = pickSendable(pending)
     List<String> unsent = (List<String>) pick.keys
+    if (!unsent) state.remove("connectWaitSince")
     if (unsent) {
         // the radio's in-memory status: its wsStatus events can be stored out of order
         String ws = (radio.socketStatus() ?: radio.currentValue("wsStatus", true))?.toString()
-        if (flushDecision(ws) == "fail") {
+        Long since = state.connectWaitSince as Long
+        String decision = flushDecision(ws, since == null ? 0L : t - since)
+        if (decision == "wait") {
+            if (since == null) {
+                state.connectWaitSince = t
+                radio.ensureSession()
+            }
+            scheduleSweep()
+            return
+        }
+        state.remove("connectWaitSince")
+        if (decision == "fail") {
             logWarn "the Zigbee log socket is down (${ws}); ${unsent.size()} request(s) lost"
-            ensureRadioSocket()
             for (String k in unsent) {
                 Map r = (Map) pending.remove(k)
                 putResult((String) r.ieee, (String) r.kind, failureEntry(r, 'lost', LOST_LINK, null, null, t))
@@ -2806,6 +2612,12 @@ void radioFrame(Map frame) {
         logError "could not decode the ${m.request.kind} reply: ${e.message}"
         storeFailure((Map) m.request, 'error', "Could not decode the reply: ${e.message}", payloadOf(frame), null)
     }
+    runInMillis(20, "flushRadio")
+}
+
+// Called by the radio child when its log socket opens while it watches addresses.
+void radioUp() {
+    checkVersion()
     runInMillis(20, "flushRadio")
 }
 
@@ -2935,7 +2747,12 @@ private void issueNextPage(Map req, int start, List acc) {
 
 private void storeResult(String ieee, String kind, Map entry) {
     putResult(ieee, kind, [time: now()] + entry)
-    if (kind in ['neighbors', 'routes'] && entry.status == 'ok') pushMonitor(ieee)
+}
+
+private void dropOldResults() {
+    if (((Map) state.interviews ?: [:]) || ((Map) state.pending ?: [:])) return
+    Map kept = pruneResults((Map) state.results, now() - RESULT_KEEP_MS)
+    if (kept != null) state.results = kept
 }
 
 private void putResult(String ieee, String kind, Map entry) {
@@ -3226,20 +3043,11 @@ Map mainPage(Map params = null) {
                 }
             }
         }
-        section("Monitor devices") {
-            input "pollMinutes", "enum", title: "Poll monitored devices every (minutes)", options: POLL_MINUTES, defaultValue: "60", required: false, width: 4
-            List mons = monitorDevices()
-            List<String> orphans = orphanMonitors(mons.collect { it.deviceNetworkId.toString() }, targets.keySet() as List<String>)
-            paragraph "<small>A monitor device publishes a device's health, neighbour and route counts, parent and lowest LQI for dashboards and rules. Turn it on from the device's page. ${mons.size()} monitor device${mons.size() == 1 ? '' : 's'}.</small>"
-            orphans.each { String oi ->
-                def mon = getChildDevice(monitorDni(oi))
-                paragraph "<b>${esc(mon?.displayName)}</b> (IEEE ${esc(oi)}): its device is no longer picked. It is kept until you remove it."
-                input "zbw:unmonitor:${oi}", "button", title: "Remove ${esc(mon?.displayName)}…", width: 4
-            }
-            Map cv = (Map) state.confirmView
-            if (cv?.action == 'unmonitor' && cv.ieee in orphans && confirmOpen(cv)) {
-                href "zbwConfirmOrphan", page: "confirmPage", title: "Confirm: ${CONFIRM_TITLES[cv.action]}", description: CONFIRM_LINK
-            }
+        section("Zigbee log connection") {
+            Long ends = radioSessionEnd()
+            paragraph sessionText(ends)
+            input "zbw:sessionStart", "button", title: ends ? "Extend session" : "Start session", width: 3
+            if (ends) input "zbw:sessionEnd", "button", title: "End session", width: 3
         }
         section("Hub") {
             href "hubLink", page: "hubPage", title: "Hub Zigbee tables", description: "The coordinator's neighbours, children and routes; channel, PAN and power"
@@ -3254,8 +3062,18 @@ Map mainPage(Map params = null) {
     }
 }
 
+private Long radioSessionEnd() {
+    return getChildDevice(RADIO_DNI)?.sessionEnd() as Long
+}
+
+private String sessionText(Long ends) {
+    return ends ? "Open until <b>${fmtTime(ends)}</b>. Extending gives a full session from now."
+                : "Closed. It opens for a session, and on its own for the next request."
+}
+
 Map devicePage(Map params = null) {
     if (params?.ieee) state.viewIeee = params.ieee.toString().toUpperCase()
+    dropOldResults()
     String ieee = state.viewIeee
     if (!ieee || !state.targets?.containsKey(ieee)) ieee = ((Map) (state.targets ?: [:])).keySet().find { true }
     Map tgt = ieee ? (Map) state.targets?.get(ieee) : null
@@ -3284,31 +3102,21 @@ Map devicePage(Map params = null) {
             if (state.inputError) line += "<br><span style='color:var(--hubitat-validation-color, #d32f2f)'>${esc(state.inputError)}</span>"
             paragraph line
         }
-        section("Health and monitor device") {
+        section("Zigbee log connection") {
+            Long ends = radioSessionEnd()
+            paragraph sessionText(ends)
+            input "zbw:sessionStart", "button", title: ends ? "Extend session" : "Start session", width: 3
+            if (ends) input "zbw:sessionEnd", "button", title: "End session", width: 3
+        }
+        section("Health") {
             Map hr = hubRecord(ieee, details)
             int inactive = inactiveFor(ieee)
-            Map mv = monitorValues(res.neighbors?.status == 'ok' ? (Map) res.neighbors.data : null, res.routes?.status == 'ok' ? (Map) res.routes.data : null, names)
-            Long polled = (Long) state.monitorPolls?.get(ieee)
+            Map mv = meshSummary(res.neighbors?.status == 'ok' ? (Map) res.neighbors.data : null, res.routes?.status == 'ok' ? (Map) res.routes.data : null, names)
             String line = "Health <b>${healthFor(details, ieee, inactive, now())}</b> (offline after ${inactive} minutes without a message) · " +
                 "last message <b>${esc(hr == null ? 'the hub no longer lists this device' : (hr.lastMessage ?: 'none since the hub started'))}</b> · messages <b>${esc(hr?.messageCount ?: '?')}</b>"
             if (mv) line += "<br>Neighbours <b>${mv.neighborCount}</b> · children <b>${mv.childCount}</b> · parent <b>${esc(mv.parent)}</b> · lowest LQI <b>${esc(mv.lowestLqi ?: '–')}</b>" +
                 (mv.routeCount != null ? " · active routes <b>${mv.routeCount}</b>" : '')
-            if (polled) line += "<br>Last poll ${fmtTime(polled)}"
             paragraph line
-            def mon = getChildDevice(monitorDni(ieee))
-            if (mon) {
-                paragraph "Monitor device <a href='/device/edit/${mon.id}' target='_blank'>${esc(mon.displayName)}</a> publishes these values. Polled every ${esc(settings.pollMinutes ?: '60')} minutes; routers also get their neighbour and routing tables read."
-                // no defaultValue: a saved default would stop following the node descriptor once it is read
-                input "monInactive_${ieee}", "number", title: "Offline after (minutes without a message; empty: ${defaultInactiveMinutes(res.node?.status == 'ok' ? (Map) res.node.data : null)})", width: 4, required: false, submitOnChange: true
-                input "zbw:poll:${ieee}", "button", title: "Poll now", width: 3
-                input "zbw:unmonitor:${ieee}", "button", title: "Stop monitoring…", width: 3
-                Map cv = (Map) state.confirmView
-                if (cv?.ieee == ieee && cv.action == 'unmonitor' && confirmOpen(cv)) {
-                    href "zbwConfirmMon", page: "confirmPage", title: "Confirm: ${CONFIRM_TITLES[cv.action]}", description: CONFIRM_LINK
-                }
-            } else {
-                input "zbw:monitor:${ieee}", "button", title: "Monitor this device", width: 4
-            }
         }
         section("Interview") {
             paragraph "<small>Reads the node descriptor, the endpoints, each endpoint's clusters, and every attribute the device lists for its server clusters, one request at a time. Nothing is written.</small>"
@@ -3445,7 +3253,7 @@ Map devicePage(Map params = null) {
 
 @Field static final Map<String, String> CONFIRM_TITLES = [write: "write an attribute", configReport: "configure reporting", cmd: "send a cluster command",
                                                           raw: "send a raw command", bind: "bind a cluster", unbind: "unbind a cluster",
-                                                          leave: "leave the network", ota: "firmware update notify", unmonitor: "remove the monitor device"]
+                                                          leave: "leave the network", ota: "firmware update notify"]
 @Field static final String CONFIRM_LINK = "Opens the confirmation page (valid for 2 minutes)"
 
 private boolean confirmOpen(Map cv) {
@@ -3459,21 +3267,17 @@ private Map confirmFor(String ieee, List<String> actions) {
 }
 
 // Shows the device, its address, what will happen and the exact frame, as prepared by a button
-// that changes a device (or the device to remove, for a monitor device). Confirm posts the
+// that changes a device. Confirm posts the
 // single-use token; Cancel drops it. Done is hidden so those are the only exits.
 Map confirmPage(Map params = null) {
     Map cv = (Map) state.confirmView
     Map tgt = cv ? (Map) state.targets?.get(cv.ieee) : null
-    def mon = cv?.action == 'unmonitor' ? getChildDevice(monitorDni((String) cv.ieee)) : null
-    if (cv?.action == 'unmonitor' && tgt == null) tgt = [name: mon?.displayName ?: cv.ieee]
     Map r = cv ? resolveTarget((String) cv.ieee, fetchZigbeeDetails()) : null
     return dynamicPage(name: "confirmPage", title: "Confirm", install: false, uninstall: false) {
         section("") {
             paragraph rawHtml: true, "<style>#formApp:has(.zbw-confirm) #fieldsetAppButtons button[value='Done'] { display:none !important; }</style><span class='zbw-confirm'></span>"
             if (cv == null || tgt == null) {
                 paragraph "Nothing to confirm. Use a button that changes a device on its device page."
-            } else if (cv.done && cv.action == 'unmonitor') {
-                paragraph mon ? "The monitor device ${esc(mon.displayName)} could not be removed; see the logs." : "Removed the monitor device of ${esc(tgt.name)}."
             } else if (cv.done) {
                 paragraph "Sent: ${esc(CONFIRM_TITLES[cv.action])} to ${esc(tgt.name)}. The result shows on the device page."
             } else if (cv.cancelled) {
@@ -3484,8 +3288,6 @@ Map confirmPage(Map params = null) {
                 Map req = (Map) cv.args?.req
                 String what = cv.action == 'leave'
                     ? "The device leaves the Zigbee network${req?.rejoin ? ' and then tries to rejoin' : ''}. To use it again you may have to pair it again."
-                    : cv.action == 'unmonitor'
-                    ? "The monitor device ${mon?.displayName ?: ''} is deleted. Dashboards, rules and apps that use it lose it. The Zigbee device itself is not changed."
                     : cv.action == 'ota'
                     ? "The device is told to look for a firmware update from the hub now. If the hub has one, the update starts."
                     : cv.action == 'raw'

@@ -5,8 +5,9 @@
  *  Zigbee Workbench Radio: child driver of the Zigbee Workbench app.
  *
  *  Sends the `he raw` frames the app hands it, reads the hub's /zigbeeLogsocket over loopback
- *  and relays inbound frames from the addresses the app is waiting on. The socket stays open:
- *  it connects in initialize() and reconnects after any drop; the watch list is only a filter.
+ *  and relays inbound frames from the addresses the app is waiting on. The socket is open only
+ *  during a session: startSession opens it, a request from the app starts a session when none is
+ *  running, and it closes when the session ends. Nothing connects at boot.
  */
 
 import groovy.transform.CompileStatic
@@ -40,6 +41,10 @@ import java.util.concurrent.ConcurrentHashMap
 // close is that close, not a drop.
 @Field static final ConcurrentHashMap<String, Long> ownCloseAt = new ConcurrentHashMap<>()
 
+// When the session ends (epoch ms), keyed by device id; absent with no session. state.sessionEnds
+// keeps a copy for after a code push, which clears this map and can leave the socket open.
+@Field static final ConcurrentHashMap<String, Long> sessionEnds = new ConcurrentHashMap<>()
+
 metadata {
     // Not singleThreaded: parse() calls parent.radioFrame(), which waits for the single-threaded
     // app, while the app calls sendFrames()/setWatch() here. With both gated, each waits for the
@@ -48,10 +53,16 @@ metadata {
                importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/apps/ZigbeeWorkbench/ZigbeeWorkbenchRadio.groovy") {
         capability "Initialize"
 
+        command "startSession"
+        command "endSession"
+
         attribute "wsStatus", "enum", ["disconnected", "connecting", "connected", "failed"]
+        attribute "sessionEnds", "string"
     }
 
     preferences {
+        input name: "sessionMinutes", type: "number", title: "<b>Session length (minutes)</b>",
+              description: "The Zigbee log connection closes this long after the session starts.", range: "1..240", defaultValue: 30
         input name: "txtEnable", type: "bool", title: "<b>Enable info logging</b>", defaultValue: true
         input name: "debugEnable", type: "bool", title: "<b>Enable debug logging</b>",
               description: "Auto-disables after 30 minutes.", defaultValue: false
@@ -75,6 +86,69 @@ static Map toFrame(Map msg, Set<String> watch) {
             payload: msg.payload, lqi: msg.lastHopLqi, rssi: msg.lastHopRssi, time: msg.time]
 }
 
+// The hub address of a /zigbeeLogsocket message, read without parsing the JSON, or null when the
+// message does not have the expected form (the caller then parses it). The hub writes
+// {"name":"...","id":49669,...}; `deviceId` does not match, its I is upper case.
+@CompileStatic
+static String frameAddr(String json) {
+    if (json == null) return null
+    int i = json.indexOf('"id":')
+    if (i < 0) return null
+    int p = i + 5
+    int end = p
+    while (end < json.length() && Character.isDigit(json.charAt(end))) end++
+    if (end == p || end - p > 5 || end >= json.length() || json.charAt(end) != (char) ',') return null
+    return String.format("%04X", Integer.parseInt(json.substring(p, end)) & 0xFFFF)
+}
+
+// Whether a message needs parsing. Most messages on a busy hub come from unwatched addresses, and
+// the JSON parse is the driver's largest cost per message. A null watch list (not restored yet)
+// parses everything.
+@CompileStatic
+static boolean wantsMessage(String json, Set<String> watch) {
+    if (watch == null) return true
+    if (watch.isEmpty()) return false
+    String addr = frameAddr(json)
+    return addr == null || watch.contains(addr)
+}
+
+// Session length in minutes: the preference within 1..240, 30 otherwise.
+@Field static final int SESSION_MINUTES = 30
+
+@CompileStatic
+static int sessionLength(Object setting) {
+    String v = setting?.toString()?.trim()
+    if (!v || !v.isInteger()) return SESSION_MINUTES
+    int m = v.toInteger()
+    return m >= 1 && m <= 240 ? m : SESSION_MINUTES
+}
+
+@CompileStatic
+static boolean sessionActive(Long endsAt, long now) {
+    return endsAt != null && endsAt.longValue() > now
+}
+
+// Milliseconds to wait before a connect, so that it follows the radio's own last close by at least
+// CONNECT_GAP_MS. A connect soon after a close once left a socket that reported open and delivered
+// nothing, and a late report of the close would be taken for a drop of the new socket.
+@Field static final long CONNECT_GAP_MS = 5000L
+
+@CompileStatic
+static long connectDelayMs(Long closedAt, long now) {
+    if (closedAt == null) return 100L
+    return Math.max(100L, closedAt.longValue() + CONNECT_GAP_MS - now)
+}
+
+// What a session's end does: "close", or "hold" while the app still waits on replies, up to
+// MAX_HOLDS checks HOLD_S apart. A null watch list is unknown after a code push: it does not hold.
+@Field static final int HOLD_S = 30
+@Field static final int MAX_HOLDS = 30
+
+@CompileStatic
+static String sessionEndDecision(Collection<String> watch, int holds) {
+    return watch && holds < MAX_HOLDS ? "hold" : "close"
+}
+
 // Seconds before the next connect: RECONNECT_S after a first drop, doubling with each failed
 // connect in a row up to RECONNECT_MAX_S. The count resets on the first message after a connect,
 // not on open: a socket that opens and drops at once still backs off.
@@ -90,8 +164,8 @@ static int reconnectDelay(int drops) {
     return (int) Math.min(d, (long) RECONNECT_MAX_S)
 }
 
-// What a webSocketStatus string means: "open", "drop" (failure or closed: reconnect, whether or not
-// anything is watched) or "none".
+// What a webSocketStatus string means: "open", "drop" (failure or closed: reconnect during a
+// session, whether or not anything is watched) or "none".
 @CompileStatic
 static String socketDecision(String status) {
     String s = status?.trim()?.toLowerCase()
@@ -122,8 +196,13 @@ void installed() {
 void updated() {
     logCfg "updated"
     unschedule()
+    Long ends = sessionEnds[device.id.toString()]
     disconnectSocket()
-    initialize()
+    if (debugEnable) runIn(1800, "logsOff", [overwrite: true])
+    if (sessionActive(ends, now())) {
+        scheduleSessionEnd(ends)
+        queueConnect()
+    }
 }
 
 void initialize() {
@@ -133,27 +212,100 @@ void initialize() {
         state.version = CODE_VERSION
     }
     if (settings?.debugEnable) runIn(1800, "logsOff", [overwrite: true])
-    // A fresh start (reboot, code push, updated() or the app's reopen) reconnects without the wait.
-    dropCounts.remove(device.id.toString())
-    // Idempotent: a socket that is open or about to connect is left alone. Two connects close
-    // together once left the status "connected" on a socket that delivered no frames. The memory
-    // map is empty after a reboot or code push, so the socket is opened then. updated() closes
-    // first, so it always reconnects.
-    String st = socketStates[device.id.toString()]
-    if (st == "connected" || st == "connecting") return
-    setStatus("connecting")
-    runIn(2, "connectSocket", [overwrite: true])
+    // Runs at boot through the Initialize capability: no socket survives a reboot, and none opens
+    // until the next session.
+    String id = device.id.toString()
+    dropCounts.remove(id)
+    unschedule("connectSocket")
+    unschedule("sessionTimeout")
+    sessionEnds.remove(id)
+    state.remove("sessionEnds")
+    setStatus("disconnected")
+    sendEvent(name: "sessionEnds", value: "none")
 }
 
 void uninstalled() {
     disconnectSocket()
     String id = device.id.toString()
-    [watchLists, versionChecked, socketStates, ownCloseAt, dropCounts].each { it.remove(id) }
+    [watchLists, versionChecked, socketStates, ownCloseAt, dropCounts, sessionEnds].each { it.remove(id) }
 }
 
 void logsOff() {
     logWarn "debug logging disabled"
     device.updateSetting("debugEnable", [value: "false", type: "bool"])
+}
+
+// SESSION
+
+// Starts a session, or extends a running one to a full length from now.
+void startSession() {
+    String id = device.id.toString()
+    long ends = now() + sessionLength(settings?.sessionMinutes) * 60000L
+    sessionEnds[id] = ends
+    state.sessionEnds = ends
+    scheduleSessionEnd(ends)
+    logCfg "session runs until ${new Date(ends)}"
+    String st = socketStates[id]
+    if (st == "connected" || st == "connecting") return
+    // unknown after a code push, when a socket may still be open: never connect over it
+    if (st == null) disconnectSocket()
+    dropCounts.remove(id)
+    setStatus("connecting")
+    queueConnect()
+}
+
+// For a request from the app: starts a session when none is running, and leaves a running one alone.
+void ensureSession() {
+    if (!sessionActive(sessionEnds[device.id.toString()], now())) startSession()
+}
+
+// In the radio's own run, since it tells the app about requests still waiting.
+void endSession() {
+    runInMillis(10, "endSessionNow", [overwrite: true])
+}
+
+void endSessionNow() {
+    closeSession("Session ended")
+}
+
+// When the session ends, epoch ms, or null. For the app's pages.
+Long sessionEnd() {
+    Long ends = sessionEnds[device.id.toString()]
+    return sessionActive(ends, now()) ? ends : null
+}
+
+private void scheduleSessionEnd(long ends) {
+    runIn(Math.max(1L, (ends - now()).intdiv(1000L)) as int, "sessionTimeout", [overwrite: true])
+    sendEvent(name: "sessionEnds", value: new Date(ends).format("yyyy-MM-dd'T'HH:mm:ssXXX", location.timeZone ?: TimeZone.getTimeZone("UTC")))
+}
+
+void sessionTimeout(Map data = null) {
+    // an extension moved the end and rescheduled this job; a job already running sees that here
+    if (sessionActive(sessionEnds[device.id.toString()], now() + 1000L)) return
+    int holds = ((data?.holds ?: 0) as int)
+    if (sessionEndDecision(watchLists[device.id.toString()], holds) == "hold") {
+        logNet "session over, requests still waiting (check ${holds + 1})"
+        runIn(HOLD_S, "sessionTimeout", [overwrite: true, data: [holds: holds + 1]])
+        return
+    }
+    closeSession("Session timed out")
+}
+
+private void closeSession(String reason) {
+    String id = device.id.toString()
+    unschedule("sessionTimeout")
+    sessionEnds.remove(id)
+    state.remove("sessionEnds")
+    disconnectSocket()
+    sendEvent(name: "sessionEnds", value: "none")
+    logCfg reason.toLowerCase()
+    Set<String> w = watchSet()
+    if (w != null && w.isEmpty()) return
+    try {
+        parent?.radioDown(reason)
+    } catch (Exception e) {
+        logWarn "radioDown failed: ${e.message}"
+    }
 }
 
 // COMMANDS FROM THE APP
@@ -179,28 +331,20 @@ String socketStatus() {
     return socketStates[device.id.toString()] ?: device.currentValue("wsStatus")?.toString()
 }
 
-// The status from memory only: null after a reboot or code push, when only the attribute is left.
-String socketKnownStatus() {
-    return socketStates[device.id.toString()]
-}
-
-// Closes and reopens the socket in the radio's own run, for the app to call when the status it
-// reads may be stale. Closing first means no second connect over a socket that is still open.
-void reopen() {
-    runInMillis(10, "reopenNow", [overwrite: true])
-}
-
-void reopenNow() {
-    disconnectSocket()
-    initialize()
-}
-
 private void setStatus(String v) {
     socketStates[device.id.toString()] = v
     sendEvent(name: "wsStatus", value: v)
 }
 
+private void queueConnect() {
+    runInMillis(connectDelayMs(ownCloseAt[device.id.toString()], now()), "connectSocket", [overwrite: true])
+}
+
 void connectSocket() {
+    if (!sessionActive(sessionEnds[device.id.toString()], now())) {
+        if (socketStates[device.id.toString()] != "disconnected") setStatus("disconnected")
+        return
+    }
     setStatus("connecting")
     logNet "connecting to ws://127.0.0.1:8080/zigbeeLogsocket"
     try {
@@ -211,7 +355,6 @@ void connectSocket() {
     }
 }
 
-// Only updated() and uninstalled() close the socket; updated() reopens it through initialize().
 void disconnectSocket() {
     unschedule("connectSocket")
     ownCloseAt[device.id.toString()] = now()
@@ -229,6 +372,15 @@ void webSocketStatus(String status) {
     if (action == "open") {
         setStatus("connected")
         unschedule("connectSocket")
+        // the app holds requests until the socket opens
+        Set<String> watching = watchSet()
+        if (watching) {
+            try {
+                parent?.radioUp()
+            } catch (Exception e) {
+                logWarn "radioUp failed: ${e.message}"
+            }
+        }
         return
     }
     if (action == "none") return
@@ -236,11 +388,15 @@ void webSocketStatus(String status) {
         logNet "ignoring the report of our own close (${status})"
         return
     }
+    if (!sessionActive(sessionEnds[device.id.toString()], now())) {
+        setStatus("disconnected")
+        return
+    }
     setStatus("failed")
     handleDrop("Lost the Zigbee log connection", "socket dropped (${status})")
 }
 
-// Reconnects after reconnectDelay(). The app hears of it only when it is waiting on replies. Runs in the
+// Reconnects after reconnectDelay(), within a session. The app hears of it only when it is waiting on replies. Runs in the
 // radio's own executions (socket callbacks, connectSocket from initialize or a scheduled retry),
 // never inside an app call: setWatch and sendFrames no longer touch the socket.
 private void handleDrop(String reason, String detail) {
@@ -270,6 +426,7 @@ void parse(String description) {
     // The first message after a connect ends the backoff.
     Integer drops = dropCounts.remove(device.id.toString())
     if (drops != null && drops >= DROPS_BEFORE_WARN) logCfg "reconnected after ${drops} failed attempts"
+    if (!wantsMessage(description, watchSet())) return
     String trimmed = description?.trim()
     if (!trimmed?.startsWith("{")) return
     Map msg
@@ -293,11 +450,19 @@ private Set<String> watchSet() {
 
 // After a reboot or code push: restore the watch list from state unless the app has set one since
 // (then store that one, so this run's write of state carries it), and rerun updated() after a
-// version change (it closes the open socket before initialize() reopens it).
+// version change (it closes the open socket and reopens it during a session). This run happens only
+// when the socket delivers a message, so it is also where a socket left open past its session closes.
 void afterReload() {
     String id = device.id.toString()
     if (watchLists[id] == null) watchLists[id] = ((state.watch ?: []) as List).collect { it.toString() }
     else state.watch = watchLists[id]
+    Long stored = state.sessionEnds as Long
+    if (sessionEnds[id] == null && sessionActive(stored, now())) sessionEnds[id] = stored
+    if (!sessionActive(sessionEnds[id], now())) {
+        logCfg "no session is running: closing the socket"
+        closeSession("Session ended")
+        return
+    }
     if (state.version != CODE_VERSION) updated()
 }
 

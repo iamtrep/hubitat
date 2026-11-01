@@ -593,7 +593,7 @@ check('raw: he cmd without a readable command token is refused on any cluster') 
         app.rawCommandError('he cmd 0x1A2B 0x01 0x0006 01 {}', '1A2B') == 'A raw command must be a he command for this device.'
 }
 
-// ---- monitor devices ----
+// ---- health ----
 Map monNames = [byNwk: ['0000': 'Hub', '1A2B': 'Plug A', '3C4D': 'Sensor B'], byIeee: ['00124B0000000002': 'Plug A']]
 Map monNeighbors = [total: 4, entries: [
     [ieee: '00124B0000000002', nwk: '1A2B', relationship: 'Sibling', lqi: 140],
@@ -601,17 +601,17 @@ Map monNeighbors = [total: 4, entries: [
     [ieee: '00124B0000000004', nwk: '5E6F', relationship: 'Child', lqi: 90],
     [ieee: '00124B0000000001', nwk: '0000', relationship: 'Parent', lqi: 200]]]
 Map monRoutes = [total: 3, entries: [[dest: '1A2B', routeStatus: 'Active'], [dest: '3C4D', routeStatus: 'Inactive'], [dest: '5E6F', routeStatus: 'Active']]]
-Map mv = app.monitorValues(monNeighbors, monRoutes, monNames)
-check('monitorValues counts neighbours by the table total') { mv.neighborCount == 4 }
-check('monitorValues counts children by relationship Child') { mv.childCount == 2 }
-check('monitorValues names the Parent entry') { mv.parent == 'Hub' }
-check('monitorValues gives the lowest LQI with its name') { mv.lowestLqi == '33 Sensor B' }
-check('monitorValues counts Active routes') { mv.routeCount == 2 }
-check('monitorValues without a parent says none, unnamed entries show their address') {
-    Map v = app.monitorValues([total: 1, entries: [[ieee: '00124B0000000009', nwk: '7A8B', relationship: 'Sibling', lqi: 12]]], null, monNames)
+Map mv = app.meshSummary(monNeighbors, monRoutes, monNames)
+check('meshSummary counts neighbours by the table total') { mv.neighborCount == 4 }
+check('meshSummary counts children by relationship Child') { mv.childCount == 2 }
+check('meshSummary names the Parent entry') { mv.parent == 'Hub' }
+check('meshSummary gives the lowest LQI with its name') { mv.lowestLqi == '33 Sensor B' }
+check('meshSummary counts Active routes') { mv.routeCount == 2 }
+check('meshSummary without a parent says none, unnamed entries show their address') {
+    Map v = app.meshSummary([total: 1, entries: [[ieee: '00124B0000000009', nwk: '7A8B', relationship: 'Sibling', lqi: 12]]], null, monNames)
     v == [neighborCount: 1, childCount: 0, parent: 'none', lowestLqi: '12 7A8B']
 }
-check('monitorValues with no tables is empty') { app.monitorValues(null, null, monNames) == [:] }
+check('meshSummary with no tables is empty') { app.meshSummary(null, null, monNames) == [:] }
 long hNow = 1_800_000_000_000L
 String iso(long ms) { def f = new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ"); f.setTimeZone(TimeZone.getTimeZone('UTC')); f.format(new Date(ms)) }
 check('healthFrom: offline 61 minutes after the last message with a 60-minute limit') { app.healthFrom(iso(hNow - 61 * 60000L), 60, hNow) == 'offline' }
@@ -627,16 +627,6 @@ check('defaultInactiveMinutes: 60 mains, 720 battery, from the node descriptor')
         app.defaultInactiveMinutes([logicalType: 'End Device', macCapability: 0x84]) == 60 && app.defaultInactiveMinutes([logicalType: 'End Device']) == 720 &&
         app.defaultInactiveMinutes(null) == 60
 }
-check('pollCron: one run per interval at the given offsets') {
-    app.pollCron(15, 7, 22) == '7 7/15 * ? * *' && app.pollCron(30, 59, 45) == '59 15/30 * ? * *' &&
-        app.pollCron(60, 0, 41) == '0 41 * ? * *' && app.pollCron(180, 12, 40) == '12 40 1/3 ? * *'
-}
-check('monitor DNI round trip') { app.monitorDni('00124b0000000002') == 'zbworkbench-mon-00124B0000000002' && app.monitorIeee('zbworkbench-mon-00124B0000000002') == '00124B0000000002' }
-check('monitorIeee refuses other DNIs') { app.monitorIeee('zbworkbench-radio') == null && app.monitorIeee('zbworkbench-mon-XYZ') == null && app.monitorIeee(null) == null }
-check('orphanMonitors lists monitors whose device is no longer picked, never others') {
-    app.orphanMonitors(['zbworkbench-radio', 'zbworkbench-mon-00124B0000000003', 'zbworkbench-mon-00124B0000000002'], ['00124B0000000002']) == ['00124B0000000003'] &&
-        app.orphanMonitors([], ['00124B0000000002']) == [] && app.orphanMonitors(['zbworkbench-mon-00124B0000000002'], []) == ['00124B0000000002']
-}
 
 // ---- review fixes: health of an unlisted device, polls never cancel a user's request ----
 Map hDetails = [devices: [[zigbeeId: '00124B0000000002', lastMessage: iso(hNow - 5 * 60000L)], [zigbeeId: '00124B0000000003', lastMessage: null]]]
@@ -644,17 +634,8 @@ check('healthFor: a listed device follows its last message') { app.healthFor(hDe
 check('healthFor: a device the hub no longer lists is offline') { app.healthFor(hDetails, '00124B0000000009', 60, hNow) == 'offline' }
 check('healthFor: no last message is unknown') { app.healthFor(hDetails, '00124B0000000003', 60, hNow) == 'unknown' }
 check('healthFor: no device list (failed read) is unknown') { app.healthFor([:], '00124B0000000002', 60, hNow) == 'unknown' && app.healthFor(null, '00124B0000000002', 60, hNow) == 'unknown' }
-check('pollKinds skips kinds already pending for the device') {
-    Map pend = [a: [ieee: '00124B0000000002', kind: 'neighbors'], b: [ieee: '00124B0000000003', kind: 'routes']]
-    app.pollKinds(['node', 'neighbors', 'routes'], pend, '00124B0000000002') == ['node', 'routes'] &&
-        app.pollKinds(['neighbors', 'routes'], null, '00124B0000000002') == ['neighbors', 'routes']
-}
 
 // ---- R28: the radio's socket stays open; a request finding it down is lost at once ----
-check('flushDecision: connected sends, anything else fails at once') {
-    app.flushDecision('connected') == 'send' && app.flushDecision('connecting') == 'fail' && app.flushDecision('failed') == 'fail' &&
-        app.flushDecision('disconnected') == 'fail' && app.flushDecision(null) == 'fail'
-}
 check('watchFor lists pending addresses once, sorted, empty when nothing is pending') {
     app.watchFor([a: [addr: '3c4d'], b: [addr: '1A2B'], c: [addr: '3C4D']]) == ['1A2B', '3C4D'] && app.watchFor([:]) == [] && app.watchFor(null) == []
 }
@@ -743,5 +724,19 @@ check('a reply processed after its deadline matches by its frame time, not by no
     app.matchPending(['k': new LinkedHashMap(req)], frame, late) == null &&
         app.matchPending(['k': new LinkedHashMap(req)], frame, app.frameTimeMs(frame, late, tor)) != null
 }
+// flushDecision: requests wait for the socket to open, then are lost
+check('flush: sends on a connected socket') { app.flushDecision('connected', 0L) == 'send' && app.flushDecision('connected', 99999L) == 'send' }
+check('flush: waits while the socket opens') { [null, 'disconnected', 'connecting', 'failed'].every { app.flushDecision(it, 14999L) == 'wait' } }
+check('flush: fails after CONNECT_WAIT_MS') { app.flushDecision('connecting', 15000L) == 'fail' }
+
+// pruneResults: old results leave, the node descriptor stays
+check('pruneResults: nothing old gives null') { app.pruneResults([A: [read: [time: 100L]]], 100L) == null && app.pruneResults(null, 100L) == null }
+check('pruneResults drops old entries and keeps new ones') {
+    app.pruneResults([A: [read: [time: 99L], routes: [time: 100L]]], 100L) == [A: [routes: [time: 100L]]]
+}
+check('pruneResults keeps the node descriptor, however old') { app.pruneResults([A: [node: [time: 1L], read: [time: 1L]]], 100L) == [A: [node: [time: 1L]]] }
+check('pruneResults drops an emptied device') { app.pruneResults([A: [read: [time: 1L]], B: [read: [time: 200L]]], 100L) == [B: [read: [time: 200L]]] }
+check('pruneResults treats an entry with no time as old') { app.pruneResults([A: [report: [status: 'ok']]], 100L) == [:] }
+
 println "${passed} passed, ${failed} failed, 0 warnings"
 System.exit(failed == 0 ? 0 : 1)

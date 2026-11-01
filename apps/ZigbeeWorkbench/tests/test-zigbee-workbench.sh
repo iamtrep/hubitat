@@ -13,13 +13,12 @@
 # through the confirmation page, which must show the write's frame (skipped with a
 # warning when the device lacks it; a device without On/Off skips its cases and
 # discovers Basic instead). The Leave button is pressed but never
-# confirmed: the test checks that nothing is sent. A monitor device is
-# created for the device, polled (neighbour and routing tables) and checked, then
-# removed through its confirmation page; none is left behind. The test then checks
+# confirmed: the test checks that nothing is sent. It ends the session and checks
+# that the socket closes and that the next request opens it. The test then checks
 # that the device's driver, DNI, driver state, settings and data did not change
 # (a receive timestamp the device's own driver keeps may move: it sees the replies).
 #
-# Setup (idempotent): installs the app type, the radio and monitor drivers if missing,
+# Setup (idempotent): installs the app type and the radio driver if missing,
 # creates the single app instance if missing (it creates its radio child on
 # save), and adds the device to the app's device input. Nothing is removed.
 #
@@ -30,8 +29,8 @@
 #   RUN_SLOW_TESTS=1 bash apps/ZigbeeWorkbench/tests/test-zigbee-workbench.sh [@hub] --device "<label>"   # all cases
 #
 # Runtime budget: ~60 s by default (endpoints, simple descriptor, attribute read and discover,
-# StartUpOnOff read/write/read, reporting configuration, 5 s leave guard, monitor device with one
-# poll of the paged tables, unchanged-device checks); RUN_SLOW_TESTS=1 adds the neighbour and routing tables (paged, one
+# StartUpOnOff read/write/read, reporting configuration, 5 s leave guard, session close and reopen,
+# unchanged-device checks); RUN_SLOW_TESTS=1 adds the neighbour and routing tables (paged, one
 # request per page), node and power descriptors, bindings, a concurrent
 # burst, an interview and the hub tables. Upper bound: 30 s per request case, 120 s per paged table,
 # 180 s for the interview and 60 s for the hub tables. A device that never answers makes the default run take about 2.5 minutes.
@@ -55,14 +54,13 @@ fi
 CONFIG_FILE="${HUBITAT_CONFIG:-$PROJECT_ROOT/.hubitat.json}"
 APP_SOURCE="$SCRIPT_DIR/../ZigbeeWorkbench.groovy"
 DRIVER_SOURCE="$SCRIPT_DIR/../ZigbeeWorkbenchRadio.groovy"
-MONITOR_SOURCE="$SCRIPT_DIR/../ZigbeeWorkbenchMonitor.groovy"
 LIB_DIR="$(cd "$SCRIPT_DIR/../../../scripts/lib" && pwd)"
 
-python3 - "$CONFIG_FILE" "$APP_SOURCE" "$DRIVER_SOURCE" "$MONITOR_SOURCE" "$LIB_DIR" "$@" <<'PYTHON_SCRIPT'
+python3 - "$CONFIG_FILE" "$APP_SOURCE" "$DRIVER_SOURCE" "$LIB_DIR" "$@" <<'PYTHON_SCRIPT'
 import datetime, http.cookiejar, json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
 
-config_file, app_source, driver_source, monitor_source, lib_dir = sys.argv[1:6]
-args = sys.argv[6:]
+config_file, app_source, driver_source, lib_dir = sys.argv[1:5]
+args = sys.argv[5:]
 # scripts/lib/logsocket.py provides LogCapture (log lines); it needs the websockets package.
 sys.path.insert(0, lib_dir)
 from logsocket import LogCapture
@@ -83,7 +81,7 @@ if not DEVICE_LABEL:
 HUB_NAME = next((a[1:] for a in args if a.startswith("@")), None)
 INSTANCE_ID = next((a for a in args if a.isdigit()), None)
 
-APP_TYPE, DRIVER_TYPE, MONITOR_TYPE, NAMESPACE = "Zigbee Workbench", "Zigbee Workbench Radio", "Zigbee Workbench Monitor", "iamtrep"
+APP_TYPE, DRIVER_TYPE, NAMESPACE = "Zigbee Workbench", "Zigbee Workbench Radio", "iamtrep"
 WAIT_S = 30
 TABLE_WAIT_S = 120   # a paged table: one request per page
 SLOW = os.environ.get("RUN_SLOW_TESTS") == "1"
@@ -208,11 +206,10 @@ def save_main(iid, device_ids):
 section("Setup")
 try:
     drv_id, drv_new = ensure_code("driver", DRIVER_TYPE, driver_source)
-    mon_drv_id, mon_new = ensure_code("driver", MONITOR_TYPE, monitor_source)
     app_type_id, app_new = ensure_code("app", APP_TYPE, app_source)
 except Exception as e:
     die(f"Install failed: {e}")
-info(f"radio driver type {drv_id}{' (installed now)' if drv_new else ''}, monitor driver type {mon_drv_id}{' (installed now)' if mon_new else ''}, "
+info(f"radio driver type {drv_id}{' (installed now)' if drv_new else ''}, "
      f"app type {app_type_id}{' (installed now)' if app_new else ''}")
 
 devices = walk((request("GET", "/hub2/devicesList") or {}).get("devices") or [], [])
@@ -276,17 +273,23 @@ radio = next((c for c in children if (c.get("deviceNetworkId") or c.get("dni")) 
 check(radio is not None or any(DRIVER_TYPE in json.dumps(c) for c in children),
       "radio child device exists", f"no radio child under app {iid}: {children}")
 
-# The radio keeps its log socket open; right after a save or reboot it may still be connecting.
+# The socket opens only for a session: Start session opens it.
 def radio_ws():
     if radio is None: return None
     cs = ((request("GET", f"/device/fullJson/{radio.get('id')}") or {}).get("device") or {}).get("currentStates") or {}
     return (cs.get("wsStatus") or {}).get("value")
-ws = None
-for _ in range(30):
-    ws = radio_ws()
-    if ws == "connected": break
-    time.sleep(1)
-check(ws == "connected", "the radio's log socket is open", f"radio wsStatus {ws!r} after 30 s")
+
+def wait_ws(want, seconds=30):
+    ws = None
+    for _ in range(seconds):
+        ws = radio_ws()
+        if ws == want: break
+        time.sleep(1)
+    return ws
+
+press(iid, "zbw:sessionStart")
+ws = wait_ws("connected")
+check(ws == "connected", "Start session opens the radio's log socket", f"radio wsStatus {ws!r} after 30 s")
 
 # ── Cases ─────────────────────────────────────────────────────────────
 capture = LogCapture(hub_ip=hub_cfg["hub_ip"], opener=opener)
@@ -463,124 +466,13 @@ check(not sent, "no 0x0034 frame and no send by the radio within 5 s", f"logged:
 press(iid, f"zbw:cancel:{token}")
 check(token not in (app_state(iid).get("confirmTokens") or {}), "Cancel drops the token", "the token survived Cancel")
 
-section("Monitor device")
-# Monitoring on: the app creates the monitor child and polls; a poll press then reads the tables
-# again. The monitor's values are compared with the app's stored neighbour table. Monitoring off
-# goes through the confirmation page, and the device must be gone afterwards, whatever failed.
-MON_DNI = f"zbworkbench-mon-{ieee}"
-def monitor_child():
-    # statusJson lists children by id and label only; the DNI comes from each child's record
-    for c in status_json(iid).get("childDevices") or []:
-        d = (request("GET", f"/device/fullJson/{c.get('id')}") or {}).get("device") or {}
-        if d.get("deviceNetworkId") == MON_DNI: return c
-    return None
-def monitor_states(mid):
-    cs = ((request("GET", f"/device/fullJson/{mid}") or {}).get("device") or {}).get("currentStates") or {}
-    return {k: v.get("value") for k, v in cs.items()}
-def remove_monitor():
-    press(iid, f"zbw:unmonitor:{ieee}")
-    st = app_state(iid)
-    view = st.get("confirmView") or {}
-    token = view.get("token")
-    if not (view.get("action") == "unmonitor" and view.get("ieee") == ieee and token in (st.get("confirmTokens") or {})):
-        return False, f"no unmonitor confirmation: {view}"
-    if monitor_child() is None:
-        return False, "the monitor was removed before Confirm"
-    page = request("GET", f"/installedapp/configure/json/{iid}/confirmPage")
-    names = [i.get("name") for sec in (page.get("configPage") or {}).get("sections", []) for i in sec.get("input", [])]
-    if f"zbw:confirm:{token}" not in names:
-        return False, f"confirm page inputs {names}"
-    press(iid, f"zbw:confirm:{token}")
-    for _ in range(10):
-        if monitor_child() is None: return True, "removed after Confirm"
-        time.sleep(0.5)
-    return False, "the monitor device is still there after Confirm"
-
-if monitor_child() is not None:
-    info("a monitor device is already there (left by an earlier run?)")
-monitor_label = None
-try:
-    press(iid, f"zbw:monitor:{ieee}")
-    mon = None
-    for _ in range(10):
-        mon = monitor_child()
-        if mon: break
-        time.sleep(0.5)
-    check(mon is not None, "Monitor this device created the monitor device", f"no child with DNI {MON_DNI}: {app_state(iid).get('inputError')}")
-    if mon is not None:
-        mid = str(mon.get("id"))
-        mdev = (request("GET", f"/device/fullJson/{mid}") or {}).get("device") or {}
-        monitor_label = mdev.get("label") or mdev.get("name")
-        check(mdev.get("isComponent") is False and mdev.get("deviceTypeName") == MONITOR_TYPE,
-              f"monitor uses {MONITOR_TYPE} and is not a component (dashboards and rules can pick it)",
-              f"monitor type {mdev.get('deviceTypeName')}, isComponent {mdev.get('isComponent')}")
-        prev_n = (result("neighbors") or {}).get("time")
-        t_poll = time.time()
-        press(iid, f"zbw:poll:{ieee}")
-        nb = None
-        while time.time() - t_poll < TABLE_WAIT_S:
-            time.sleep(1)
-            nb = result("neighbors")
-            if nb and nb.get("time") != prev_n and not (app_state(iid).get("pending") or {}):
-                break
-        if not ok_result(nb, "neighbors (poll)"):
-            pass
-        else:
-            info(f"poll done after {time.time() - t_poll:.1f} s")
-            ms = monitor_states(mid)
-            total = nb["data"].get("total")
-            entries = nb["data"].get("entries") or []
-            check(str(ms.get("neighborCount")) == str(total), f"neighborCount {ms.get('neighborCount')} equals the stored neighbour total",
-                  f"neighborCount {ms.get('neighborCount')}, stored total {total}")
-            kids = sum(1 for e in entries if e.get("relationship") == "Child")
-            check(str(ms.get("childCount")) == str(kids), f"childCount {ms.get('childCount')} matches the table",
-                  f"childCount {ms.get('childCount')}, table has {kids}")
-            low = min((e.get("lqi") for e in entries if e.get("lqi") is not None), default=None)
-            check(low is None or str(ms.get("lowestLqi") or "").split(" ")[0] == str(low), f"lowestLqi '{ms.get('lowestLqi')}'",
-                  f"lowestLqi {ms.get('lowestLqi')!r}, table minimum {low}")
-            check(ms.get("healthStatus") == "online", "healthStatus online", f"healthStatus {ms.get('healthStatus')!r}")
-            lp = ms.get("lastPoll")
-            try:
-                age = time.time() - datetime.datetime.fromisoformat(lp).timestamp()
-            except (TypeError, ValueError):
-                age = None
-            check(age is not None and abs(age) <= 60, f"lastPoll {lp} ({age:.0f} s ago)" if age is not None else "lastPoll",
-                  f"lastPoll {lp!r}")
-            routes = result("routes") or {}
-            info(f"routeCount {ms.get('routeCount')!r} (routes result: {routes.get('status')} {routes.get('statusName') or ''}), parent {ms.get('parent')!r}")
-        # One UI: the device page shows what the monitor publishes, with Poll now and Stop monitoring
-        page = request("GET", f"/installedapp/configure/json/{iid}/devicePage")
-        names = [i.get("name") for sec in (page.get("configPage") or {}).get("sections", []) for i in sec.get("input", [])]
-        if f"zbw:neighbors:{ieee}" not in names:
-            info("the device page shows another picked device; page check skipped")
-        else:
-            text = json.dumps(page)
-            check(f"zbw:poll:{ieee}" in names and f"zbw:unmonitor:{ieee}" in names and "Health" in text,
-                  "device page shows health with Poll now and Stop monitoring", f"device page inputs {names}")
-        # Dropped from the picker: the monitor stays, listed as orphaned with a Remove button
-        others = [x for x in picked if x != dev_id]
-        save_main(iid, others)
-        try:
-            page = request("GET", f"/installedapp/configure/json/{iid}/mainPage")
-            names = [i.get("name") for sec in (page.get("configPage") or {}).get("sections", []) for i in sec.get("input", [])]
-            check(monitor_child() is not None and f"zbw:unmonitor:{ieee}" in names,
-                  "a monitor whose device is no longer picked stays, listed as orphaned with a Remove button",
-                  f"orphan: monitor present {monitor_child() is not None}, main page inputs {names}")
-        finally:
-            save_main(iid, picked)
-finally:
-    if monitor_child() is not None:
-        removed, why = remove_monitor()
-        check(removed, f"Stop monitoring: confirmation page, then the monitor device is gone ({why})", f"Stop monitoring: {why}")
-    else:
-        fail("no monitor device to remove")
-check(monitor_child() is None and not any((d.get("deviceNetworkId") or d.get("dni")) == MON_DNI
-                                          for d in walk((request("GET", "/hub2/devicesList") or {}).get("devices") or [], [])),
-      "no monitor device left on the hub", f"a device with DNI {MON_DNI} is still on the hub")
-jobs = [j.get("handler") for j in (status_json(iid).get("scheduledJobs") or [])]
-check("pollMonitors" not in jobs, "no monitor poll left scheduled", f"scheduled jobs after cleanup: {jobs}")
-ws = radio_ws()
-check(ws == "connected", "the radio's log socket stays open between requests", f"radio wsStatus {ws!r}")
+section("Session")
+check(radio_ws() == "connected", "the socket stays open between requests", f"radio wsStatus {radio_ws()!r}")
+press(iid, "zbw:sessionEnd")
+ws = wait_ws("disconnected")
+check(ws == "disconnected", "End session closes the socket", f"radio wsStatus {ws!r} after 30 s")
+r = run_case(f"zbw:read:{ieee}:01:0000:0004,0005", "read:01:0000")
+check(ok_result(r, "read after End session") and radio_ws() == "connected", "a request opens the socket again and gets its reply", f"result {r}, radio wsStatus {radio_ws()!r}")
 
 if SLOW:
     section("Neighbours (Mgmt_Lqi)")
@@ -748,8 +640,8 @@ else:
 capture.__exit__(None, None, None)
 section("Logs")
 errs = [m for m in capture.find_all(None, level="error") if re.search(r"Zigbee Workbench", m.get("name") or "")
-        or (monitor_label and (m.get("name") or "") == monitor_label)]
-check(not errs, "no errors logged by the app, its radio device or the monitor device", f"errors logged: {[m.get('msg') for m in errs][:3]}")
+        ]
+check(not errs, "no errors logged by the app or its radio device", f"errors logged: {[m.get('msg') for m in errs][:3]}")
 
 section("Target device unchanged")
 after = snapshot(full())
