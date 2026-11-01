@@ -18,6 +18,7 @@
  *  for the specific language governing permissions and limitations under the License.
  *
  * v0.0.1 - Initial version
+ * v0.0.26 - Report an unchanged setpoint hourly, not every 5 minutes: a change still reports at once
  *
  */
 
@@ -25,7 +26,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.25"
+@Field static final String CODE_VERSION = "0.0.26"
 
 @Field static final List<String> SUPPORTED_THERMOSTAT_MODES     = ['"off"', '"heat"']
 @Field static final List<String> SUPPORTED_THERMOSTAT_FAN_MODES = ['"auto"']
@@ -154,7 +155,7 @@ void configure() {
     List<String> cmds = []
     cmds += zigbee.configureReporting(0x0201, 0x0000, 0x29, 30, 580, (int) (prefMinTempChange ?: 50))   // local temperature
     cmds += zigbee.configureReporting(0x0201, 0x0008, 0x20, 59, 590, (int) (prefMinPIChange ?: 5))      // PI heating demand
-    cmds += zigbee.configureReporting(0x0201, 0x0012, 0x29, 15, 302, 40)                                // occupied heating setpoint
+    cmds += zigbee.configureReporting(0x0201, 0x0012, 0x29, 15, 3600, 40)                                // occupied heating setpoint
     cmds += zigbee.configureReporting(0x0204, 0x0000, 0x30, 1, 0)                                       // temperature display mode (change-of-value only, 1s debounce)
     cmds += zigbee.configureReporting(0x0204, 0x0001, 0x30, 1, 0)                                       // keypad lockout (change-of-value only, 1s debounce)
     cmds += zigbee.configureReporting(0x0702, 0x0000, 0x25, 59, 1799, (int) (prefMinEnergyChange ?: 10)) // Energy reading
