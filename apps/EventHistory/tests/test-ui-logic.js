@@ -39,6 +39,41 @@ t('CSV quoting', () => {
   assert.strictEqual(m.csvCell(null), '');
   assert.strictEqual(m.csvCell(0), '0');
 });
+const pickSrc = html.slice(html.indexOf('function newPick('), html.indexOf('\nfunction loadRules'));
+const pk = new Function(pickSrc + fn('savePick') + fn('readPick') +
+  'return {newPick, picks, pickAll, pickOne, savePick, readPick};')();
+const keys = ['a', 'b', 'c'];
+const shown = p => keys.filter(k => pk.picks(p, k));
+t('a filter starts with everything shown; unchecking one leaves it out', () => {
+  const p = pk.newPick();
+  assert.deepStrictEqual(shown(p), keys);
+  pk.pickOne(p, 'b', false, keys);
+  assert.deepStrictEqual(shown(p), ['a', 'c']);
+  assert(pk.picks(p, 'new'), 'a type that appears later shows while leaving one out');
+});
+t('unchecking All, then checking one, shows only that one', () => {
+  const p = pk.newPick();
+  pk.pickAll(p, false);
+  assert.deepStrictEqual(shown(p), []);
+  pk.pickOne(p, 'c', true, keys);
+  assert.deepStrictEqual(shown(p), ['c']);
+  assert(!pk.picks(p, 'new'), 'a type that appears later stays hidden while showing one');
+});
+t('checking or unchecking every item by hand is the same as All', () => {
+  const p = pk.newPick();
+  keys.forEach(k => pk.pickOne(p, k, false, keys));
+  assert.deepStrictEqual(p, {only: true, set: new Set()});
+  keys.forEach(k => pk.pickOne(p, k, true, keys));
+  assert.deepStrictEqual(p, pk.newPick());
+});
+t('a filter survives the address, and older type= links still show only those', () => {
+  for (const make of [p => pk.pickOne(p, 'b', false, keys), p => pk.pickAll(p, false), p => { pk.pickAll(p, false); pk.pickOne(p, 'a', true, keys); }, () => {}]) {
+    const p = pk.newPick(); make(p);
+    const u = new URLSearchParams(); pk.savePick(u, 'type', p);
+    assert.deepStrictEqual(pk.readPick(new URLSearchParams(u.toString()), 'type'), p, u.toString());
+  }
+  assert.deepStrictEqual(pk.readPick(new URLSearchParams('type=x'), 'type'), {only: true, set: new Set(['x'])});
+});
 t('event text never reaches innerHTML', () => {
   assert(!/innerHTML|outerHTML|insertAdjacentHTML|document\.write/.test(html));
 });

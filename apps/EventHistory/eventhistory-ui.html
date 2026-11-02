@@ -95,12 +95,20 @@ mark{background:var(--mark);color:var(--mark-ink);border-radius:2px}
 #close{float:right}
 #empty{padding:32px 18px;color:var(--ink2);max-width:60ch}
 #names{display:block}
-#typebox{position:relative}
-#typebox summary{list-style:none;user-select:none}
-#typebox summary::-webkit-details-marker{display:none}
-#typebox summary::after{content:" ▾";color:var(--ink3)}
-#typebox[data-active] summary{background:var(--signal-soft);border-color:var(--signal)}
-#types{position:absolute;z-index:5;top:calc(100% + 4px);left:0;min-width:240px;max-height:320px;overflow:auto;padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:6px;box-shadow:0 4px 14px rgb(0 0 0/.25)}
+.pick{position:relative}
+.pick summary{list-style:none;user-select:none;width:11.5em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-sizing:border-box}
+.pick summary::-webkit-details-marker{display:none}
+.pick summary::after{content:" ▾";color:var(--ink3)}
+.pick[data-active] summary{background:var(--signal-soft);border-color:var(--signal)}
+.pick>div{position:absolute;z-index:5;top:calc(100% + 4px);left:0;min-width:240px;max-height:320px;overflow:auto;padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:6px;box-shadow:0 4px 14px rgb(0 0 0/.25)}
+.pick .facet.all{border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:4px;font-weight:600}
+#helplink{margin-left:auto;color:var(--signal)}
+#help{max-width:72ch;width:calc(100% - 32px);max-height:calc(100% - 48px);padding:4px 24px 20px;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:8px;line-height:1.5}
+#help::backdrop{background:rgb(0 0 0/.4)}
+#help h2{font-size:18px;margin:16px 0 4px}#help h3{font-size:14px;margin:14px 0 2px}
+#help p,#help ul{margin:4px 0}#help ul{padding-left:20px}
+#help kbd{font:inherit;font-size:12px;padding:0 4px;border:1px solid var(--line);border-radius:3px}
+#helpclose{float:right;margin-top:14px}
 @media (max-width:980px){
   #ax1{display:none}
   #main,#main.open{grid-template-columns:minmax(0,1fr)}
@@ -119,6 +127,7 @@ mark{background:var(--mark);color:var(--mark-ink);border-radius:2px}
   <h1 id="title">Event History</h1>
   <span id="summary">Loading…</span>
   <span id="warn"></span>
+  <a id="helplink" href="#help">Help</a>
 </header>
 <div id="progress"></div>
 <div id="strip">
@@ -129,8 +138,8 @@ mark{background:var(--mark);color:var(--mark-ink);border-radius:2px}
 <div id="controls">
   <input id="q" type="search" placeholder="Search names, values and descriptions. Use -word to exclude, &quot;two words&quot; for a phrase." aria-label="Search">
   <button class="ctl" id="rx" aria-pressed="false" title="Treat the search as a regular expression">Regex</button>
-  <select class="ctl" id="source" aria-label="Source"><option value="">Hub and location</option><option value="hub">Hub</option><option value="location">Location</option></select>
-  <details id="typebox"><summary class="ctl" id="typelabel">All types</summary><div id="types" role="group" aria-label="Event types"></div></details>
+  <details class="pick" id="sourcebox"><summary class="ctl" id="sourcelabel">Hub and location</summary><div id="sources" role="group" aria-label="Sources"></div></details>
+  <details class="pick" id="typebox"><summary class="ctl" id="typelabel">All types</summary><div id="types" role="group" aria-label="Event types"></div></details>
   <input class="ctl" type="date" id="from" aria-label="From date">
   <input class="ctl" type="date" id="to" aria-label="To date">
   <button class="ctl" id="clear">Clear filters</button>
@@ -153,6 +162,59 @@ mark{background:var(--mark);color:var(--mark-ink);border-radius:2px}
   <div id="log" tabindex="0" aria-label="Events, newest first. Use j and k to move."><div id="spacer"></div><div id="empty" hidden></div></div>
   <section id="detail" aria-label="Event details"></section>
 </div>
+<dialog id="help" aria-labelledby="helptitle">
+  <button class="ctl" id="helpclose">Close</button>
+  <h2 id="helptitle">Using Event History</h2>
+  <p>The hub keeps its hub and location events for about a month, and only the latest few of each name. Event History saves
+  every one of them to File Manager as it happens, so this page can show them long after the hub has dropped them.</p>
+
+  <h3>What you see</h3>
+  <p>The page shows everything saved up to the moment it opened. Reload it to see newer events. The bars at the top count
+  events over time; circles under them mark critical events such as low memory, and squares mark warnings such as a
+  manual reboot. In the list, critical, warning and notice events are labelled and coloured.</p>
+
+  <h3>Search</h3>
+  <ul>
+    <li>Words match names, values and descriptions, in any case. Every word must match.</li>
+    <li><kbd>-word</kbd> leaves out events that contain the word.</li>
+    <li><kbd>"two words"</kbd> matches the phrase.</li>
+    <li><b>Regex</b> treats the search as a regular expression.</li>
+  </ul>
+
+  <h3>Filters</h3>
+  <ul>
+    <li><b>Source</b> and <b>Types</b> work like a spreadsheet filter. Uncheck an item to leave it out. Uncheck
+    <b>All</b>, then check one item, to see only that one. Each item shows how many events it has under the other filters.</li>
+    <li>Pick dates, or drag across the bars to choose a range.</li>
+    <li><b>Event names</b>, at the side, lists names with their counts; check names to see only those. On a narrow screen
+    the <b>Names and rules</b> button shows it.</li>
+    <li><b>Clear filters</b> resets them all.</li>
+  </ul>
+
+  <h3>Highlight rules</h3>
+  <p>Add text and a colour to highlight every event that contains it. Rules are kept in this browser only.</p>
+
+  <h3>Details</h3>
+  <p>Click an event to see all its fields and the events just before and after it. Click one of those to move to it.</p>
+
+  <h3>Keys</h3>
+  <ul>
+    <li><kbd>/</kbd> goes to the search box.</li>
+    <li><kbd>j</kbd> and <kbd>k</kbd> move to the next and previous event.</li>
+    <li><kbd>Esc</kbd> closes a menu or the details.</li>
+  </ul>
+
+  <h3>Sharing and export</h3>
+  <p>The address holds the filters, so a bookmark brings the same view back. <b>Export CSV</b> saves the events the page
+  shows now.</p>
+
+  <h3>Storage and backups</h3>
+  <p>Events are stored in File Manager files named <code>eventhistory-…</code>. The app's settings choose how many files
+  to keep; the oldest file is deleted when a new one starts. Local hub backups don't include File Manager files.
+  Cloud backups do, up to 100 MB.</p>
+  <p>Passwords, tokens and keys are masked before an event is saved. The app can also hide names and addresses; that
+  option is in its settings.</p>
+</dialog>
 <script>
 const CODE_VERSION = '0.1.0';
 const ACCESS_TOKEN = '${access_token}';
@@ -179,7 +241,18 @@ async function apiText(path) {
   return r.text();
 }
 
-const S = {rows: [], view: [], items: [], base: [], sel: null, index: null, tz: undefined, rules: loadRules(), names: new Set(), types: new Set(), from: null, to: null};
+const S = {rows: [], view: [], items: [], base: [], sel: null, index: null, tz: undefined, rules: loadRules(), names: new Set(), types: newPick(), sources: newPick(), from: null, to: null};
+
+// A spreadsheet-style filter. Without only, it lists what is left out, so a type that appears later shows;
+// with only, it lists what is shown.
+function newPick() { return {only: false, set: new Set()}; }
+function picks(p, k) { return p.only ? p.set.has(k) : !p.set.has(k); }
+function pickAll(p, on) { p.only = !on; p.set.clear(); }
+function pickOne(p, k, on, keys) {
+  if (on === p.only) p.set.add(k); else p.set.delete(k);
+  if (keys.every(x => picks(p, x))) pickAll(p, true);
+  else if (!keys.some(x => picks(p, x))) pickAll(p, false);
+}
 
 function loadRules() { try { return JSON.parse(localStorage.getItem('eventhistory-rules')) || []; } catch (e) { return []; } }
 function saveRules() { try { localStorage.setItem('eventhistory-rules', JSON.stringify(S.rules)); } catch (e) {} }
@@ -330,9 +403,9 @@ function refresh() {
 }
 
 function apply() {
-  const source = $('source').value;
-  const untyped = S.rows.filter(r => (!source || r.s === source) && match(r));
-  const base = S.types.size ? untyped.filter(r => S.types.has(r.y || '')) : untyped;
+  const matched = S.rows.filter(match);
+  const untyped = matched.filter(r => picks(S.sources, r.s));
+  const base = untyped.filter(r => picks(S.types, r.y || ''));
   S.base = base;     // the strip and the name list show what the other filters leave
   const inRange = r => (S.from == null || r.t >= S.from) && (S.to == null || r.t <= S.to);
   const ranged = base.filter(inRange);
@@ -347,6 +420,7 @@ function apply() {
   $('spacer').style.height = S.items.length * ROW_H + 'px';
   renderFacets(ranged);
   renderTypes(untyped.filter(inRange));
+  renderSources(matched.filter(r => picks(S.types, r.y || '') && inRange(r)));
   renderChart();
   drawRows(true);
   emptyState();
@@ -489,26 +563,41 @@ function renderFacets(ranged) {
   $('names').scrollTop = top;
 }
 
+// Draws a filter menu: All, then one box per item with its count under the other filters.
+function renderPick(id, p, keys, counts, nameOf, allText, manyText) {
+  const box = el('div');
+  const row = (text, n, checked, mixed, onchange, cls) => {
+    const lab = el('label', 'facet' + (cls ? ' ' + cls : '')), c = el('input');
+    c.type = 'checkbox';
+    c.checked = checked;
+    c.indeterminate = mixed;
+    c.onchange = () => { onchange(c.checked); apply(); };
+    lab.append(c, el('span', null, text), el('span', null, n == null ? '' : n.toLocaleString()));
+    box.append(lab);
+  };
+  const on = keys.filter(k => picks(p, k));
+  const all = on.length === keys.length && !p.only, none = !on.length;
+  row('All', null, all, !all && !none, v => pickAll(p, v), 'all');
+  for (const k of keys) row(nameOf(k), counts.get(k) || 0, picks(p, k), false, v => pickOne(p, k, v, keys));
+  const list = $(id + 's'), top = list.scrollTop;
+  list.replaceChildren(box);
+  list.scrollTop = top;
+  $(id + 'label').textContent = all ? allText : none ? 'None' : on.length === 1 ? nameOf(on[0]) : manyText(on.length);
+  $(id + 'box').toggleAttribute('data-active', !all);
+}
+
 // Rows with no type are one choice of their own, so they can be picked or left out like the rest.
 function renderTypes(rows) {
   const counts = new Map();
   for (const r of rows) counts.set(r.y || '', (counts.get(r.y || '') || 0) + 1);
-  const list = [...new Set([...counts.keys(), ...S.types])].sort((a, b) => (a === '') - (b === '') || a.localeCompare(b));
-  const box = el('div');
-  for (const t of list) {
-    const lab = el('label', 'facet'), c = el('input');
-    c.type = 'checkbox';
-    c.checked = S.types.has(t);
-    c.onchange = () => { c.checked ? S.types.add(t) : S.types.delete(t); apply(); };
-    lab.append(c, el('span', null, t || 'No type'), el('span', null, (counts.get(t) || 0).toLocaleString()));
-    box.append(lab);
-  }
-  const top = $('types').scrollTop;
-  $('types').replaceChildren(box);
-  $('types').scrollTop = top;
-  const n = S.types.size, only = [...S.types][0];
-  $('typelabel').textContent = !n ? 'All types' : n > 1 ? n + ' types' : only || 'No type';
-  $('typebox').toggleAttribute('data-active', n > 0);
+  const keys = [...new Set([...counts.keys(), ...S.types.set])].sort((a, b) => (a === '') - (b === '') || a.localeCompare(b));
+  renderPick('type', S.types, keys, counts, t => t || 'No type', 'All types', n => n + ' types');
+}
+
+function renderSources(rows) {
+  const counts = new Map();
+  for (const r of rows) counts.set(r.s, (counts.get(r.s) || 0) + 1);
+  renderPick('source', S.sources, ['hub', 'location'], counts, s => s === 'hub' ? 'Hub' : 'Location', 'Hub and location', () => 'Hub and location');
 }
 
 function renderRules() {
@@ -615,28 +704,39 @@ function saveHash() {
   const p = new URLSearchParams();
   if ($('q').value) p.set('q', $('q').value);
   if ($('rx').getAttribute('aria-pressed') === 'true') p.set('rx', '1');
-  if ($('source').value) p.set('source', $('source').value);
-  S.types.forEach(t => p.append('type', t));
+  savePick(p, 'source', S.sources);
+  savePick(p, 'type', S.types);
   if (S.from != null) p.set('from', Math.round(S.from));
   if (S.to != null) p.set('to', Math.round(S.to));
   S.names.forEach(n => p.append('name', n));
   history.replaceState(null, '', location.pathname + location.search + (p.toString() ? '#' + p : ''));
 }
+// type=a&type=b shows only those (as older links did); typemode=except leaves them out instead.
+function savePick(p, key, pick) {
+  if (!pick.only && !pick.set.size) return;
+  if (!pick.only) p.set(key + 'mode', 'except');
+  else if (!pick.set.size) p.set(key + 'mode', 'only');
+  pick.set.forEach(k => p.append(key, k));
+}
+function readPick(p, key) {
+  const set = new Set(p.getAll(key)), mode = p.get(key + 'mode');
+  return {only: mode === 'only' || (mode !== 'except' && set.size > 0), set};
+}
 function readHash() {
   const p = new URLSearchParams(location.hash.slice(1));
   $('q').value = p.get('q') || '';
   $('rx').setAttribute('aria-pressed', p.get('rx') === '1');
-  $('source').value = p.get('source') || '';
-  S.types = new Set(p.getAll('type'));
+  S.sources = readPick(p, 'source');
+  S.types = readPick(p, 'type');
   S.from = p.has('from') ? +p.get('from') : null;
   S.to = p.has('to') ? +p.get('to') : null;
   S.names = new Set(p.getAll('name'));
 }
 
 function clearFilters() {
-  $('q').value = ''; $('rx').setAttribute('aria-pressed', 'false'); $('source').value = '';
+  $('q').value = ''; $('rx').setAttribute('aria-pressed', 'false');
   $('from').value = $('to').value = ''; $('nameq').value = '';
-  S.from = S.to = null; S.names.clear(); S.types.clear();
+  S.from = S.to = null; S.names.clear(); S.types = newPick(); S.sources = newPick();
   setMatcher();
   apply();
 }
@@ -647,8 +747,14 @@ const later = fn => { clearTimeout(timer); timer = setTimeout(fn, 120); };
 $('q').oninput = () => later(() => { setMatcher(); apply(); });
 $('nameq').oninput = () => later(apply);
 $('rx').onclick = () => { const b = $('rx'); b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') !== 'true'); setMatcher(); apply(); };
-$('source').onchange = apply;
-addEventListener('click', e => { if (!$('typebox').contains(e.target)) $('typebox').open = false; });
+const menus = ['typebox', 'sourcebox'].map($);
+addEventListener('click', e => menus.forEach(m => { if (!m.contains(e.target)) m.open = false; }));
+menus.forEach(m => m.addEventListener('toggle', () => { if (m.open) menus.forEach(o => { if (o !== m) o.open = false; }); }));
+const help = $('help');
+const openHelp = () => { if (!help.open) help.showModal(); };
+$('helplink').onclick = e => { e.preventDefault(); openHelp(); };
+$('helpclose').onclick = () => help.close();
+help.addEventListener('click', e => { if (e.target === help) help.close(); });
 $('from').onchange = () => { S.from = $('from').value ? zoneStart($('from').value) : null; apply(); };
 $('to').onchange = () => { S.to = $('to').value ? zoneStart($('to').value) + 86399999 : null; apply(); };
 $('clear').onclick = clearFilters;
@@ -666,9 +772,12 @@ $('ruleform').onsubmit = e => {
 };
 addEventListener('keydown', e => {
   const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName);
+  if (help.open && e.key !== 'Escape') return;
   if (e.key === '/' && !typing) { e.preventDefault(); $('q').focus(); }
   else if (e.key === 'Escape') {
-    if ($('typebox').open) $('typebox').open = false;
+    if (help.open) return;
+    const m = menus.find(o => o.open);
+    if (m) m.open = false;
     else if (typing) e.target.blur();
     else select(null);
   }
