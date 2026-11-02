@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<!--
+Copyright (c) 2026 PJ
+SPDX-License-Identifier: MIT
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Event History</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230c6a78'/%3E%3Crect x='6' y='15' width='5' height='11' rx='1.5' fill='%23fff'/%3E%3Crect x='13.5' y='6' width='5' height='20' rx='1.5' fill='%23fff'/%3E%3Crect x='21' y='19' width='5' height='7' rx='1.5' fill='%23ffe08a'/%3E%3C/svg%3E">
+<script>
+// The hub's own setting, read by the app as it serves this page, then this browser's copy of it. Firmware
+// without dark mode has neither, and its UI is light, so light is the default; the system preference plays no part.
+// The storage event follows a switch in another tab.
+(function(){
+  const HUB_THEME='${ui_theme}';
+  const apply=v=>{document.documentElement.dataset.theme=v==='dark'?'dark':'light'};
+  let saved=null;
+  try{saved=localStorage.getItem('hubitat-ui-theme')}catch(e){}
+  apply(HUB_THEME||saved);
+  addEventListener('storage',e=>{if(e.key==='hubitat-ui-theme')apply(e.newValue)});
+})();
+</script>
+<style>
+:root{
+  --ground:#e9eef0;--panel:#f7f9f9;--line:#ccd6da;--ink:#16252c;--ink2:#46585f;--ink3:#566870;
+  --signal:#0c6a78;--signal-soft:#c7e3e6;--bar:#5f8f99;--mark:#ffe08a;--mark-ink:#16252c;
+  --critical:#b3261e;--warning:#8f5a00;--notice:#2a5db0;--critical-soft:#f9dedc;--warning-soft:#fbe9c6;--notice-soft:#dbe6f8;--good-soft:#d6ecd9;
+}
+[data-theme=dark]{
+  --ground:#10181c;--panel:#182227;--line:#2d3b42;--ink:#e6edef;--ink2:#aebcc2;--ink3:#8c9ca3;
+  --signal:#62c3d0;--signal-soft:#1d4149;--bar:#5d99a5;--mark:#7a5c00;--mark-ink:#fff4cf;
+  --critical:#ffb4ab;--warning:#f0c060;--notice:#a9c6f7;--critical-soft:#4f2320;--warning-soft:#46360f;--notice-soft:#223553;--good-soft:#1f3a26;
+}
+html{color-scheme:light}
+[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--ground);color:var(--ink);font:15px/1.45 "Avenir Next","Segoe UI Variable Text","Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+  display:grid;grid-template-rows:auto auto auto auto minmax(0,1fr);height:100dvh;font-variant-numeric:tabular-nums}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--signal);outline-offset:1px}
+header{display:flex;flex-wrap:wrap;gap:4px 18px;align-items:baseline;padding:12px 18px 4px}
+h1{font-size:24px;line-height:1.2;font-weight:600;margin:0;letter-spacing:-.01em}
+#summary{color:var(--ink2)}
+#warn{color:var(--critical);font-weight:600}
+#progress{height:2px;background:var(--signal);width:0;transition:width .2s}
+#strip{position:relative;padding:4px 18px 0}
+#strip svg{display:block;width:100%;height:92px;touch-action:none;cursor:crosshair;user-select:none}
+#axis{display:flex;justify-content:space-between;color:var(--ink3);font-size:13px;padding-top:2px}
+#tip{position:absolute;pointer-events:none;background:var(--ink);color:var(--ground);padding:3px 8px;border-radius:4px;font-size:13px;white-space:nowrap;transform:translate(-50%,-110%);display:none;z-index:3}
+#controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 18px;border-bottom:1px solid var(--line)}
+#q{flex:1 1 280px;min-width:180px;padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:6px}
+#q.bad{border-color:var(--critical)}
+.ctl{padding:7px 10px;background:var(--panel);border:1px solid var(--line);border-radius:6px;cursor:pointer}
+.ctl[aria-pressed=true]{background:var(--signal-soft);border-color:var(--signal)}
+input[type=date].ctl{padding:6px 8px}
+#main{display:grid;grid-template-columns:230px minmax(0,1fr);min-height:0}
+#main.open{grid-template-columns:230px minmax(0,1fr) 360px}
+aside{border-right:1px solid var(--line);overflow:auto;padding:10px 12px;min-height:0}
+aside h2,#detail h2{font-size:14px;font-weight:600;margin:12px 0 6px}
+aside h2:first-child,#detail h2:first-of-type{margin-top:0}
+#nameq{width:100%;padding:5px 8px;background:var(--panel);border:1px solid var(--line);border-radius:6px;margin-bottom:6px}
+.facet{display:flex;gap:6px;align-items:baseline;padding:2px 0;cursor:pointer;overflow-wrap:anywhere}
+.facet span:last-child{margin-left:auto;color:var(--ink3);padding-left:6px;flex:none}
+.rule{display:flex;gap:6px;align-items:center;padding:2px 0;overflow-wrap:anywhere}
+.rule button{margin-left:auto;background:none;border:0;color:var(--ink3);cursor:pointer}
+#ruleform{display:grid;grid-template-columns:1fr auto;gap:6px;margin-top:6px}
+#ruleform input,#ruleform select{min-width:0;padding:4px 6px;background:var(--panel);border:1px solid var(--line);border-radius:6px}
+#ruleform button{grid-column:1/-1}
+#log{overflow:auto;min-height:0;position:relative;outline:0}
+#spacer{position:relative}
+.row,.day{position:absolute;left:0;right:0;height:32px;display:flex;align-items:center;gap:12px;padding:0 14px;white-space:nowrap;overflow:hidden}
+.day{color:var(--ink2);font-weight:600;background:var(--ground);border-bottom:1px solid var(--line)}
+.row{cursor:pointer;border-bottom:1px solid color-mix(in srgb,var(--line) 45%,transparent)}
+.row:hover{background:var(--panel)}
+.row.sel{box-shadow:inset 3px 0 0 var(--signal);background:var(--panel)}
+.row.critical{background:var(--critical-soft)}.row.warning{background:var(--warning-soft)}.row.notice{background:var(--notice-soft)}.row.good{background:var(--good-soft)}
+.t{color:var(--ink2);flex:0 0 74px}
+.src{flex:0 0 66px;color:var(--ink3)}
+.n{flex:0 0 220px;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+.v{flex:0 1 170px;overflow:hidden;text-overflow:ellipsis}
+.d{flex:1 1 0;overflow:hidden;text-overflow:ellipsis;color:var(--ink2);min-width:0}
+.sev{flex:0 0 78px;font-size:13px;font-weight:600}
+.sev.critical{color:var(--critical)}.sev.warning{color:var(--warning)}.sev.notice{color:var(--notice)}
+mark{background:var(--mark);color:var(--mark-ink);border-radius:2px}
+#detail{display:none;border-left:1px solid var(--line);overflow:auto;padding:12px 14px;min-height:0;background:var(--panel)}
+.open #detail{display:block}
+#detail dl{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin:0 0 12px}
+#detail dt{color:var(--ink3)}#detail dd{margin:0;overflow-wrap:anywhere}
+.ctxr{display:grid;grid-template-columns:70px 1fr;gap:8px;padding:3px 4px;width:100%;text-align:left;background:none;border:0;cursor:pointer;border-radius:4px}
+.ctxr:hover{background:var(--ground)}.ctxr.me{background:var(--signal-soft);font-weight:600}
+.ctxr span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#close{float:right}
+#empty{padding:32px 18px;color:var(--ink2);max-width:60ch}
+#names{display:block}
+#typebox{position:relative}
+#typebox summary{list-style:none;user-select:none}
+#typebox summary::-webkit-details-marker{display:none}
+#typebox summary::after{content:" ▾";color:var(--ink3)}
+#typebox[data-active] summary{background:var(--signal-soft);border-color:var(--signal)}
+#types{position:absolute;z-index:5;top:calc(100% + 4px);left:0;min-width:240px;max-height:320px;overflow:auto;padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:6px;box-shadow:0 4px 14px rgb(0 0 0/.25)}
+@media (max-width:980px){
+  #ax1{display:none}
+  #main,#main.open{grid-template-columns:minmax(0,1fr)}
+  aside{display:none;border-right:0;border-bottom:1px solid var(--line);max-height:40vh}
+  aside.show{display:block}
+  #detail{position:fixed;inset:auto 0 0 0;max-height:60vh;border-left:0;border-top:1px solid var(--line);z-index:4}
+  .src,.d{display:none}.n{flex:1 1 0}.v{flex:0 1 120px}.sev{flex:0 0 66px}
+}
+@media (min-width:981px){#togglef{display:none}}
+@media (prefers-reduced-motion:reduce){#progress{transition:none}}
+@media (forced-colors:active){.row.critical,.row.warning,.row.notice,.row.good{border-left:4px solid CanvasText}}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Event History</h1>
+  <span id="summary">Loading…</span>
+  <span id="warn"></span>
+</header>
+<div id="progress"></div>
+<div id="strip">
+  <svg id="chart" role="img" aria-label="Events over time. Drag to choose a date range."></svg>
+  <div id="axis"><span id="ax0"></span><span id="ax1"></span><span id="ax2"></span></div>
+  <div id="tip"></div>
+</div>
+<div id="controls">
+  <input id="q" type="search" placeholder="Search names, values and descriptions. Use -word to exclude, &quot;two words&quot; for a phrase." aria-label="Search">
+  <button class="ctl" id="rx" aria-pressed="false" title="Treat the search as a regular expression">Regex</button>
+  <select class="ctl" id="source" aria-label="Source"><option value="">Hub and location</option><option value="hub">Hub</option><option value="location">Location</option></select>
+  <details id="typebox"><summary class="ctl" id="typelabel">All types</summary><div id="types" role="group" aria-label="Event types"></div></details>
+  <input class="ctl" type="date" id="from" aria-label="From date">
+  <input class="ctl" type="date" id="to" aria-label="To date">
+  <button class="ctl" id="clear">Clear filters</button>
+  <button class="ctl" id="togglef">Names and rules</button>
+  <button class="ctl" id="csv">Export CSV</button>
+</div>
+<div id="main">
+  <aside id="side">
+    <h2>Event names</h2>
+    <input id="nameq" type="search" placeholder="Find a name" aria-label="Find an event name">
+    <div id="names"></div>
+    <h2>Highlight rules</h2>
+    <div id="rules"></div>
+    <form id="ruleform">
+      <input id="ruletext" placeholder="Text to highlight" aria-label="Text to highlight" required>
+      <select id="ruletone" aria-label="Colour"><option value="critical">Red</option><option value="warning">Amber</option><option value="notice">Blue</option><option value="good">Green</option></select>
+      <button class="ctl">Add rule</button>
+    </form>
+  </aside>
+  <div id="log" tabindex="0" aria-label="Events, newest first. Use j and k to move."><div id="spacer"></div><div id="empty" hidden></div></div>
+  <section id="detail" aria-label="Event details"></section>
+</div>
+<script>
+const CODE_VERSION = '0.1.0';
+const ACCESS_TOKEN = '${access_token}';
+const BASE_URL = location.pathname.replace(/\/[^/]*$/, '');
+const ROW_H = 32;
+const CRITICAL = new Set(['lowMemory', 'severeLoad', 'zwaveCrashed', 'schedulerFailed', 'zigbeeOff']);
+const WARNING = new Set(['manualReboot', 'manualShutdown', 'spammyDevices']);
+const NOTICE = new Set(['systemStart', 'update']);
+const SEV_LABEL = {critical: '● Critical', warning: '▲ Warning', notice: '■ Notice'};
+const $ = id => document.getElementById(id);
+
+// All event text reaches the page as text nodes: any app can send any name or description.
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+const api = (path, opts) => fetch(BASE_URL + path, {headers: {Authorization: 'Bearer ' + ACCESS_TOKEN}, ...opts});
+async function apiText(path) {
+  const r = await api(path);
+  if (!r.ok) throw new Error(path + ' answered HTTP ' + r.status);
+  return r.text();
+}
+
+const S = {rows: [], view: [], items: [], base: [], sel: null, index: null, tz: undefined, rules: loadRules(), names: new Set(), types: new Set(), from: null, to: null};
+
+function loadRules() { try { return JSON.parse(localStorage.getItem('eventhistory-rules')) || []; } catch (e) { return []; } }
+function saveRules() { try { localStorage.setItem('eventhistory-rules', JSON.stringify(S.rules)); } catch (e) {} }
+
+// ── Times ──
+let fmtT, fmtD, fmtDT, fmtISO;
+function setZone(tz) {
+  const o = tz ? {timeZone: tz} : {};
+  fmtT = new Intl.DateTimeFormat(undefined, {...o, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false});
+  fmtD = new Intl.DateTimeFormat(undefined, {...o, weekday: 'short', year: 'numeric', month: 'short', day: 'numeric'});
+  fmtDT = new Intl.DateTimeFormat(undefined, {...o, month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false});
+  fmtISO = new Intl.DateTimeFormat('en-CA', {...o, year: 'numeric', month: '2-digit', day: '2-digit'});
+}
+setZone();
+const dayOf = t => fmtISO.format(t);
+function zoneStart(day) {   // the epoch of 00:00 of a yyyy-mm-dd in the hub's zone
+  const guess = Date.parse(day + 'T00:00:00Z');
+  for (const off of [-14, -12, -10, -8, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 14]) {
+    const t = guess + off * 3600000;
+    if (dayOf(t) === day && dayOf(t - 1) !== day) return t;
+  }
+  return guess;
+}
+
+// ── Loading ──
+const DB = 'eventhistory';
+function openDb() {
+  return new Promise(res => {
+    try {
+      const q = indexedDB.open(DB, 1);
+      q.onupgradeneeded = () => q.result.createObjectStore('files');
+      q.onsuccess = () => res(q.result);
+      q.onerror = () => res(null);
+    } catch (e) { res(null); }
+  });
+}
+const dbGet = (db, k) => new Promise(res => {
+  if (!db) return res(null);
+  const q = db.transaction('files').objectStore('files').get(k);
+  q.onsuccess = () => res(q.result || null);
+  q.onerror = () => res(null);
+});
+const dbPut = (db, k, v) => { if (db) { try { db.transaction('files', 'readwrite').objectStore('files').put(v, k); } catch (e) {} } };
+async function dbPrune(db, keep) {
+  if (!db) return;
+  const store = db.transaction('files', 'readwrite').objectStore('files');
+  store.getAllKeys().onsuccess = e => e.target.result.forEach(k => { if (!keep.has(k)) store.delete(k); });
+}
+
+function parseRows(text, stream) {
+  const out = [];
+  for (const line of text.split('\n')) {
+    if (!line) continue;
+    try { out.push(toRow(JSON.parse(line), stream)); } catch (e) {}
+  }
+  return out;
+}
+function toRow(r, stream) {
+  r.s = stream;
+  r.hay = [r.n, r.v, r.u, r.d].filter(Boolean).join('\n').toLowerCase();
+  r.sev = severity(r);
+  return r;
+}
+function severity(r) {
+  if (CRITICAL.has(r.n) || (/^(zigbee|zwave)Status$/.test(r.n) && r.v === 'offline')) return 'critical';
+  if (WARNING.has(r.n)) return 'warning';
+  if (NOTICE.has(r.n)) return 'notice';
+  return '';
+}
+
+async function load() {
+  try {
+    S.index = JSON.parse(await apiText('/api/index'));
+  } catch (e) {
+    $('summary').textContent = 'Could not read the event index: ' + e.message + '. Reload the page to try again.';
+    return;
+  }
+  setZone(S.index.timeZone);
+  if (S.index.hubName) { $('title').textContent = S.index.hubName + ' event history'; document.title = $('title').textContent; }
+  const db = await openDb();
+  const files = [];
+  for (const [stream, list] of Object.entries(S.index.streams)) list.forEach(f => files.push({...f, stream}));
+  files.sort((a, b) => (b.last || 0) - (a.last || 0));
+  await dbPrune(db, new Set(files.map(f => S.index.key + ':' + f.stream + ':' + f.n)));
+  let done = 0, failed = 0;
+  const seen = new Set();
+  const add = rows => { for (const r of rows) { const k = r.s + r.i; if (r.i == null || !seen.has(k)) { seen.add(k); S.rows.push(r); } } };
+  for (const f of files) {
+    const key = S.index.key + ':' + f.stream + ':' + f.n;
+    try {
+      let text = f.sealed ? await dbGet(db, key) : null;
+      if (text == null) {
+        text = await apiText('/api/file/' + f.stream + '/' + f.n);
+        if (f.sealed) dbPut(db, key, text);
+      }
+      add(parseRows(text, f.stream));
+    } catch (e) { failed++; }
+    done++;
+    $('progress').style.width = (100 * done / files.length) + '%';
+    refresh();
+  }
+  try {
+    const tail = JSON.parse(await apiText('/api/tail'));
+    for (const [stream, rows] of Object.entries(tail)) add(rows.map(r => toRow(r, stream)));
+  } catch (e) {}
+  $('progress').style.width = 0;
+  S.failed = failed;
+  refresh();
+}
+
+// ── Filtering ──
+function parseQuery(q) {
+  const inc = [], exc = [];
+  for (const m of q.matchAll(/(-?)"([^"]+)"|(-?)(\S+)/g)) {
+    const minus = m[1] || m[3], word = (m[2] || m[4]).toLowerCase();
+    if (word === '-') continue;
+    (minus ? exc : inc).push(word);
+  }
+  return {inc, exc};
+}
+let match = () => true, marker = null;
+function setMatcher() {
+  const q = $('q').value.trim(), rx = $('rx').getAttribute('aria-pressed') === 'true';
+  $('q').classList.remove('bad');
+  $('q').title = '';
+  marker = null;
+  if (!q) { match = () => true; return; }
+  if (rx) {
+    try {
+      const re = new RegExp(q, 'im');   // m: ^ and $ anchor to one field
+      match = r => re.test(r.hay);
+      marker = new RegExp(q, 'gim');
+    } catch (e) {
+      $('q').classList.add('bad');
+      $('q').title = 'This regular expression is not valid: ' + e.message;
+      match = () => true;
+    }
+    return;
+  }
+  const {inc, exc} = parseQuery(q);
+  match = r => inc.every(w => r.hay.includes(w)) && !exc.some(w => r.hay.includes(w));
+  if (inc.length) marker = new RegExp(inc.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'gi');
+}
+
+function refresh() {
+  S.rows.sort((a, b) => b.t - a.t || (b.i || 0) - (a.i || 0));
+  apply();
+}
+
+function apply() {
+  const source = $('source').value;
+  const untyped = S.rows.filter(r => (!source || r.s === source) && match(r));
+  const base = S.types.size ? untyped.filter(r => S.types.has(r.y || '')) : untyped;
+  S.base = base;     // the strip and the name list show what the other filters leave
+  const inRange = r => (S.from == null || r.t >= S.from) && (S.to == null || r.t <= S.to);
+  const ranged = base.filter(inRange);
+  S.view = S.names.size ? ranged.filter(r => S.names.has(r.n)) : ranged;
+  S.items = [];
+  let day = null;
+  for (const r of S.view) {
+    const d = dayOf(r.t);
+    if (d !== day) { S.items.push({day: fmtD.format(r.t)}); day = d; }
+    S.items.push(r);
+  }
+  $('spacer').style.height = S.items.length * ROW_H + 'px';
+  renderFacets(ranged);
+  renderTypes(untyped.filter(inRange));
+  renderChart();
+  drawRows(true);
+  emptyState();
+  summary();
+  saveHash();
+}
+
+function summary() {
+  if (!S.index) return;
+  const n = S.rows.length;
+  if (!n) { $('summary').textContent = 'No events stored yet.'; return; }
+  const oldest = S.rows[n - 1].t;
+  const shown = S.view.length === n ? n.toLocaleString() + ' events' : S.view.length.toLocaleString() + ' of ' + n.toLocaleString() + ' events';
+  $('summary').textContent = shown + ', back to ' + fmtD.format(oldest);
+  const w = [];
+  if (S.index.droppedRows) w.push(S.index.droppedRows + ' rows lost to write failures');
+  if (S.failed) w.push(S.failed + ' files could not be read');
+  $('warn').textContent = w.join(', ');
+}
+
+function emptyState() {
+  const e = $('empty');
+  e.hidden = S.items.length > 0;
+  if (!e.hidden) e.textContent = S.rows.length ? 'No events match these filters. Clear filters to see them all.' : 'No events stored yet. The app reads the hub\'s lists a few seconds after install.';
+}
+
+// ── Log ──
+function highlight(parent, text) {
+  if (!marker || !text) { parent.textContent = text == null ? '' : text; return; }
+  parent.textContent = '';
+  let last = 0;
+  marker.lastIndex = 0;
+  for (const m of text.matchAll(marker)) {
+    if (!m[0]) continue;
+    parent.append(text.slice(last, m.index), el('mark', null, m[0]));
+    last = m.index + m[0].length;
+  }
+  parent.append(text.slice(last));
+}
+
+function ruleTone(r) {
+  for (const x of S.rules) if (r.hay.includes(x.text.toLowerCase())) return x.tone;
+  return r.sev === 'notice' ? '' : r.sev;   // restarts and updates are normal; their tag is enough
+}
+
+let lastSpan = '';
+function drawRows(force) {
+  const log = $('log'), sp = $('spacer');
+  const first = Math.max(0, Math.floor(log.scrollTop / ROW_H) - 6);
+  const last = Math.min(S.items.length, first + Math.ceil(log.clientHeight / ROW_H) + 12);
+  const span = first + ':' + last;
+  if (!force && span === lastSpan) return;
+  lastSpan = span;
+  const frag = document.createDocumentFragment();
+  for (let k = first; k < last; k++) {
+    const it = S.items[k];
+    let e;
+    if (it.day) {
+      e = el('div', 'day', it.day);
+    } else {
+      const tone = ruleTone(it);
+      e = el('div', 'row' + (tone ? ' ' + tone : '') + (it === S.sel ? ' sel' : ''));
+      e.append(el('span', 't', fmtT.format(it.t)), el('span', 'src', it.s === 'hub' ? 'Hub' : 'Location'));
+      e.append(el('span', 'sev ' + it.sev, SEV_LABEL[it.sev] || ''));
+      const n = el('span', 'n'), v = el('span', 'v'), d = el('span', 'd');
+      highlight(n, it.n); highlight(v, it.u ? it.v + ' ' + it.u : it.v); highlight(d, it.d);
+      n.title = it.n || '';
+      e.append(n, v, d);
+      e.onclick = () => select(it);
+    }
+    e.style.top = k * ROW_H + 'px';
+    frag.append(e);
+  }
+  sp.replaceChildren(frag);
+}
+
+function select(r, scroll) {
+  S.sel = r;
+  $('main').classList.toggle('open', !!r);
+  renderDetail();
+  if (r && scroll) {
+    const k = S.items.indexOf(r);
+    if (k >= 0) {
+      const log = $('log'), y = k * ROW_H;
+      if (y < log.scrollTop || y + ROW_H > log.scrollTop + log.clientHeight) log.scrollTop = y - log.clientHeight / 2;
+    }
+  }
+  drawRows(true);
+}
+
+function renderDetail() {
+  const box = $('detail'), r = S.sel;
+  box.replaceChildren();
+  if (!r) return;
+  const close = el('button', 'ctl', 'Close');
+  close.id = 'close';
+  close.onclick = () => select(null);
+  box.append(close, el('h2', null, r.n || ''));
+  const dl = el('dl');
+  const f = (k, v) => { if (v != null && v !== '') dl.append(el('dt', null, k), el('dd', null, v)); };
+  f('Time', fmtD.format(r.t) + ' ' + fmtT.format(r.t));
+  f('Source', r.s === 'hub' ? 'Hub' : 'Location');
+  f('Value', r.u ? r.v + ' ' + r.u : r.v);
+  f('Description', r.d);
+  f('Type', r.y);
+  f('Event ID', r.i);
+  box.append(dl, el('h2', null, 'Just before and after'));
+  const at = S.rows.indexOf(r);
+  for (let k = Math.min(S.rows.length - 1, at + 8); k >= Math.max(0, at - 8); k--) {
+    const c = S.rows[k];
+    const b = el('button', 'ctxr' + (c === r ? ' me' : ''));
+    b.append(el('span', null, fmtT.format(c.t)), el('span', null, c.n + (c.v ? ' = ' + c.v : '')));
+    b.title = fmtD.format(c.t);
+    b.onclick = () => {
+      if (!S.view.includes(c)) { clearFilters(); }
+      select(c, true);
+    };
+    box.append(b);
+  }
+}
+
+// ── Name list ──
+function renderFacets(ranged) {
+  const counts = new Map();
+  for (const r of ranged) counts.set(r.n, (counts.get(r.n) || 0) + 1);
+  const q = $('nameq').value.trim().toLowerCase();
+  const list = [...new Set([...counts.keys(), ...S.names])].filter(n => !q || (n || '').toLowerCase().includes(q))
+    .sort((a, b) => (counts.get(b) || 0) - (counts.get(a) || 0) || String(a).localeCompare(String(b))).slice(0, 200);
+  const box = el('div');
+  for (const n of list) {
+    const lab = el('label', 'facet'), c = el('input');
+    c.type = 'checkbox';
+    c.checked = S.names.has(n);
+    c.onchange = () => { c.checked ? S.names.add(n) : S.names.delete(n); apply(); };
+    lab.append(c, el('span', null, n), el('span', null, (counts.get(n) || 0).toLocaleString()));
+    box.append(lab);
+  }
+  const top = $('names').scrollTop;
+  $('names').replaceChildren(box);
+  $('names').scrollTop = top;
+}
+
+// Rows with no type are one choice of their own, so they can be picked or left out like the rest.
+function renderTypes(rows) {
+  const counts = new Map();
+  for (const r of rows) counts.set(r.y || '', (counts.get(r.y || '') || 0) + 1);
+  const list = [...new Set([...counts.keys(), ...S.types])].sort((a, b) => (a === '') - (b === '') || a.localeCompare(b));
+  const box = el('div');
+  for (const t of list) {
+    const lab = el('label', 'facet'), c = el('input');
+    c.type = 'checkbox';
+    c.checked = S.types.has(t);
+    c.onchange = () => { c.checked ? S.types.add(t) : S.types.delete(t); apply(); };
+    lab.append(c, el('span', null, t || 'No type'), el('span', null, (counts.get(t) || 0).toLocaleString()));
+    box.append(lab);
+  }
+  const top = $('types').scrollTop;
+  $('types').replaceChildren(box);
+  $('types').scrollTop = top;
+  const n = S.types.size, only = [...S.types][0];
+  $('typelabel').textContent = !n ? 'All types' : n > 1 ? n + ' types' : only || 'No type';
+  $('typebox').toggleAttribute('data-active', n > 0);
+}
+
+function renderRules() {
+  const box = $('rules');
+  box.replaceChildren();
+  S.rules.forEach((x, k) => {
+    const d = el('div', 'rule ' + x.tone);
+    const del = el('button', null, 'Remove');
+    del.setAttribute('aria-label', 'Remove the rule for ' + x.text);
+    del.onclick = () => { S.rules.splice(k, 1); saveRules(); renderRules(); drawRows(true); };
+    d.append(el('span', null, x.text + ' (' + {critical: 'red', warning: 'amber', notice: 'blue', good: 'green'}[x.tone] + ')'), del);
+    box.append(d);
+  });
+}
+
+// ── Density strip ──
+const NS = 'http://www.w3.org/2000/svg';
+const svg = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+let geo = null;
+function renderChart() {
+  const c = $('chart'), W = c.clientWidth || 800, H = 92, PAD = 12;
+  c.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+  c.replaceChildren();
+  const rows = S.names.size ? S.base.filter(r => S.names.has(r.n)) : S.base;
+  if (!S.rows.length) { geo = null; ['ax0', 'ax1', 'ax2'].forEach(a => $(a).textContent = ''); return; }
+  const t1 = S.rows[0].t, t0 = S.rows[S.rows.length - 1].t, span = Math.max(t1 - t0, 3600000);
+  const n = Math.min(240, Math.max(30, Math.floor(W / 7))), bw = W / n;
+  const b = new Array(n).fill(0), notable = new Map();
+  for (const r of rows) {
+    const k = Math.min(n - 1, Math.floor((r.t - t0) / span * n));
+    b[k]++;
+    if (r.sev === 'critical' || r.sev === 'warning') notable.set(k, notable.get(k) === 'critical' ? 'critical' : r.sev);
+  }
+  const max = Math.max(1, ...b), plot = H - PAD;
+  geo = {t0, span, n, W, bw, b};
+  const base = svg('line', {x1: 0, x2: W, y1: plot + .5, y2: plot + .5, stroke: 'var(--line)'});
+  c.append(base);
+  if (S.from != null || S.to != null) {
+    const x0 = S.from == null ? 0 : (S.from - t0) / span * W, x1 = S.to == null ? W : (S.to - t0) / span * W;
+    c.append(svg('rect', {x: Math.max(0, x0), y: 0, width: Math.max(2, Math.min(W, x1) - Math.max(0, x0)), height: plot, fill: 'var(--signal-soft)'}));
+  }
+  b.forEach((v, k) => {
+    if (!v) return;
+    const h = Math.max(2, v / max * (plot - 4));
+    c.append(svg('rect', {x: k * bw + 1, y: plot - h, width: Math.max(1, bw - 2), height: h, rx: Math.min(2, bw / 3), fill: 'var(--bar)'}));
+  });
+  // Shape as well as colour: a circle for critical, a square for warning.
+  notable.forEach((sev, k) => {
+    const x = k * bw + bw / 2, fill = 'var(--' + sev + ')';
+    c.append(sev === 'critical' ? svg('circle', {cx: x, cy: H - 5, r: 3.5, fill}) : svg('rect', {x: x - 3, y: H - 8, width: 6, height: 6, fill}));
+  });
+  $('ax0').textContent = fmtD.format(t0);
+  $('ax1').textContent = S.from != null || S.to != null ? 'Showing ' + fmtDT.format(S.from ?? t0) + ' to ' + fmtDT.format(S.to ?? t1) : 'Drag across the strip to zoom in. Circles mark critical events, squares warnings.';
+  $('ax2').textContent = fmtD.format(t1);
+}
+
+(function chartEvents() {
+  const c = $('chart'), tip = $('tip');
+  let drag = null;
+  const pos = e => { const r = c.getBoundingClientRect(); return {x: Math.max(0, Math.min(r.width, e.clientX - r.left)), w: r.width}; };
+  const timeAt = p => geo.t0 + p.x / p.w * geo.span;
+  c.addEventListener('pointerdown', e => { if (!geo) return; drag = pos(e).x; c.setPointerCapture(e.pointerId); });
+  c.addEventListener('pointermove', e => {
+    if (!geo) return;
+    const p = pos(e), k = Math.min(geo.n - 1, Math.floor(p.x / p.w * geo.n));
+    tip.style.display = 'block';
+    tip.style.left = (p.x + 18) + 'px';
+    tip.style.top = '40px';
+    tip.textContent = fmtDT.format(geo.t0 + k / geo.n * geo.span) + ': ' + geo.b[k].toLocaleString() + ' events';
+  });
+  c.addEventListener('pointerleave', () => { tip.style.display = 'none'; });
+  c.addEventListener('pointerup', e => {
+    if (drag == null || !geo) return;
+    const p = pos(e), a = Math.min(drag, p.x), z = Math.max(drag, p.x);
+    drag = null;
+    if (z - a < 4) { S.from = S.to = null; $('from').value = $('to').value = ''; }
+    else {
+      S.from = timeAt({x: a, w: p.w}); S.to = timeAt({x: z, w: p.w});
+      $('from').value = dayOf(S.from); $('to').value = dayOf(S.to);
+    }
+    apply();
+  });
+})();
+
+// ── Export ──
+// A leading = + - @ would run as a formula in a spreadsheet, and any app can choose the text.
+function csvCell(v) {
+  let s = v == null ? '' : String(v);
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+function exportCsv() {
+  const lines = ['time,source,name,value,unit,description,type,id'];
+  for (const r of S.view) lines.push([new Date(r.t).toISOString(), r.s, r.n, r.v, r.u, r.d, r.y, r.i].map(csvCell).join(','));
+  const a = el('a');
+  a.href = URL.createObjectURL(new Blob([lines.join('\r\n')], {type: 'text/csv'}));
+  a.download = 'event-history.csv';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+// ── State in the URL ──
+function saveHash() {
+  const p = new URLSearchParams();
+  if ($('q').value) p.set('q', $('q').value);
+  if ($('rx').getAttribute('aria-pressed') === 'true') p.set('rx', '1');
+  if ($('source').value) p.set('source', $('source').value);
+  S.types.forEach(t => p.append('type', t));
+  if (S.from != null) p.set('from', Math.round(S.from));
+  if (S.to != null) p.set('to', Math.round(S.to));
+  S.names.forEach(n => p.append('name', n));
+  history.replaceState(null, '', location.pathname + location.search + (p.toString() ? '#' + p : ''));
+}
+function readHash() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  $('q').value = p.get('q') || '';
+  $('rx').setAttribute('aria-pressed', p.get('rx') === '1');
+  $('source').value = p.get('source') || '';
+  S.types = new Set(p.getAll('type'));
+  S.from = p.has('from') ? +p.get('from') : null;
+  S.to = p.has('to') ? +p.get('to') : null;
+  S.names = new Set(p.getAll('name'));
+}
+
+function clearFilters() {
+  $('q').value = ''; $('rx').setAttribute('aria-pressed', 'false'); $('source').value = '';
+  $('from').value = $('to').value = ''; $('nameq').value = '';
+  S.from = S.to = null; S.names.clear(); S.types.clear();
+  setMatcher();
+  apply();
+}
+
+// ── Wiring ──
+let timer;
+const later = fn => { clearTimeout(timer); timer = setTimeout(fn, 120); };
+$('q').oninput = () => later(() => { setMatcher(); apply(); });
+$('nameq').oninput = () => later(apply);
+$('rx').onclick = () => { const b = $('rx'); b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') !== 'true'); setMatcher(); apply(); };
+$('source').onchange = apply;
+addEventListener('click', e => { if (!$('typebox').contains(e.target)) $('typebox').open = false; });
+$('from').onchange = () => { S.from = $('from').value ? zoneStart($('from').value) : null; apply(); };
+$('to').onchange = () => { S.to = $('to').value ? zoneStart($('to').value) + 86399999 : null; apply(); };
+$('clear').onclick = clearFilters;
+$('csv').onclick = exportCsv;
+$('togglef').onclick = () => $('side').classList.toggle('show');
+$('log').addEventListener('scroll', () => requestAnimationFrame(() => drawRows(false)), {passive: true});
+addEventListener('resize', () => later(() => { renderChart(); drawRows(true); }));
+$('ruleform').onsubmit = e => {
+  e.preventDefault();
+  const text = $('ruletext').value.trim();
+  if (!text) return;
+  S.rules.push({text, tone: $('ruletone').value});
+  $('ruletext').value = '';
+  saveRules(); renderRules(); drawRows(true);
+};
+addEventListener('keydown', e => {
+  const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName);
+  if (e.key === '/' && !typing) { e.preventDefault(); $('q').focus(); }
+  else if (e.key === 'Escape') {
+    if ($('typebox').open) $('typebox').open = false;
+    else if (typing) e.target.blur();
+    else select(null);
+  }
+  else if (!typing && (e.key === 'j' || e.key === 'k')) {
+    if (!S.view.length) return;
+    const at = S.sel ? S.view.indexOf(S.sel) : -1;
+    select(S.view[Math.max(0, Math.min(S.view.length - 1, at + (e.key === 'j' ? 1 : -1)))], true);
+  }
+});
+
+readHash();
+setMatcher();
+renderRules();
+load();
+</script>
+</body>
+</html>
