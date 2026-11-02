@@ -226,4 +226,112 @@ cases:
     wait_seconds: 2
     assert:
       - { device: test-season Season, attribute: season, value: winter }
+
+  - name: fc-fall-to-winter-on-forecast
+    setup:
+      - settings: { debugEnable: true, winterMode: "forecast" }
+      - { device: test-season Season, command: setSeason, args: ["fall", 0] }
+      - settings: { testDate: "2026-11-12", testMean: "8", testAhead: "2" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: winter }
+    assert_logs:
+      - { pattern: "3-day forecast mean 2.0 below 3.0", level: info }
+
+  - name: fc-past-cold-forecast-mild-stays
+    setup:
+      - settings: { debugEnable: true, winterMode: "forecast" }
+      - { device: test-season Season, command: setSeason, args: ["fall", 0] }
+      - settings: { testDate: "2026-11-12", testMean: "1", testAhead: "5" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: fall }
+
+  - name: fc-winter-to-fall-when-mild
+    setup:
+      - settings: { debugEnable: true, winterMode: "forecast" }
+      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
+      - settings: { testDate: "2026-12-20", testMean: "2", testAhead: "7" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: fall }
+    assert_logs:
+      - { pattern: "3-day forecast mean 7.0 above 6.0", level: info }
+
+  - name: fc-winter-inside-band-stays
+    setup:
+      - settings: { debugEnable: true, winterMode: "forecast" }
+      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
+      - settings: { testDate: "2026-12-20", testMean: "2", testAhead: "5" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: winter }
+
+  - name: fc-no-forced-date
+    setup:
+      - settings: { debugEnable: true, winterMode: "forecast" }
+      - { device: test-season Season, command: setSeason, args: ["fall", 0] }
+      - settings: { testDate: "2026-12-20", testMean: "8", testAhead: "8" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: fall }
+
+  - name: fc-winter-to-spring-after-jan-1
+    setup:
+      - settings: { debugEnable: true, winterMode: "forecast" }
+      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
+      - settings: { testDate: "2027-01-20", testMean: "8", testAhead: "7" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: spring }
+
+  - name: fc-winter-leaves-after-window
+    setup:
+      - settings: { debugEnable: true, winterMode: "forecast" }
+      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
+      - settings: { testDate: "2027-05-01", testMean: "-2", testAhead: "-2" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: spring }
+    assert_logs:
+      - { pattern: "outside the heating window", level: info }
+
+  - name: fc-no-forecast-uses-past-mean
+    setup:
+      - settings: { debugEnable: true, winterMode: "forecast" }
+      - { device: test-season Season, command: setSeason, args: ["fall", 0] }
+      - settings: { testDate: "2026-11-12", testMean: "2", testAhead: "none" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: winter }
+    assert_logs:
+      - { pattern: "3-day mean 2.0 below 3.0", level: info }
+
+  - name: once-mode-restored
+    setup:
+      - settings: { debugEnable: true, winterMode: "once" }
+      - { device: test-season Season, command: setSeason, args: ["fall", 0] }
+      - settings: { testDate: "2026-11-11", testMean: "10" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: winter }
+
 runtime_budget_seconds: 270

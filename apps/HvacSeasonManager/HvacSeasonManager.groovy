@@ -5,8 +5,8 @@
  HVAC Season Manager
 
  Publishes the heating and cooling season on a component device, from date windows
- and the outdoor temperature. The winter boundary changes once a year each way;
- summer follows the weather in and out.
+ and the outdoor temperature. The winter boundary changes once a year each way, or
+ follows the 3-day forecast both ways; summer follows the weather in and out.
 */
 
 import com.hubitat.app.ChildDeviceWrapper
@@ -14,7 +14,7 @@ import com.hubitat.hub.domain.State
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.3.3"
+@Field static final String CODE_VERSION = "0.4.0"
 
 definition(
     name: "HVAC Season Manager",
@@ -56,7 +56,7 @@ Map mainPage() {
         Map d = baseCfg()
         boolean fold = state.season != null
         Map edited = [outdoor: editedSince("outdoor", ["omEnable", "tempSensor"]), rules: editedSince("rules", RULE_INPUTS),
-                      mirror: editedSince("mirror", ["mirrorEnable", "mirrorSeasonVar"]),
+                      mirror: editedSince("mirror", ["mirrorEnable", "mirrorSeasonVar"]), notify: editedSince("notify", ["notifyDevices"]),
                       logging: editedSince("logging", ["txtEnable", "debugEnable"])]
         section {
             if (errs) paragraph "<div class='p-message p-message-error p-3 border-round'>${errs.collect { esc(it) }.join('<br>')}</div>"
@@ -98,14 +98,24 @@ Map mainPage() {
             } else {
                 input "btnCalibrate", "button", title: "Compute dates from local climate", width: 4, inputClass: "p-button p-button-outlined"
             }
-            paragraph rawHtml: true, subhead("Winter → spring", "once a year")
-            input "w2sFrom", "text", title: "From (MM-DD)", defaultValue: d.w2s.from, width: 4, submitOnChange: true
-            input "w2sUntil", "text", title: "By (MM-DD, last day)", defaultValue: d.w2s.until, width: 4, submitOnChange: true
-            input "w2sAbove", "decimal", title: "When the mean is above (${u})", defaultValue: d.w2s.above, width: 4, submitOnChange: true
-            paragraph rawHtml: true, subhead("Fall → winter", "once a year")
-            input "f2wFrom", "text", title: "From (MM-DD)", defaultValue: d.f2w.from, width: 4, submitOnChange: true
-            input "f2wUntil", "text", title: "By (MM-DD, last day)", defaultValue: d.f2w.until, width: 4, submitOnChange: true
-            input "f2wBelow", "decimal", title: "When the mean is below (${u})", defaultValue: d.f2w.below, width: 4, submitOnChange: true
+            input "winterMode", "enum", title: "Winter boundary", options: WINTER_MODES, defaultValue: d.fc.mode, required: true, submitOnChange: true
+            if (cfg.fc.mode == 'forecast') {
+                paragraph rawHtml: true, subhead("Winter", "follows the forecast both ways")
+                input "fcFrom", "text", title: "Winter possible from (MM-DD)", defaultValue: d.fc.from, width: 3, submitOnChange: true
+                input "fcUntil", "text", title: "Winter possible until (MM-DD)", defaultValue: d.fc.until, width: 3, submitOnChange: true
+                input "fcOn", "decimal", title: "Winter when the forecast mean is below (${u})", defaultValue: d.fc.on, width: 3, submitOnChange: true
+                input "fcOff", "decimal", title: "Leave winter when it is above (${u})", defaultValue: d.fc.off, width: 3, submitOnChange: true
+                paragraph "<span class='text-sm text-color-secondary'>Checked every day at 05:00 on the mean of the forecast daily means for that day and the next two; without a forecast, on the mean of the three previous days. No date forces winter.</span>"
+            } else {
+                paragraph rawHtml: true, subhead("Winter → spring", "once a year")
+                input "w2sFrom", "text", title: "From (MM-DD)", defaultValue: d.w2s.from, width: 4, submitOnChange: true
+                input "w2sUntil", "text", title: "By (MM-DD, last day)", defaultValue: d.w2s.until, width: 4, submitOnChange: true
+                input "w2sAbove", "decimal", title: "When the mean is above (${u})", defaultValue: d.w2s.above, width: 4, submitOnChange: true
+                paragraph rawHtml: true, subhead("Fall → winter", "once a year")
+                input "f2wFrom", "text", title: "From (MM-DD)", defaultValue: d.f2w.from, width: 4, submitOnChange: true
+                input "f2wUntil", "text", title: "By (MM-DD, last day)", defaultValue: d.f2w.until, width: 4, submitOnChange: true
+                input "f2wBelow", "decimal", title: "When the mean is below (${u})", defaultValue: d.f2w.below, width: 4, submitOnChange: true
+            }
             paragraph rawHtml: true, subhead("Summer", "follows the weather both ways")
             input "summerFrom", "text", title: "Summer from (MM-DD)", defaultValue: d.summer.from, width: 4, submitOnChange: true
             input "summerUntil", "text", title: "Summer until (MM-DD)", defaultValue: d.summer.until, width: 4, submitOnChange: true
@@ -114,6 +124,9 @@ Map mainPage() {
             input "summerLeave", "decimal", title: "Leave summer below (${u})", defaultValue: d.summer.leave, width: 4, submitOnChange: true
             input "summerEnd", "decimal", title: "Summer end, for computing dates (${u})", defaultValue: d.summer.end, width: 4, submitOnChange: true
             paragraph "<span class='text-sm text-color-secondary'>Summer ends on its until date. Outside summer, spring becomes fall on the fall date. The summer-end threshold only sets those two dates when they are computed from local climate.</span>"
+        }
+        section(sectionTitle("Notifications", notifyDevices ? "on" : "off"), hideable: true, hidden: fold && !edited.notify) {
+            input "notifyDevices", "capability.notification", title: "Send a message to these devices when the season changes", multiple: true, required: false, submitOnChange: true
         }
         section(sectionTitle("Hub variable mirror", mirrorEnable ? "on" : "off"), hideable: true, hidden: fold && !edited.mirror) {
             input "mirrorEnable", "bool", title: "Mirror the season to hub variables, for rules not yet moved to the Season device", defaultValue: false, submitOnChange: true
@@ -134,6 +147,7 @@ Map mainPage() {
             section("Testing") {
                 input "testDate", "text", title: "Test day (yyyy-MM-dd, blank = today)", required: false, width: 4
                 input "testMean", "text", title: "Test 3-day mean (${u}; blank or none = from the daily means)", required: false, width: 4
+                if (cfg.fc.mode == 'forecast') input "testAhead", "text", title: "Test 3-day forecast mean (${u}; blank = from the last forecast)", required: false, width: 4
                 input "btnEvaluate", "button", title: "Evaluate now"
                 input "btnRunDaily", "button", title: "Run the daily evaluation now"
             }
@@ -143,7 +157,10 @@ Map mainPage() {
 }
 
 @Field static final List<String> RULE_INPUTS = ['w2sFrom', 'w2sUntil', 'w2sAbove', 'f2wFrom', 'f2wUntil', 'f2wBelow', 'summerFrom', 'summerUntil',
-                                                'fallFrom', 'summerEnter', 'summerLeave', 'summerEnd']
+                                                'fallFrom', 'summerEnter', 'summerLeave', 'summerEnd', 'winterMode', 'fcFrom', 'fcUntil', 'fcOn', 'fcOff']
+
+@Field static final Map WINTER_MODES = [once: "Once a year each way, on the past 3-day mean, within date windows",
+                                        forecast: "Both ways, on the 3-day forecast"]
 
 // True on the render right after one of the section's settings changed, so the section stays open while it is being edited.
 boolean editedSince(String key, List<String> names) {
@@ -155,7 +172,7 @@ boolean editedSince(String key, List<String> names) {
     return changed
 }
 
-@Field static final List<String> MD_INPUTS = ['w2sFrom', 'w2sUntil', 'f2wFrom', 'f2wUntil', 'summerFrom', 'summerUntil', 'fallFrom']
+@Field static final List<String> MD_INPUTS = ['w2sFrom', 'w2sUntil', 'f2wFrom', 'f2wUntil', 'summerFrom', 'summerUntil', 'fallFrom', 'fcFrom', 'fcUntil']
 
 // Bold section titles, and a month-day picker on the MM-DD inputs from the jQuery UI the page already loads.
 String pageScript() {
@@ -199,6 +216,8 @@ String rulesSummary(Map cfg) {
     Map w = cfg.w2s as Map
     Map f = cfg.f2w as Map
     Map s = cfg.summer as Map
+    Map fc = cfg.fc as Map
+    if (fc?.mode == 'forecast') return "Winter ${mdLabel(fc.from as String)} – ${mdLabel(fc.until as String)} on the forecast · Summer ${mdLabel(s.from as String)} – ${mdLabel(s.until as String)}".toString()
     return "Winter ${mdLabel(f.from as String)} – ${mdLabel(f.until as String)} · Spring ${mdLabel(w.from as String)} – ${mdLabel(w.until as String)} · Summer ${mdLabel(s.from as String)} – ${mdLabel(s.until as String)}".toString()
 }
 
@@ -237,7 +256,11 @@ String yearHtml(Map cfg) {
     List<String> months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
     List<String> starts = ['01-01', '02-01', '03-01', '04-01', '05-01', '06-01', '07-01', '08-01', '09-01', '10-01', '11-01', '12-01']
     String today = realToday().substring(5)
-    List<Map> rows = [
+    Map fc = cfg.fc as Map
+    List<Map> rows = fc?.mode == 'forecast' ? [
+        [label: 'Winter possible', bars: [[fc.from, fc.until, '#2f6fb3']]],
+        [label: 'Summer possible', bars: [[s.from, s.until, '#c98a0b']], mark: [s.fallFrom, '#b4470a', "Fall from ${mdLabel(s.fallFrom as String)}"]]
+    ] : [
         [label: 'Winter → spring', bars: [[w.from, w.until, '#3f7a12']]],
         [label: 'Summer possible', bars: [[s.from, s.until, '#c98a0b']], mark: [s.fallFrom, '#b4470a', "Fall from ${mdLabel(s.fallFrom as String)}"]],
         [label: 'Fall → winter', bars: [[f.from, f.until, '#2f6fb3']]]
@@ -300,6 +323,7 @@ String statusHtml(Map cfg) {
         h << "<tr><td ${td}>${dayLabel(d)}</td><td ${tdn}>${x ? esc(fmtNum(x.mean)) + ' ' + u : '–'}</td><td ${td}>${x ? (x.src == 'openmeteo' ? 'Open-Meteo' : 'sensor') : 'no mean'}</td></tr>"
     }
     Map ev = state.lastEval as Map
+    if (ev && ev.ahead != null) h << "<tr><td style='padding:6px 8px'><b>3-day forecast mean</b></td><td style='padding:6px 8px;text-align:right'><b>${esc(ev.ahead)} ${u}</b></td><td class='text-color-secondary' style='padding:6px 8px'>that day and the next two</td></tr>"
     if (ev) h << "<tr><td style='padding:6px 8px'><b>3-day mean</b></td><td style='padding:6px 8px;text-align:right'><b>${ev.mean != null ? esc(ev.mean) + ' ' + u : 'not available'}</b></td><td class='text-color-secondary' style='padding:6px 8px'>evaluated ${validIso(ev.day) ? dayLabel(ev.day as String) : esc(ev.day)}</td></tr>"
     h << "</table></div>"
 
@@ -316,7 +340,9 @@ String statusHtml(Map cfg) {
     }
     h << "</div>"
 
-    String foot = "Checked every day at 05:00 against the mean of the three previous daily means."
+    String foot = cfg.fc?.mode == 'forecast'
+        ? "Checked every day at 05:00. Winter follows the 3-day forecast mean, the previous three days without a forecast; summer follows the mean of the three previous daily means."
+        : "Checked every day at 05:00 against the mean of the three previous daily means."
     if (tempSensor) {
         BigDecimal off = sensorOffset((state.samples ?: [:]) as Map, (state.om ?: [:]) as Map, today)
         foot += " Sensor offset from Open-Meteo: ${off == null ? 'not known yet' : esc(fmtNum(off)) + ' ' + u}."
@@ -413,7 +439,9 @@ Map currentCfg() {
             f2w:    [from: settings.f2wFrom ?: d.f2w.from, until: settings.f2wUntil ?: d.f2w.until, below: numOr(settings.f2wBelow, d.f2w.below)],
             summer: [from: settings.summerFrom ?: d.summer.from, until: settings.summerUntil ?: d.summer.until,
                      enter: numOr(settings.summerEnter, d.summer.enter), leave: numOr(settings.summerLeave, d.summer.leave),
-                     fallFrom: settings.fallFrom ?: d.summer.fallFrom, end: numOr(settings.summerEnd, d.summer.end)]]
+                     fallFrom: settings.fallFrom ?: d.summer.fallFrom, end: numOr(settings.summerEnd, d.summer.end)],
+            fc:     [mode: settings.winterMode ?: d.fc.mode, on: numOr(settings.fcOn, d.fc.on), off: numOr(settings.fcOff, d.fc.off),
+                     from: settings.fcFrom ?: d.fc.from, until: settings.fcUntil ?: d.fc.until]]
 }
 
 String realToday() { return new Date().format('yyyy-MM-dd', location.timeZone) }
@@ -556,7 +584,7 @@ void startEvaluation(String why) {
     if (url) {
         asynchttpGet("archiveHandler", [uri: url, contentType: 'application/json', timeout: 30], [why: why])
     } else {
-        if (why != "refresh") evaluateSeason(why, null)
+        if (why != "refresh") evaluateSeason(why, null, [:])
         updateOutlook([:])
     }
 }
@@ -576,9 +604,10 @@ void archiveHandler(resp, Map data) {
         kept.putAll(om)
         state.om = pruneDays(kept, realToday(), 10)
     }
-    if (data.why != "refresh") evaluateSeason(data.why as String, om)
+    // The evaluation waits for the forecast: the forecast winter boundary decides on it.
     String url = omUrl('forecast', location.latitude, location.longitude, location.temperatureScale as String, null, null)
-    if (url) asynchttpGet("forecastHandler", [uri: url, contentType: 'application/json', timeout: 30])
+    if (url) asynchttpGet("forecastHandler", [uri: url, contentType: 'application/json', timeout: 30], [why: data.why])
+    else if (data.why != "refresh") evaluateSeason(data.why as String, om, [:])
 }
 
 void forecastHandler(resp, Map data) {
@@ -587,7 +616,24 @@ void forecastHandler(resp, Map data) {
     if (!resp.hasError() && resp.status == 200) {
         try { fc = parseDaily(resp.json) } catch (Exception e) { logDebug "Open-Meteo forecast response unreadable: ${e.message}" }
     }
+    if (fc) state.fc = [made: realToday(), days: fc]
+    else if (currentCfg().fc.mode == 'forecast' && !state.fcWarned) { logWarn "Open-Meteo forecast unavailable (HTTP ${resp.status}); winter follows the previous three days"; state.fcWarned = true }
+    if (fc && state.fcWarned) state.remove('fcWarned')
+    if (data?.why && data.why != "refresh") evaluateSeason(data.why as String, null, fc)
     updateOutlook(fc)
+}
+
+// The last forecast fetched today, or none.
+Map todaysForecast() {
+    Map f = state.fc as Map
+    return f?.made == realToday() ? (f.days as Map) : [:]
+}
+
+void notifyChange(String from, String to, String day, String reason) {
+    if (!notifyDevices) return
+    String msg = "${deviceLabel()}: ${from} → ${to}${day == realToday() ? '' : ' on ' + dayLabel(day)} (${reason})".toString()
+    notifyDevices.each { it.deviceNotification(msg) }
+    logCmd "notified: ${msg}"
 }
 
 void updateOutlook(Map forecast) {
@@ -602,7 +648,7 @@ void updateOutlook(Map forecast) {
 // The last day whose 05:00 evaluation the hold suspends, or null.
 String holdLastDay() { holdLastDayOf(state.holdUntil as Long, location.timeZone) }
 
-void evaluateSeason(String why, Map fetched = null) {
+void evaluateSeason(String why, Map fetched = null, Map forecast = null) {
     Map cfg = currentCfg()
     List<String> errs = validateCfg(cfg)
     if (errs) { logWarn "season not evaluated, settings invalid: ${errs.join('; ')}"; return }
@@ -611,10 +657,13 @@ void evaluateSeason(String why, Map fetched = null) {
     om.putAll((state.om ?: [:]) as Map)
     om.putAll(fetched ?: [:])
     Map means = meanValues(mergeDays((state.samples ?: [:]) as Map, om, today))
-    Map inputs = evalInputs(debugEnable && why == "button", settings.testDate, settings.testMean, today)
+    // Forecast days from today on join the means: they feed only the forecast mean of the day and the next two.
+    (forecast != null ? forecast : todaysForecast()).each { k, v -> if ((k as String) >= today) means[k as String] = v }
+    Map inputs = evalInputs(debugEnable && why == "button", settings.testDate, settings.testMean, today, settings.testAhead)
     String day = inputs.day as String
     BigDecimal mean = inputs.mean != null ? inputs.mean as BigDecimal : mean3At(means, day)
-    state.lastEval = [day: day, mean: mean?.toPlainString(), why: why]
+    BigDecimal ahead = cfg.fc.mode != 'forecast' ? null : (inputs.ahead != null ? inputs.ahead as BigDecimal : mean3Ahead(means, day))
+    state.lastEval = [day: day, mean: mean?.toPlainString(), ahead: ahead?.toPlainString(), why: why]
     if (state.season == null) { logWarn "no current season; open the app and pick one"; publish(); return }
     String holdLast = holdLastDay()
     if (state.holdUntil && now() >= (state.holdUntil as Long)) { state.remove('holdUntil'); logInfo "automatic season changes resumed" }
@@ -625,11 +674,14 @@ void evaluateSeason(String why, Map fetched = null) {
         if (first > today) first = today
         String was = state.season as String
         Map r = runDays(was, first, today, means, cfg, holdLast)
+        String before = was
         (r.changes as List<Map>).each { Map c ->
             logInfo "season ${was} → ${c.season}${c.day == today ? '' : ' on ' + c.day}: ${c.reason}"
             was = c.season as String
         }
         if (r.changes) {
+            Map lastCh = (r.changes as List<Map>)[-1]
+            if (before != r.season) notifyChange(before, r.season as String, lastCh.day as String, lastCh.reason as String)
             state.season = r.season
             state.since = ((r.changes as List<Map>)[-1]).day
         } else {
@@ -638,9 +690,10 @@ void evaluateSeason(String why, Map fetched = null) {
         state.lastDaily = today
     } else {
         if (state.holdUntil) { logSched "automatic changes suspended until ${fmtTime(state.holdUntil as Long)}"; publish(); return }
-        Map r = nextSeason(state.season as String, day, mean, cfg)
+        Map r = nextSeason(state.season as String, day, mean, cfg, ahead)
         if (r.reason) {
             logInfo "season ${state.season} → ${r.season}: ${r.reason}"
+            if (state.season != r.season) notifyChange(state.season as String, r.season as String, day, r.reason as String)
             state.season = r.season
             state.since = day
         } else {
@@ -671,6 +724,7 @@ Map setSeasonManual(Object season, Object holdDays) {
     if (days > 0) state.holdUntil = now() + days * DAY_MS
     else state.remove('holdUntil')
     logCmd "season set to ${p.season} by hand (was ${was})${days > 0 ? ', automatic changes suspended for ' + days + ' days' : ''}"
+    if (was != p.season) notifyChange(was, p.season as String, realToday(), "set by hand${days > 0 ? ', automatic changes suspended for ' + days + ' days' : ''}".toString())
     publish()
     return [ok: true]
 }
@@ -802,7 +856,8 @@ BigDecimal inScale(BigDecimal celsius, String scale) {
 Map defaultCfg(String scale) {
     return [w2s:    [from: '03-11', until: '04-08', above: inScale(3.0, scale)],
             f2w:    [from: '10-26', until: '11-11', below: inScale(3.0, scale)],
-            summer: [from: '05-10', until: '09-14', enter: inScale(17.0, scale), leave: inScale(12.0, scale), fallFrom: '08-15', end: inScale(17.0, scale)]]
+            summer: [from: '05-10', until: '09-14', enter: inScale(17.0, scale), leave: inScale(12.0, scale), fallFrom: '08-15', end: inScale(17.0, scale)],
+            fc:     [mode: 'once', on: inScale(3.0, scale), off: inScale(6.0, scale), from: '10-01', until: '04-30']]
 }
 
 @CompileStatic
@@ -818,16 +873,26 @@ List<String> validateCfg(Map cfg) {
     Map nums = ['Winter to spring threshold': w.above, 'Fall to winter threshold': f.below,
                 'Enter summer threshold': s.enter, 'Leave summer threshold': s.leave]
     nums.each { String k, v -> if (numOrNull(v) == null) errs << "${k}: enter a number".toString() }
+    Map fc = (cfg.fc ?: [:]) as Map
+    if (fc.mode == 'forecast') {
+        if (!validMd(fc.from)) errs << 'Heating window from: enter a month and day as MM-DD'
+        if (!validMd(fc.until)) errs << 'Heating window until: enter a month and day as MM-DD'
+        if (numOrNull(fc.on) == null) errs << 'Winter below: enter a number'
+        if (numOrNull(fc.off) == null) errs << 'Leave winter above: enter a number'
+    }
     if (errs) return errs
+    if (fc.mode == 'forecast' && numOrNull(fc.off) <= numOrNull(fc.on)) errs << 'Leave winter above must be higher than winter below'
     if (numOrNull(s.leave) >= numOrNull(s.enter)) errs << 'Leave summer threshold must be below the enter summer threshold'
     if (!cyclicOrdered([w.from, w.until, s.from, s.fallFrom, s.until, f.from, f.until] as List<String>))
         errs << 'Dates must follow each other through the year in this order: winter to spring window, summer possible from, fall from, summer possible until, fall to winter window'
     return errs
 }
 
-// One change at most per evaluation. mean is the 3-day mean, or null when there is none.
+// One change at most per evaluation. mean is the 3-day mean of the previous days, or null when there is none;
+// ahead is the mean of the day and the next two (forecast), or null. Only the forecast winter boundary reads ahead.
 @CompileStatic
-Map nextSeason(String season, String iso, BigDecimal mean, Map cfg) {
+Map nextSeason(String season, String iso, BigDecimal mean, Map cfg, BigDecimal ahead = null) {
+    if (((cfg.fc ?: [:]) as Map).mode == 'forecast') return nextSeasonForecast(season, iso, mean, ahead, cfg)
     Map w = cfg.w2s as Map
     Map f = cfg.f2w as Map
     Map s = cfg.summer as Map
@@ -864,9 +929,59 @@ Map nextSeason(String season, String iso, BigDecimal mean, Map cfg) {
     return [season: season, reason: null]
 }
 
+// Winter boundary on the forecast, both ways: inside the heating window, winter when the decision mean is below
+// fc.on and back out when it is above fc.off; outside the window never winter. The decision mean is ahead, or the
+// past 3-day mean when there is no forecast. A season out of winter is fall from fall-from to Dec 31, spring
+// from Jan 1. The summer boundary is the same as in the one-way rule.
+@CompileStatic
+Map nextSeasonForecast(String season, String iso, BigDecimal mean, BigDecimal ahead, Map cfg) {
+    Map s = cfg.summer as Map
+    Map fc = cfg.fc as Map
+    BigDecimal on = numOrNull(fc.on)
+    BigDecimal off = numOrNull(fc.off)
+    BigDecimal enter = numOrNull(s.enter)
+    BigDecimal leave = numOrNull(s.leave)
+    boolean summerOpen = inSpan(iso, s.from as String, s.until as String)
+    boolean fallHalf = inSpan(iso, s.fallFrom as String, '01-01')
+    boolean heating = inMd(iso, fc.from as String, fc.until as String)
+    BigDecimal d = ahead != null ? ahead : mean
+    String basis = ahead != null ? '3-day forecast mean' : '3-day mean'
+    String mild = fallHalf ? 'fall' : 'spring'
+    if (season == 'winter') {
+        if (!heating) return [season: mild, reason: "outside the heating window (${mdLabel(fc.from as String)} to ${mdLabel(fc.until as String)})".toString()]
+        if (d != null && d > off) return [season: mild, reason: "${basis} ${fmtNum(d)} above ${fmtNum(off)}".toString()]
+        return [season: season, reason: null]
+    }
+    if (season == 'summer') {
+        if (!summerOpen) return [season: mild, reason: "outside the summer dates (${s.from} to ${s.until})".toString()]
+        if (mean != null && mean < leave) return [season: mild, reason: "3-day mean ${fmtNum(mean)} below ${fmtNum(leave)}".toString()]
+        return [season: season, reason: null]
+    }
+    if (heating && d != null && d < on) return [season: 'winter', reason: "${basis} ${fmtNum(d)} below ${fmtNum(on)}".toString()]
+    if (summerOpen && mean != null && mean > enter) return [season: 'summer', reason: "3-day mean ${fmtNum(mean)} above ${fmtNum(enter)}".toString()]
+    if (season == 'spring' && fallHalf) return [season: 'fall', reason: "fall from ${s.fallFrom}".toString()]
+    if (season == 'fall' && !fallHalf) return [season: 'spring', reason: 'spring from Jan 1']
+    return [season: season, reason: null]
+}
+
+// Mean of the day and the next two days; null unless all three have a mean.
+@CompileStatic
+BigDecimal mean3Ahead(Map means, String day) {
+    List<BigDecimal> xs = (0..2).collect { int i -> numOrNull((means ?: [:])[addDays(day, i)]) }
+    if (xs.any { it == null }) return null
+    return ((xs.sum() as BigDecimal) / 3).setScale(2, BigDecimal.ROUND_HALF_UP)
+}
+
 // The seasons possible on iso from the date alone. Two inside a window where the weather decides.
 @CompileStatic
 List<String> seasonsOn(String iso, Map cfg) {
+    Map fc = (cfg.fc ?: [:]) as Map
+    if (fc.mode == 'forecast') {
+        Map sm = cfg.summer as Map
+        String mild = inSpan(iso, sm.fallFrom as String, '01-01') ? 'fall' : 'spring'
+        if (inSpan(iso, sm.from as String, sm.until as String)) return mild == 'fall' ? ['summer', 'fall'] : ['spring', 'summer']
+        return inMd(iso, fc.from as String, fc.until as String) ? (mild == 'fall' ? ['fall', 'winter'] : ['winter', 'spring']) : [mild]
+    }
     Map w = cfg.w2s as Map
     Map f = cfg.f2w as Map
     Map s = cfg.summer as Map
@@ -892,6 +1007,11 @@ Map parseSeasonArgs(Object season, Object holdDays) {
 
 @CompileStatic
 String nextPossible(String season, Map cfg, String unit) {
+    Map fc = (cfg.fc ?: [:]) as Map
+    if (fc.mode == 'forecast' && season != 'summer') {
+        if (season == 'winter') return "fall or spring when the 3-day forecast mean is above ${fmtNum(fc.off)} ${unit}, after ${mdLabel(fc.until as String)} at the latest".toString()
+        return "winter between ${mdLabel(fc.from as String)} and ${mdLabel(fc.until as String)} when the 3-day forecast mean is below ${fmtNum(fc.on)} ${unit}".toString()
+    }
     Map w = cfg.w2s as Map
     Map f = cfg.f2w as Map
     Map s = cfg.summer as Map
@@ -914,8 +1034,9 @@ Map addSample(Map samples, String iso, BigDecimal v) {
 
 // Test day and test mean apply to button-driven evaluations only, never to scheduled runs.
 @CompileStatic
-Map evalInputs(boolean useTest, Object testDate, Object testMean, String today) {
-    return [day: (useTest && validIso(testDate)) ? (testDate as String) : today, mean: useTest ? numOrNull(testMean) : null]
+Map evalInputs(boolean useTest, Object testDate, Object testMean, String today, Object testAhead = null) {
+    return [day: (useTest && validIso(testDate)) ? (testDate as String) : today, mean: useTest ? numOrNull(testMean) : null,
+            ahead: useTest ? numOrNull(testAhead) : null]
 }
 
 @CompileStatic
@@ -1026,10 +1147,11 @@ Map runDays(String season, String first, String last, Map means, Map cfg, String
     while (d <= last && guard++ < 400) {
         if (holdLast == null || d > holdLast) {
             BigDecimal m = mean3At(means, d)
+            BigDecimal ah = mean3Ahead(means, d)
             if (m == null) missing << d
-            Map r = nextSeason(s, d, m, cfg)
+            Map r = nextSeason(s, d, m, cfg, ah)
             if (r.reason) {
-                changes << [day: d, season: r.season, reason: r.reason, mean: m]
+                changes << [day: d, season: r.season, reason: r.reason, mean: m, ahead: ah]
                 s = r.season as String
             }
         }
@@ -1078,7 +1200,7 @@ Map outlook(String season, String today, Map observed, Map forecast, Map cfg, St
     (forecast ?: [:]).each { k, v -> if ((k as String) >= today) means[k as String] = v }
     String last = addDays(today, 7)
     Map r = runDays(season, addDays(today, 1), last, means, cfg, holdLast)
-    List<Map> changes = (r.changes as List<Map>).collect { Map c -> c + [kind: (c.reason as String).startsWith('3-day mean') ? 'forecast' : 'date'] }
+    List<Map> changes = (r.changes as List<Map>).collect { Map c -> c + [kind: (c.reason as String).startsWith('3-day') ? 'forecast' : 'date'] }
     List<Map> days = (forecast ?: [:]).keySet().collect { it as String }.findAll { it >= today }.sort().collect { String d -> [day: d, mean: forecast[d]] }
     return [through: last, days: days, changes: changes, forecast: !(forecast ?: [:]).isEmpty()]
 }
@@ -1092,6 +1214,7 @@ List<String> outlookText(Map o, String unit) {
     ch.each { Map c ->
         String day = dayLabel(c.day as String)
         if (c.kind == 'date') out << "${(c.season as String).capitalize()} on ${day} (${c.reason})".toString()
+        else if ((c.reason as String).startsWith('3-day forecast mean')) out << "Forecast: ${c.season} on ${day} (3-day forecast mean ${fmtNum(c.ahead)} ${unit})".toString()
         else out << "Forecast: ${c.season} on ${day} (3-day mean ${fmtNum(c.mean)} ${unit})".toString()
     }
     return out
@@ -1197,6 +1320,7 @@ Map calibrate(Map means, String first, String last, Map thr, boolean south) {
 @CompileStatic
 Map withDates(Map cfg, Map cal) {
     Map out = [w2s: [:] + (cfg.w2s as Map), f2w: [:] + (cfg.f2w as Map), summer: [:] + (cfg.summer as Map)]
+    if (cfg.fc) out.fc = [:] + (cfg.fc as Map)
     if (cal?.w2s) out.w2s.putAll(cal.w2s as Map)
     if (cal?.f2w) out.f2w.putAll(cal.f2w as Map)
     if (cal?.summer) out.summer.putAll(cal.summer as Map)

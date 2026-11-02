@@ -30,6 +30,8 @@ The year has two boundaries, and they behave differently.
 
 **The winter boundary changes once a year each way.** Winter becomes spring inside a window of dates, as soon as the 3-day mean outdoor temperature is above a threshold, and on the window's last day at the latest. Fall becomes winter the same way, when the mean is below a threshold. Neither change goes back until the next year. This suits heating with a large thermal mass, such as a hydronic floor, which should not start and stop with each warm or cold spell.
 
+**Or the winter boundary follows the forecast both ways** (*Winter boundary*: *Both ways, on the 3-day forecast*). Between *winter possible from* and *until* (Oct 1 to Apr 30), the season becomes winter when the mean of the forecast daily means for the day and the next two is below *winter below* (3 °C), and leaves winter when that mean is above *leave winter above* (6 °C), as often as the weather requires. Out of winter the season is `fall` from the *fall from* date to Dec 31 and `spring` from Jan 1. No date forces winter, and after *until* the season leaves it. Without a forecast the app decides on the mean of the three previous days. This suits a house with two heat sources, where winter selects the one that costs more in mild weather: the forecast starts it before a cold spell and hands back after, and the band keeps it from switching on every mild day. The winter-boundary windows are not used in this mode.
+
 **The summer boundary follows the weather both ways.** Between *summer possible from* and *summer possible until*, the season enters summer when the 3-day mean is above the entry threshold and leaves it when the mean is below the exit threshold, as often as the weather requires. There is no forced start: a cold June stays in spring. Summer always ends on its *until* date. Outside summer, the season is `spring` before the *fall from* date and `fall` from that date on.
 
 A cold spell after summer starts is the costly mistake, since summer usually means the heat is off. Following the weather in and out of summer avoids it; a band of a few degrees between the two thresholds keeps the season from changing every day.
@@ -44,11 +46,15 @@ A cold spell after summer starts is the costly mistake, since summer usually mea
 | Winter to spring threshold | 3 °C | 3-day mean above it |
 | Fall to winter, from / until | 10-26 / 11-11 | `MM-DD`; *until* is the last possible day |
 | Fall to winter threshold | 3 °C | 3-day mean below it |
+| Winter boundary | once a year each way | Or both ways on the 3-day forecast |
+| Winter possible from / until | 10-01 / 04-30 | Forecast mode only |
+| Winter below / leave winter above | 3 °C / 6 °C | Forecast mode only; the 3-day forecast mean, strict; *leave* must be higher |
 | Summer possible from / until | 05-10 / 09-14 | Summer ends on *until* |
 | Fall from | 08-15 | Outside summer, spring becomes fall on this day |
 | Enter summer threshold | 17 °C | 3-day mean above it |
 | Leave summer threshold | 12 °C | 3-day mean below it; must be below the entry threshold |
 | Summer end threshold | 17 °C | Used only to compute *summer possible until* and *fall from* from local climate |
+| Notification devices | | Optional; a message on every season change, with its reason |
 | Hub variable mirror | off | See below |
 
 The default dates suit a cold-winter climate. On install, with Open-Meteo on, the app replaces them with dates computed from the last 21 full years of daily means at the hub's location, and the *Compute dates from local climate* button in *Season rules* does the same later, showing the computed dates beside the current ones before any change. For each year it finds the first day the 3-day mean crosses each threshold: a winter window runs from the 10th to the 90th percentile of those days, *summer possible from* is the 10th percentile of the summer entry crossing, and *summer possible until* and *fall from* are the 90th and 10th percentiles of the summer end crossing. A rule whose threshold is crossed in fewer than two thirds of the years keeps its dates. South of the equator the searches start half a year later. The thresholds are never changed.
@@ -61,7 +67,7 @@ These are not settings:
 
 - Daily means come from the Open-Meteo archive at the hub's location, rounded to 0.1°. This is the data the default thresholds were calibrated on. The app logs a warning once while Open-Meteo is unavailable.
 - On a day Open-Meteo has no mean, the sensor's mean is used, corrected by its mean difference from Open-Meteo over the last 7 days that have both. The sensor is read every hour, and a day's mean needs at least 12 readings. Readings are kept for 10 days.
-- The season is checked once a day at 05:00, against the mean of the three previous daily means.
+- The season is checked once a day at 05:00, against the mean of the three previous daily means, and in forecast mode against the forecast for the day and the next two. The check runs after the forecast is fetched; if the fetch fails, the app logs a warning once and uses the previous three days.
 - A sensor reading older than 24 hours is not counted, and the app logs a warning once until the sensor reports again. Without a 3-day mean, only the date limits apply: a winter boundary change happens on its window's last day, and summer ends on its *until* date.
 - The season changes at most once per day.
 - If the hub was off for some days, the next daily check evaluates each missed day in order, up to 120 days back.
@@ -95,4 +101,4 @@ The defaults suit a Montréal-area climate and come from the 2005 to 2025 daily 
 ## Tests
 
 - `tests/test_core.groovy`: unit tests of the date arithmetic, validation, transition rules, daily means, Open-Meteo parsing (against a saved response in `tests/fixtures/`), the replay and the outlook, run off the hub under Groovy 2.4.21: `java -cp groovy-all-2.4.21.jar groovy.ui.GroovyMain tests/test_core.groovy`.
-- `tests/test-season.sh`: behavior test on a hub, generated from `tests/spec-season.yaml`. It drives a test instance through a test day and a test mean (shown on the app page while debug logging is on) and checks the device: `bash tests/test-season.sh [@hub]`.
+- `tests/test-season.sh`: behavior test on a hub, generated from `tests/spec-season.yaml`. It drives a test instance through a test day, a test mean and, in forecast mode, a test forecast mean (shown on the app page while debug logging is on) and checks the device: `bash tests/test-season.sh [@hub]`.
