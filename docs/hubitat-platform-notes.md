@@ -13,6 +13,8 @@ Every fact carries an evidence mark ([EVIDENCE.md](EVIDENCE.md)). A `regression`
 
 ## Sandbox and Groovy
 
+- **`java.util.Iterator`, `ListIterator` and `Enumeration` can't be declared.** `Iterator a = list.iterator()` fails to compile with `Expression [DeclarationExpression] is not allowed`. `def a = list.iterator()`, `a.remove()` on it, and a cast to `Iterator` are accepted, and so is `Map.Entry a` *(probed 2.5.3.111, C-8 Pro, throwaway app)*.
+
 - **`@CompileStatic` can change behavior without a compile error.** Under static compilation, `Map x = [k: false]` is inferred as `Map<String, Boolean>`, so a later `x.prop = 0.5` stores `true`; and an Elvis result multiplied by a `long` (`(a ?: b) * 1000L`) can throw `ClassCastException` at runtime. Both compiled cleanly *(inferred from a local run under Groovy 2.4.21, the hub's version)*. Annotate only methods whose maps and arithmetic are explicitly typed, and run the method's tests after adding it.
 - **`@CompileStatic` rejections come from Groovy 2.4's static type checker, not from the firmware.** Each case below fails the save with the same message stock Groovy 2.4.21 gives, and Groovy 6.0 compiles every one of them, so code that compiles under a newer local Groovy can still fail on the hub *(inferred: from a local compile of each case under Groovy 2.4.21 and 6.0)*:
   - an untyped closure parameter read as a property, as in `list.sort(false) { it.id as int }` on a `List<Map>`: `No such property: id for class: java.lang.Object`. Type the parameter: `{ Map x -> x.get('id') as int }` *(probed 2.5.2.139–2.5.3.104, C-7 and C-8 Pro)*;
@@ -230,6 +232,14 @@ Read back with the location in a UTC−5 zone with daylight saving time:
 - An app-sent `deviceJoin` reaches subscribers with `evt.deviceId` null, the sender's value and description, `evt.source` `LOCATION` and `evt.type` null, and it is listed in the hub's location event history like any other. Code that falls back to `evt.value` as the joined device's id therefore takes any id another app chooses. Creating a virtual device sends no `deviceJoin` *(probed 2.5.2.139, C-8 Pro, throwaway app)*. A real Zigbee join is recorded as a **hub** event, not a location event: `/hub/eventsJson` lists `deviceJoin` with `source` `HUB`, the new device's id as `value`, `deviceId` null and "New Zigbee device joined", and `/logs/eventsJson` has no row for it. So on a real join too the id is only in `evt.value`. Whether `subscribe(location, 'deviceJoin', …)` receives that hub event is not tested *(probed 2.5.2.129, C-7, hub event history)*.
 
 - **A location subscription can filter by value.** `subscribe(location, 'name.value', handler)` receives only the events of that name with that value, while `subscribe(location, 'name', handler)` receives all of them. An app also receives the location events it sends itself, when it is subscribed to them; two instances of one app type both received the events one of them sent *(probed 2.5.2.139, C-8 Pro, throwaway app)*.
+
+- **`subscribe(location, handler)` is the location wildcard.** With no event name it received app-sent location events of names nothing had declared, including names holding a space, a colon or a dot. `subscribe(location, (String) null, handler)` is the same subscription. `*` has no such meaning: `subscribe(location, '*', handler)` and `subscribe(location, 'prefix*', handler)` raise nothing, are listed under that literal name, and received none of them. `evt.id` is the `id` of the row in `/logs/eventsJson` *(probed 2.5.3.111, C-8 Pro, throwaway app)*.
+
+- **The wildcard also receives hub events.** `localBackup` *(probed 2.5.3.111, C-8 Pro, throwaway app)* and `ssdpTerm` *(probed 2.5.2.139, C-7, throwaway app)* arrived with `evt.source` `HUB`, `evt.type` null, and `evt.id` equal to the row `id` in `/hub/eventsJson`.
+
+- **A location event with no value is stored but not delivered.** `sendLocationEvent` with `value: ""`, `value: null` or no `value` raised nothing and the event is listed in `/logs/eventsJson` with `value` null, but a wildcard subscriber did not receive it. Code that must see every location event also has to read the list *(probed 2.5.3.111, C-8 Pro, throwaway app)*.
+
+- **The location list is trimmed after the write, not at it.** 15 rows of one name were all listed for at least 2 minutes and 11 remained a minute later *(probed 2.5.3.111, C-8 Pro, throwaway app)*.
 
 ## Controlling one app from another
 
