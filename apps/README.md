@@ -28,6 +28,7 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 <!-- AUTO:apps-subfolders -->
 | Folder | Description |
 |---|---|
+| [EventHistory/](./EventHistory/) | Keeps hub and location events past the hub's own limits, in capped File Manager files |
 | [HubInspector/](./HubInspector/) | Comprehensive hub diagnostics: inventory, performance tracking, network analysis, and snapshot comparison |
 | [HvacInterlock/](./HvacInterlock/) | Gates heating and cooling equipment by season and open windows |
 | [HvacScheduler/](./HvacScheduler/) | Thermostat schedules with profiles, holds and an API |
