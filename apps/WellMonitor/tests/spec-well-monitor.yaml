@@ -111,6 +111,36 @@ cases:
       # "7.50L"). If formatting tightens up later, loosen the regex.
       - { pattern: "coincident flow 7\\.5", level: info }
 
+  # ─── Case 2b: start through a ramp reading ──────────────────────────
+  # A reading between the thresholds (93 W, as a real pump reported once
+  # while starting) right before the running draw must still start a cycle.
+  - name: pump-start-after-ramp-reading
+    command_spacing_seconds: 1
+    setup:
+      - { device: test-wm-pump,  command: setPower,  args: [0] }
+      - { device: test-wm-pump-active, command: "off" }
+    setup_wait_seconds: 2
+    actions:
+      - { device: test-wm-pump, command: setPower, args: [93] }
+      - { device: test-wm-pump, command: setPower, args: [2099] }
+    wait_seconds: 3
+    assert:
+      - { device: test-wm-pump-active, attribute: switch, value: "on" }
+    assert_logs:
+      - { pattern: "Pump started", level: info }
+
+  # ─── Case 2c: stop through a ramp reading (depends on case 2b) ──────
+  - name: pump-stop-after-ramp-reading
+    command_spacing_seconds: 1
+    actions:
+      - { device: test-wm-pump, command: setPower, args: [50] }
+      - { device: test-wm-pump, command: setPower, args: [0] }
+    wait_seconds: 3
+    assert:
+      - { device: test-wm-pump-active, attribute: switch, value: "off" }
+    assert_logs:
+      - { pattern: "Pump stopped", level: info }
+
   # ─── Case 3: water-flow start (rateHandler, independent of pump) ────
   # The water meter's rate going non-zero (with no pump cycle in flight)
   # should toggle the flow indicator on and log "Water flow started".

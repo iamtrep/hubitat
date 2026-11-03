@@ -128,7 +128,7 @@ The **Dashboard** link will appear at the top of the app's configuration page.
 | Power ON threshold | 100W | Power above this means the pump is running |
 | Power OFF threshold | 10W | Power below this means the pump is off |
 
-The OFF threshold must be lower than the ON threshold. The gap between them provides hysteresis to avoid false transitions from power fluctuations.
+The OFF threshold must be lower than the ON threshold. The gap between them provides hysteresis to avoid false transitions from power fluctuations: an idle pump starts on the first reading above the ON threshold and a running pump stops on the first reading below the OFF threshold, whatever came before, and a reading in between changes nothing.
 
 ### Emergency Shutoff
 

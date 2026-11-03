@@ -19,7 +19,7 @@ import com.hubitat.hub.domain.Hub
 import java.nio.file.AccessDeniedException
 
 @Field static final String APP_NAME = "Well Monitor"
-@Field static final String CODE_VERSION = "0.11.7"
+@Field static final String CODE_VERSION = "0.11.8"
 @Field static final String DASHBOARD_FILE = "wellmonitor-dashboard.html"
 @Field static final String CHARTJS_FILE = "wellpump-chart.min.js"
 
@@ -490,16 +490,17 @@ void powerHandler(Event evt) {
 
     logEvt("Power event: ${currentPower}W (previous: ${prevPower}W)")
 
-    if (currentPower < offThreshold && prevPower > onThreshold) {
+    // Hysteresis on the pump's state, not on the previous reading: a ramp reading between
+    // the thresholds (93 W just before 2099 W) must not hide a start or a stop.
+    boolean running = state.pumpRunning == true
+    if (!running && currentPower > onThreshold) {
+        handlePumpStarted(currentTime)
+    } else if (running && currentPower < offThreshold) {
         handlePumpStopped(currentTime)
-    } else if (currentPower > onThreshold) {
-        if (prevPower < offThreshold) {
-            handlePumpStarted(currentTime)
-        } else {
-            handlePumpRunning(currentTime)
-        }
+    } else if (running) {
+        handlePumpRunning(currentTime)
     }
-    // else: no transition (intermediate power or same state)
+    // else: idle, and the reading is not above the on threshold
 
     state.previousPower = currentPower
 }
@@ -609,6 +610,7 @@ private void handlePumpStopped(long currentTime) {
 }
 
 private void handlePumpRunning(long currentTime) {
+    if (!state.pumpRunning) return
     long pumpBegin = (state.pumpBegin ?: currentTime) as long
     long durationMs = currentTime - pumpBegin
     state.pumpCurrentDuration = durationMs
