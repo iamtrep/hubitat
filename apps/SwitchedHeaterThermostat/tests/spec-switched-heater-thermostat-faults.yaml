@@ -8,11 +8,11 @@
 # part's; it is rendered to test-sht-faults.sh instead.
 # Each script resets the rig in its first case, so they run in either order.
 # testSecondsPerMinute is 1, so every minute-based setting runs in seconds: the power
-# grace is 2 s, quietAfter 10 is 10 s. verifyTimeout is 5 s, so a stuck heater raises
+# grace is 2 s, quietAfter 30 is 30 s (the app's floor; it also applies while a sensor learns). verifyTimeout is 5 s, so a stuck heater raises
 # the load fault about 10 s after the first command. Settings that appear only after
 # another one is saved (restMinutes, the cycle settings) get their own settings step.
 # The quiet cases press btnForgetGaps so the sensors' learned gaps from earlier cases
-# don't apply, then wait at least 10 s: a sensor last heard 2 steps back at 6 s spacing
+# don't apply, then wait more than 30 s: a sensor last heard 6 steps back at 6 s spacing
 # is quiet.
 # The first case sets every setting. After it, each settings step restates the settings
 # this part changes (quietAfter 1440, heat off on a sensor fault, no limit, frost far
@@ -232,17 +232,17 @@ cases:
       - { attribute: "^lastMessage$", source: "test-sht-notify", negate: true }
 
   # Frost runs with the thermostat off (setup), then both sensors go quiet: frost stops with
-  # "no temperature" and the sensor-fault choice (heat off) applies. 2 s spacing; the check
-  # comes 13 s after the last reading.
+  # "no temperature" and the sensor-fault choice (heat off) applies. 6 s spacing; the check
+  # comes about 37 s after the last reading.
   - name: frost-stops-when-sensors-quiet
     setup:
       - { device: test-sht-heater1, command: setUnplugged, args: ["false"] }
-      - settings: { quietAfter: 10, onSensorFault: "off", maxHeatMinutes: "none", frostTemp: 15, noRiseMinutes: "none", usePower: true, notifyPartial: true }
+      - settings: { quietAfter: 30, onSensorFault: "off", maxHeatMinutes: "none", frostTemp: 15, noRiseMinutes: "none", usePower: true, notifyPartial: true }
       - { button: btnForgetGaps }
       - { device: test-sht-th, command: "off" }
       - { device: test-sht-temp1, command: setTemperature, args: [14] }
       - { device: test-sht-temp2, command: setTemperature, args: [14] }
-    command_spacing_seconds: 2
+    command_spacing_seconds: 6
     actions:
       - { device: test-sht-notify, command: setFailing, args: ["false"] }
       - { device: test-sht-notify, command: setFailing, args: ["false"] }
@@ -264,7 +264,7 @@ cases:
 
   - name: all-sensors-quiet-fault
     setup:
-      - settings: { quietAfter: 10, onSensorFault: "off", maxHeatMinutes: "none", frostTemp: -50, noRiseMinutes: "none", usePower: true, notifyPartial: true }
+      - settings: { quietAfter: 30, onSensorFault: "off", maxHeatMinutes: "none", frostTemp: -50, noRiseMinutes: "none", usePower: true, notifyPartial: true }
       - { button: btnForgetGaps }
       - { device: test-sht-temp1, command: setTemperature, args: [21] }
       - { device: test-sht-temp2, command: setTemperature, args: [21] }
@@ -273,6 +273,10 @@ cases:
       - { device: test-sht-th, command: heat }
       - { device: test-sht-temp1, command: setTemperature, args: [18] }
       - { device: test-sht-temp2, command: setTemperature, args: [18] }
+      - { device: test-sht-notify, command: setFailing, args: ["false"] }
+      - { device: test-sht-notify, command: setFailing, args: ["false"] }
+      - { device: test-sht-notify, command: setFailing, args: ["false"] }
+      - { device: test-sht-notify, command: setFailing, args: ["false"] }
       - { device: test-sht-notify, command: setFailing, args: ["false"] }
       - { button: btnCheck }
     wait_seconds: 3
@@ -300,12 +304,16 @@ cases:
   # The readings of 21 turn the heaters off first, so the "keep on" run starts with no reading.
   - name: sensor-fault-keep-on
     setup:
-      - settings: { quietAfter: 10, onSensorFault: "on", maxHeatMinutes: "none", frostTemp: -50, noRiseMinutes: "none", usePower: true, notifyPartial: true }
+      - settings: { quietAfter: 30, onSensorFault: "on", maxHeatMinutes: "none", frostTemp: -50, noRiseMinutes: "none", usePower: true, notifyPartial: true }
       - { button: btnForgetGaps }
     command_spacing_seconds: 6
     actions:
       - { device: test-sht-temp1, command: setTemperature, args: [21] }
       - { device: test-sht-temp2, command: setTemperature, args: [21] }
+      - { device: test-sht-notify, command: setFailing, args: ["false"] }
+      - { device: test-sht-notify, command: setFailing, args: ["false"] }
+      - { device: test-sht-notify, command: setFailing, args: ["false"] }
+      - { device: test-sht-notify, command: setFailing, args: ["false"] }
       - { device: test-sht-notify, command: setFailing, args: ["false"] }
       - { button: btnCheck }
     wait_seconds: 3
@@ -346,18 +354,21 @@ cases:
 
   # "Keep on" with the time limit: the limit rests the heaters 10 s into the sensor fault
   # and the app sets the thermostat idle. The limit is set once the heaters are off, so the
-  # previous cases' run doesn't count toward it. 3 s spacing; the check comes more than
-  # 10 s after the last reading.
+  # previous cases' run doesn't count toward it. 6 s spacing; the check comes more than
+  # 30 s after the last reading.
   - name: limit-under-keep-on
     setup:
-      - settings: { quietAfter: 10, onSensorFault: "on", maxHeatMinutes: "none", frostTemp: -50, noRiseMinutes: "none", usePower: true, notifyPartial: true }
+      - settings: { quietAfter: 30, onSensorFault: "on", maxHeatMinutes: "none", frostTemp: -50, noRiseMinutes: "none", usePower: true, notifyPartial: true }
       - { device: test-sht-temp1, command: setTemperature, args: [21.5] }
       - { device: test-sht-temp2, command: setTemperature, args: [21.5] }
       - settings: { maxHeatMinutes: 10 }
       - settings: { restMinutes: 8 }
       - { button: btnForgetGaps }
-    command_spacing_seconds: 3
+    command_spacing_seconds: 6
     actions:
+      - { device: test-sht-notify, command: setFailing, args: ["false"] }
+      - { device: test-sht-notify, command: setFailing, args: ["false"] }
+      - { device: test-sht-notify, command: setFailing, args: ["false"] }
       - { device: test-sht-notify, command: setFailing, args: ["false"] }
       - { device: test-sht-notify, command: setFailing, args: ["false"] }
       - { device: test-sht-notify, command: setFailing, args: ["false"] }
@@ -377,13 +388,17 @@ cases:
   # Duty 50 % of 20 "minutes" (20 s): on for 10 s from the fault, then off for 10 s.
   - name: sensor-fault-cycle
     setup:
-      - settings: { quietAfter: 10, onSensorFault: "cycle", maxHeatMinutes: "none", frostTemp: -50, noRiseMinutes: "none", usePower: true, notifyPartial: true }
+      - settings: { quietAfter: 30, onSensorFault: "cycle", maxHeatMinutes: "none", frostTemp: -50, noRiseMinutes: "none", usePower: true, notifyPartial: true }
       - settings: { cycleDutyPercent: 50, cyclePeriodMinutes: 20 }
       - { button: btnForgetGaps }
     command_spacing_seconds: 6
     actions:
       - { device: test-sht-temp1, command: setTemperature, args: [22] }
       - { device: test-sht-temp2, command: setTemperature, args: [22] }
+      - { device: test-sht-notify, command: setFailing, args: ["false"] }
+      - { device: test-sht-notify, command: setFailing, args: ["false"] }
+      - { device: test-sht-notify, command: setFailing, args: ["false"] }
+      - { device: test-sht-notify, command: setFailing, args: ["false"] }
       - { device: test-sht-notify, command: setFailing, args: ["false"] }
       - { button: btnCheck }
     wait_seconds: 2
@@ -407,7 +422,7 @@ cases:
   # left temp1 quiet longer than temp2, and a check in the 2 s before its last reading saw both quiet.
   - name: one-sensor-quiet-partial
     setup:
-      - settings: { quietAfter: 10, onSensorFault: "off", maxHeatMinutes: "none", frostTemp: -50, noRiseMinutes: "none", usePower: true, notifyPartial: true }
+      - settings: { quietAfter: 30, onSensorFault: "off", maxHeatMinutes: "none", frostTemp: -50, noRiseMinutes: "none", usePower: true, notifyPartial: true }
       - { button: btnForgetGaps }
     command_spacing_seconds: 6
     actions:
@@ -415,6 +430,10 @@ cases:
       - { device: test-sht-temp2, command: setTemperature, args: [21] }
       - { device: test-sht-temp1, command: setTemperature, args: [21.1] }
       - { device: test-sht-temp1, command: setTemperature, args: [21.2] }
+      - { device: test-sht-temp1, command: setTemperature, args: [21.3] }
+      - { device: test-sht-temp1, command: setTemperature, args: [21.4] }
+      - { device: test-sht-temp1, command: setTemperature, args: [21.5] }
+      - { device: test-sht-temp1, command: setTemperature, args: [21.6] }
     wait_seconds: 3
     assert:
       - { device: test-sht-sensorfault, attribute: switch, value: "off" }
@@ -432,7 +451,7 @@ cases:
   # Same as one-sensor-quiet-partial with partial notifications off: no notification.
   - name: partial-quiet-not-notified
     setup:
-      - settings: { quietAfter: 10, onSensorFault: "off", maxHeatMinutes: "none", frostTemp: -50, noRiseMinutes: "none", usePower: true, notifyPartial: false }
+      - settings: { quietAfter: 30, onSensorFault: "off", maxHeatMinutes: "none", frostTemp: -50, noRiseMinutes: "none", usePower: true, notifyPartial: false }
       - { button: btnForgetGaps }
     command_spacing_seconds: 6
     actions:
@@ -440,6 +459,10 @@ cases:
       - { device: test-sht-temp2, command: setTemperature, args: [20.9] }
       - { device: test-sht-temp1, command: setTemperature, args: [20.9] }
       - { device: test-sht-temp1, command: setTemperature, args: [21.0] }
+      - { device: test-sht-temp1, command: setTemperature, args: [21.1] }
+      - { device: test-sht-temp1, command: setTemperature, args: [21.2] }
+      - { device: test-sht-temp1, command: setTemperature, args: [21.3] }
+      - { device: test-sht-temp1, command: setTemperature, args: [21.4] }
     wait_seconds: 3
     assert:
       - { device: test-sht-sensorfault, attribute: switch, value: "off" }

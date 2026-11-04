@@ -92,6 +92,14 @@ Inside a singleThreaded file, plain `state` is enough for anything written from 
 
 Moving Groovy code into Hubitat libraries does not provide architectural separation. Library code shares the host's namespace, lifecycle, and sandbox. Treat libraries as include files for code reuse, not as modules with enforced boundaries.
 
+### Shared helpers: copied in, kept in step
+
+This repo uses no Hubitat libraries: every app and driver goes to the hub as one file. A helper several files need lives once in `shared/<block>.groovy` and is copied into each file that uses it; `shared/manifest.json` lists which files take which block, and `scripts/shared_sync.groovy` keeps the copies identical. The copies carry no markers.
+
+- **Before writing a helper, read [`shared/README.md`](shared/README.md).** If a block does the job, add the file to the manifest and run `groovy scripts/shared_sync.groovy sync <file>`: it inserts the functions the file lacks.
+- **Edit a shared function in `shared/`, never in a copy,** then run `sync` and commit the copies with it. `groovy scripts/shared_sync.groovy --check --all` reports any copy that differs from `shared/`; run it before committing.
+- A function named like a shared one in a file not listed for that block gets a warning: take the block, or rename the function if it is a different helper.
+
 ### Coding conventions
 
 **Static typing.** Use explicit types for return values, parameters, and local variables. Avoid `def`.

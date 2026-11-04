@@ -453,7 +453,7 @@ private void logStatistics() {
 
 // ── Core (pure) ───────────────────────────────────────────────────────
 // No settings, state, devices, logging or @Field here: tests/test_core.groovy runs this block off-hub.
-// Same helpers as Switched Heater Thermostat; keep the copies in step.
+// recordActivity, quietLimitMs and isQuiet come from shared/quiet-sensors.groovy: edit them there.
 
 Map recordActivity(Map s, Long at, Integer keep) {
     Long last = (s?.last != null) ? (s.last as Long) : null
@@ -468,7 +468,8 @@ Map recordActivity(Map s, Long at, Integer keep) {
 }
 
 // Twice the second-longest gap: one outage in the history does not stretch the limit.
-// The setting is the minimum: event-only sensors (contacts) learn short gaps from bursts.
+// The setting and the floor are the minimum, while learning too: event-only sensors
+// (contacts) learn short gaps from bursts.
 Long quietLimitMs(List gaps, Long settingMs, Long floorMs, Integer minGaps) {
     Long least = Math.max(settingMs, floorMs)
     if (gaps == null || gaps.size() < minGaps) return least

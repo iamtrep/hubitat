@@ -1,0 +1,32 @@
+{
+    "apps/SwitchedHeaterThermostat/SwitchedHeaterThermostat.groovy": {
+        "quiet-sensors": {
+            "version": 1,
+            "items": [
+                "recordActivity",
+                "quietLimitMs",
+                "isQuiet"
+            ]
+        }
+    },
+    "apps/sensors/SensorAggregatorChild.groovy": {
+        "quiet-sensors": {
+            "version": 1,
+            "items": [
+                "recordActivity",
+                "quietLimitMs",
+                "isQuiet"
+            ]
+        }
+    },
+    "apps/sensors/SensorAggregatorDiscreteChild.groovy": {
+        "quiet-sensors": {
+            "version": 1,
+            "items": [
+                "recordActivity",
+                "quietLimitMs",
+                "isQuiet"
+            ]
+        }
+    }
+}
