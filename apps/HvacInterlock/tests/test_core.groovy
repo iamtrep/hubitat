@@ -107,6 +107,38 @@ check('splitValues', core.splitValues(' a, b ,,a,c '), ['a', 'b', 'c'])
 check('splitValues null', core.splitValues(null), [])
 check('mapKey stable', core.mapKey('pending heat'), core.mapKey('pending heat'))
 check('mapKey differs', core.mapKey('heat') != core.mapKey('cool'), true)
+// ── quiet sensors (0.3.0) ──
+qc = [[id: '1', label: 'Window B', open: true, since: 500L, quiet: false],
+      [id: '2', label: 'Window A', open: true, since: 300L, quiet: true],
+      [id: '3', label: 'Door', open: false, since: null, quiet: true]]
+check('earliestOpen skips a quiet open sensor', core.earliestOpen(qc), 500L)
+check('openList skips a quiet open sensor', core.openList(qc), 'Window B')
+check('earliestOpen all open ones quiet', core.earliestOpen([qc[1]]), null)
+check('openList without the quiet key', core.openList([[id: '1', label: 'W', open: true, since: 1L]]), 'W')
+check('closedSince kept when set', core.closedSinceFor(qc, 900L), 900L)
+check('closedSince null while a reporting sensor is open', core.closedSinceFor(qc, null), null)
+check('closedSince 0 when only quiet sensors read open', core.closedSinceFor([qc[1], qc[2]], null), 0L)
+check('closedSince null when nothing reads open', core.closedSinceFor([qc[2]], null), null)
+check('quiet open sensor clears a raised alert', core.alertStep([raised: true, wanted: 'heat', openSince: core.earliestOpen([qc[1]]), allClosedSince: core.closedSinceFor([qc[1]], null), now: 1000000L, openDelayMs: 600000L, closeDelayMs: 300000L]), [raised: false, nextCheck: null])
+check('quietChanges', core.quietChanges(['1', '2'], ['2', '3']), [entered: ['3'], left: ['1']])
+check('quietChanges from nothing', core.quietChanges(null, ['4']), [entered: ['4'], left: []])
+check('quietChanges none', core.quietChanges(['1'], ['1']), [entered: [], left: []])
+check('ageText seconds', core.ageText(16000L), '16 s')
+check('ageText minutes', core.ageText(90 * 60000L), '90 min')
+check('ageText hours', core.ageText(13 * 3600000L), '13 h')
+check('ageText days', core.ageText(80 * 3600000L), '3 days')
+check('quietText open', core.quietText('Window A', true, 13 * 3600000L),
+      'Window A has not reported for 13 h; it last read open and no longer counts as open.')
+check('quietText closed', core.quietText('Door', false, 13 * 3600000L),
+      'Door has not reported for 13 h; it last read closed.')
+check('quietText never', core.quietText('Door', false, null), 'Door has never reported; it last read closed.')
+check('backText', core.backText('Window A'), 'Window A reporting again.')
+MIN = 60000L
+check('12 h limit while learning', core.quietLimitMs([], 720 * MIN, 30 * MIN, 5), 720 * MIN)
+check('contact bursts keep the setting', core.quietLimitMs([1 * MIN, 2 * MIN, 1 * MIN, 3 * MIN, 1 * MIN], 720 * MIN, 30 * MIN, 5), 720 * MIN)
+check('sparse sensor learns a longer limit', core.quietLimitMs([600 * MIN, 900 * MIN, 800 * MIN, 700 * MIN, 1000 * MIN], 720 * MIN, 30 * MIN, 5), 1800 * MIN)
+check('quiet past the limit', core.isQuiet([last: 0L], 721 * MIN, 720 * MIN), true)
+check('not quiet within the limit', core.isQuiet([last: 0L], 719 * MIN, 720 * MIN), false)
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)

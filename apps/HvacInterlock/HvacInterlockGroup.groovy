@@ -15,7 +15,10 @@ import com.hubitat.hub.domain.State
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.2.0"
+@Field static final String CODE_VERSION = "0.3.0"
+@Field static final Integer QUIET_FLOOR_MIN = 30
+@Field static final Integer MIN_GAPS = 5
+@Field static final Integer KEEP_GAPS = 48
 
 definition(
     name: "HVAC Interlock Group",
@@ -75,7 +78,10 @@ Map mainPage() {
             input "openings", "capability.contactSensor", title: "Contact sensors", multiple: true, required: false
             input "response", "enum", title: "When something is open", options: RESPONSE_OPTS, defaultValue: "block", required: true
             input "openDelay", "number", title: "Open for at least (minutes)", defaultValue: 10, range: "0..240"
-            paragraph "The alert is raised only while the group wants to run, and clears once everything has been closed for 5 minutes."
+            input "quietAfter", "number", title: "Count a sensor as quiet after at least (minutes; learned gaps can lengthen it)", defaultValue: 720, range: "30..10080"
+            paragraph "The alert is raised only while the group wants to run, and clears once everything has been closed for 5 minutes. " +
+                      "A sensor that has sent nothing for its quiet limit no longer counts as open, so a dead battery can't hold the equipment off; " +
+                      "a notification names it when it goes quiet and when it reports again."
         }
         if (styleOf() == "permit") section("Scheduler setup") { paragraph permitInstructions() }
         section("Logging") {
@@ -86,7 +92,10 @@ Map mainPage() {
         if (debugEnable) {
             section("Testing") {
                 input "testCloseDelay", "number", title: "Close delay for tests (seconds; blank or none = 5 minutes)", required: false
+                input "testQuietSeconds", "number", title: "Quiet limit for tests (seconds; blank = the setting above)", required: false
                 input "btnRestart", "button", title: "Run the hub restart handler"
+                input "btnCheck", "button", title: "Check the sensors now"
+                input "btnForgetGaps", "button", title: "Forget the sensors' learned gaps"
             }
         }
     }
@@ -149,7 +158,9 @@ String statusHtml() {
     else rows << "Source value: ${esc(sourceValue() ?: 'none')}".toString()
     if (state.sourceStatus && state.sourceStatus != 'ok') rows << "Source: ${esc(state.sourceStatus)}; keeping the last state".toString()
     rows << "State: ${esc(state.effective ?: 'not evaluated yet')}".toString()
-    if (state.raised) rows << "Openings alert raised: ${esc(openList(contactList()))}".toString()
+    if (state.raised) rows << "Openings alert raised: ${esc(openList(contactList((state.quietIds ?: []) as List<String>)))}".toString()
+    List<String> quiet = quietLabels((state.quietIds ?: []) as List<String>)
+    if (quiet) rows << "Quiet, not counted as open: ${esc(quiet.join(', '))}".toString()
     return rows.join('<br>')
 }
 
@@ -176,6 +187,8 @@ void initialize() {
         subscribe(location, "variable:${settings.srcVariable}".toString(), "sourceHandler")
     }
     subscribe(location, "systemStart", "startHandler")
+    pruneActivity()
+    if (openings) schedule("${new Random().nextInt(60)} */15 * ? * *".toString(), "activityCheck")
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
     state.season = parent?.currentSeason()
     // A thermostat added to a direct group gets the group's mode on this save; the others
@@ -235,13 +248,83 @@ void rebuildOpenings() {
     else if (state.allClosedSince == null) state.allClosedSince = now()
 }
 
-List<Map> contactList() {
+// quiet: ids of sensors past their quiet limit; an open one doesn't count as open.
+List<Map> contactList(List<String> quiet = []) {
     Map since = (state.openSince ?: [:]) as Map
     return (openings ?: []).collect { dev ->
         String id = dev.id as String
-        [id: id, label: dev.displayName as String, open: since.containsKey(id), since: since[id] as Long]
+        [id: id, label: dev.displayName as String, open: since.containsKey(id), since: since[id] as Long, quiet: quiet.contains(id)]
     }
 }
+
+// ── Quiet sensors ─────────────────────────────────────────────────────
+
+// getLastActivity() counts every event, battery reports and check-ins included.
+void sampleActivity() {
+    Map all = (state.sensors ?: [:]) as Map
+    boolean changed = false
+    (openings ?: []).each { dev ->
+        Date la = dev.getLastActivity()
+        if (la == null) return
+        String id = dev.id as String
+        Map was = all[id] as Map
+        Map upd = recordActivity(was, la.time, KEEP_GAPS)
+        if (upd != was) { all[id] = upd; changed = true }
+    }
+    if (changed) state.sensors = all
+}
+
+Long limitFor(String id) {
+    BigDecimal test = debugEnable ? numOrNull(settings.testQuietSeconds) : null
+    if (test != null) return (test * 1000).longValue()
+    Map s = ((state.sensors ?: [:]) as Map)[id] as Map
+    long settingMs = ((numOrNull(settings.quietAfter) ?: 720) * 60000).longValue()
+    return quietLimitMs((s?.gaps ?: []) as List, settingMs, QUIET_FLOOR_MIN * 60000L, MIN_GAPS)
+}
+
+// Samples activity, then notifies each sensor that went quiet or reported again.
+List<String> refreshQuiet() {
+    sampleActivity()
+    long t = now()
+    Map all = (state.sensors ?: [:]) as Map
+    List<String> quiet = (openings ?: []).findAll { isQuiet(all[it.id as String] as Map, t, limitFor(it.id as String)) }.collect { it.id as String }
+    Map ch = quietChanges((state.quietIds ?: []) as List<String>, quiet)
+    Map since = (state.openSince ?: [:]) as Map
+    (openings ?: []).each { dev ->
+        String id = dev.id as String
+        if ((ch.entered as List).contains(id)) {
+            Long last = (all[id] as Map)?.last as Long
+            String text = quietText(dev.displayName as String, since.containsKey(id), last == null ? null : t - last)
+            logWarn text
+            parent?.notifyAlert("${app.getLabel()}: ${text}".toString())
+        } else if ((ch.left as List).contains(id)) {
+            String text = backText(dev.displayName as String)
+            logInfo text
+            parent?.notifyAlert("${app.getLabel()}: ${text}".toString())
+        }
+    }
+    state.quietIds = quiet
+    return quiet
+}
+
+List<String> quietLabels(List<String> ids) {
+    return (openings ?: []).findAll { ids.contains(it.id as String) }.collect { it.displayName as String }.sort()
+}
+
+void pruneActivity() {
+    List<String> ids = (openings ?: []).collect { it.id as String }
+    Map all = ((state.sensors ?: [:]) as Map).findAll { k, v -> ids.contains(k as String) }
+    state.sensors = all
+    state.quietIds = ((state.quietIds ?: []) as List<String>).findAll { ids.contains(it) }
+}
+
+void forgetLearnedGaps() {
+    Map all = [:]
+    ((state.sensors ?: [:]) as Map).each { k, v -> all[k] = [last: (v as Map)?.last, gaps: []] }
+    state.sensors = all
+}
+
+void activityCheck() { checkVersion(); evaluateGroup("activity check") }
 
 void contactHandler(evt) {
     checkVersion()
@@ -308,10 +391,10 @@ void evaluateGroup(String why, List<String> added = []) {
     }
     state.wanted = wanted
     String season = state.season as String
-    List<Map> contacts = contactList()
+    List<Map> contacts = contactList(refreshQuiet())
     boolean wasRaised = state.raised == true
     Map a = alertStep([raised: wasRaised, wanted: wanted, openSince: earliestOpen(contacts),
-                       allClosedSince: state.allClosedSince, now: now(),
+                       allClosedSince: closedSinceFor(contacts, state.allClosedSince as Long), now: now(),
                        openDelayMs: openDelayMs(settings.openDelay),
                        closeDelayMs: closeDelayMs(debugEnable == true, settings.testCloseDelay)])
     boolean raised = a.raised as boolean
@@ -351,6 +434,8 @@ void applyModes(String target, List<String> only = null) {
 void appButtonHandler(String btn) {
     checkVersion()
     if (btn == "btnRestart") startHandler(null)
+    if (btn == "btnCheck") evaluateGroup("check button")
+    if (btn == "btnForgetGaps") { forgetLearnedGaps(); logCfg "learned gaps forgotten" }
 }
 
 // ── Core (pure) ───────────────────────────────────────────────────────
@@ -452,14 +537,51 @@ Map alertStep(Map a) {
     return now >= due ? [raised: false, nextCheck: null] : [raised: true, nextCheck: due]
 }
 
+// A quiet contact doesn't count as open: its last report may be stale.
 @CompileStatic
 Long earliestOpen(List<Map> contacts) {
-    List<Long> t = contacts.findAll { it.open }.collect { it.since as Long }.findAll { it != null }
+    List<Long> t = contacts.findAll { it.open && !it.quiet }.collect { it.since as Long }.findAll { it != null }
     return t ? t.min() : null
 }
 
 @CompileStatic
-String openList(List<Map> contacts) { return contacts.findAll { it.open }.collect { it.label as String }.sort().join(', ') }
+String openList(List<Map> contacts) { return contacts.findAll { it.open && !it.quiet }.collect { it.label as String }.sort().join(', ') }
+
+// When everything that still reports is closed but a quiet sensor last read open, no
+// close event will come: count the openings as closed long enough to clear the alert.
+@CompileStatic
+Long closedSinceFor(List<Map> contacts, Long allClosedSince) {
+    if (allClosedSince != null) return allClosedSince
+    return earliestOpen(contacts) == null && contacts.any { it.open && it.quiet } ? 0L : null
+}
+
+// Which sensors went quiet and which reported again since the last check.
+@CompileStatic
+Map quietChanges(List<String> before, List<String> now) {
+    List<String> b = before ?: [], n = now ?: []
+    return [entered: n.findAll { !b.contains(it) }, left: b.findAll { !n.contains(it) }]
+}
+
+@CompileStatic
+String ageText(Long ms) {
+    if (ms == null) return 'ever'
+    long sec = (long) (ms.longValue() / 1000L)
+    if (sec < 120) return "${sec} s".toString()
+    long min = (long) (sec / 60L)
+    if (min < 120) return "${min} min".toString()
+    long h = (long) (min / 60L)
+    return h < 48 ? "${h} h".toString() : "${(long) (h / 24L)} days".toString()
+}
+
+@CompileStatic
+String quietText(String sensor, boolean open, Long ageMs) {
+    String age = ageMs == null ? 'has never reported' : "has not reported for ${ageText(ageMs)}".toString()
+    String tail = open ? 'it last read open and no longer counts as open' : 'it last read closed'
+    return "${sensor} ${age}; ${tail}.".toString()
+}
+
+@CompileStatic
+String backText(String sensor) { return "${sensor} reporting again.".toString() }
 
 @CompileStatic
 String alertText(String group, String open) { return "${group}: ${open} open".toString() }
@@ -500,6 +622,37 @@ long closeDelayMs(boolean debug, Object testSeconds) {
 String statusLabel(Object group) {
     String g = group == null ? '' : group.toString().trim()
     return g ? "${g} status".toString() : null
+}
+
+// Quiet sensors: from shared/quiet-sensors.groovy; edit them there.
+
+Map recordActivity(Map s, Long at, Integer keep) {
+    Long last = (s?.last != null) ? (s.last as Long) : null
+    List<Long> gaps = []
+    for (Object g : (List) (s?.gaps ?: [])) gaps << (g as Long)
+    if (at == null || (last != null && at <= last)) return [last: last, gaps: gaps]
+    if (last != null) {
+        gaps << (at - last)
+        while (gaps.size() > keep) gaps.remove(0)
+    }
+    return [last: at, gaps: gaps]
+}
+
+// Twice the second-longest gap: one outage in the history does not stretch the limit.
+// The setting and the floor are the minimum, while learning too: event-only sensors
+// (contacts) learn short gaps from bursts.
+Long quietLimitMs(List gaps, Long settingMs, Long floorMs, Integer minGaps) {
+    Long least = Math.max(settingMs, floorMs)
+    if (gaps == null || gaps.size() < minGaps) return least
+    List<Long> sorted = []
+    for (Object g : gaps) sorted << (g as Long)
+    sorted.sort()
+    return Math.max(least, 2L * sorted[sorted.size() - 2])
+}
+
+boolean isQuiet(Map s, Long now, Long limitMs) {
+    if (s?.last == null) return true
+    return now - (s.last as Long) > limitMs
 }
 
 // ── End core ──────────────────────────────────────────────────────────

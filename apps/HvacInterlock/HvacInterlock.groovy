@@ -11,7 +11,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.2.0"
+@Field static final String CODE_VERSION = "0.3.0"
 
 definition(
     name: "HVAC Interlock",

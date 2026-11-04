@@ -47,6 +47,7 @@ Saving a group creates its device **"<group> status"**. The device belongs to th
 | Contact sensors | none | The openings this group cares about |
 | When something is open | Block | Block turns the equipment off; Warn only raises the alert |
 | Open for at least | 10 minutes | How long an opening must stay open before the alert |
+| Count a sensor as quiet after at least | 720 minutes (12 h) | 30 to 10080 minutes. See *Quiet sensors* |
 
 ## How a group decides
 
@@ -58,6 +59,16 @@ Saving a group creates its device **"<group> status"**. The device belongs to th
 An open window in summer next to a baseboard group stays quiet, since the group does not want to run then; the same window next to a cooling mini-split raises the alert.
 
 Before the group has a value from its source, it changes nothing and logs a warning. A window already open when the group starts counts from when it opened.
+
+### Quiet sensors
+
+A contact sensor with a dead battery keeps its last value. If that value is open, the equipment would stay off. So a sensor that has sent nothing for its quiet limit no longer counts as open; one that last read closed changes nothing, but you are told it went quiet.
+
+- A sensor is quiet when its last activity (any event, battery reports and check-ins included) is older than its quiet limit. Until the group has seen 5 gaps between a sensor's activity, the limit is **Count a sensor as quiet after at least**. After that it is twice the second-longest of the last 48 gaps when that is longer, so a sensor that reports only when opened or closed learns a limit of days, not hours. It is never under the setting or 30 minutes.
+- The group checks every 15 minutes, and on each event it receives.
+- When a quiet sensor was the only thing open, the alert clears without the 5-minute close delay: the sensor has already been silent for longer.
+- A quiet sensor that reports again counts at once; if it reports open, the alert follows the open delay from when it first opened.
+- With notification or speech devices on the parent, the group sends "<group>: <sensor> has not reported for 13 h; it last read open and no longer counts as open." (or "…; it last read closed.") and "<group>: <sensor> reporting again." The group page lists the quiet sensors.
 
 ## Permit groups and schedulers
 
@@ -95,7 +106,7 @@ The `on` and `off` commands do nothing: the group is the switch's only writer.
 
 ## Notifications
 
-With notification or speech devices set on the parent, a group raising its alert sends "<group>: <open contacts> open", and "<group>: alert cleared" when it clears. For anything else, a Notifier instance can watch the status devices' `contact` attribute, which reads `open` during the alert.
+With notification or speech devices set on the parent, a group raising its alert sends "<group>: <open contacts> open", and "<group>: alert cleared" when it clears. Quiet sensors send their own messages (see *Quiet sensors*). For anything else, a Notifier instance can watch the status devices' `contact` attribute, which reads `open` during the alert.
 
 ## Tests
 

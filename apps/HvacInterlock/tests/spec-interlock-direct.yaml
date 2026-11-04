@@ -32,7 +32,7 @@ cases:
   - name: spring-heats
     setup:
       - settings: { debugEnable: true }
-      - settings: { testCloseDelay: 3, response: "block" }
+      - settings: { testCloseDelay: 3, response: "block", testQuietSeconds: 100000 }
       - { device: test-ilk-window2, command: close }
       - { device: test-season Season, command: setSeason, args: ["winter", 0] }
     actions:
@@ -116,4 +116,45 @@ cases:
     wait_seconds: 8
     assert:
       - { device: test-ilk-th, attribute: thermostatMode, value: cool }
-runtime_budget_seconds: 150
+
+  # A 15 s test quiet limit: the window opens, then sends nothing for 20 s. Once quiet it
+  # no longer counts as open, so the alert clears and the mode comes back.
+  - name: quiet-open-window-stops-blocking
+    setup:
+      - settings: { debugEnable: true }
+      - settings: { testCloseDelay: 3, response: "block", testQuietSeconds: 15 }
+      - { button: btnForgetGaps }
+      - { device: test-ilk-window2, command: close }
+      - { device: test-season Season, command: setSeason, args: ["summer", 0] }
+    command_spacing_seconds: 20
+    actions:
+      - { device: test-ilk-window2, command: open }
+      - { button: btnCheck }
+    wait_seconds: 3
+    allow_log_patterns: ["has not reported for"]
+    assert:
+      - { device: test-ilk-th, attribute: thermostatMode, value: cool }
+      - { device: test-ilk-direct status, attribute: blockReason, value: none }
+      - { device: test-ilk-direct status, attribute: openContacts, value: none }
+
+  # The window reports again: it counts at once, and a new opening blocks.
+  - name: quiet-window-counts-again
+    command_spacing_seconds: 2
+    actions:
+      - { device: test-ilk-window2, command: close }
+      - { device: test-ilk-window2, command: open }
+    wait_seconds: 3
+    assert:
+      - { device: test-ilk-th, attribute: thermostatMode, value: "off" }
+      - { device: test-ilk-direct status, attribute: blockReason, value: openings }
+      - { device: test-ilk-direct status, attribute: openContacts, value: test-ilk-window2 }
+
+  - name: quiet-limit-off-again
+    setup:
+      - settings: { testQuietSeconds: 100000 }
+    actions:
+      - { device: test-ilk-window2, command: close }
+    wait_seconds: 8
+    assert:
+      - { device: test-ilk-th, attribute: thermostatMode, value: cool }
+runtime_budget_seconds: 210

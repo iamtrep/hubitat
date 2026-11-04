@@ -1,4 +1,14 @@
 {
+    "apps/HvacInterlock/HvacInterlockGroup.groovy": {
+        "quiet-sensors": {
+            "version": 1,
+            "items": [
+                "recordActivity",
+                "quietLimitMs",
+                "isQuiet"
+            ]
+        }
+    },
     "apps/SwitchedHeaterThermostat/SwitchedHeaterThermostat.groovy": {
         "quiet-sensors": {
             "version": 1,
