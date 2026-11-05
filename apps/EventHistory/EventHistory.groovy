@@ -561,31 +561,35 @@ private Map jsonOk(Object body) {
     return render(status: 200, contentType: "application/json", data: JsonOutput.toJson(body))
 }
 
+// Turns OAuth on for this app type through the hub's loopback API, which needs no login.
+// The save needs the code's current version number, read first.
 private boolean autoEnableOAuth() {
+    String base = "http://127.0.0.1:8080"
     String typeId = app.getAppTypeId()?.toString()
-    if (!typeId) { logError "Could not find the app type id"; return false }
+    if (!typeId) { logError "Could not find this app's type id"; return false }
     String internalVer = null
     try {
-        httpGet([uri: BASE_URL, path: "/app/ajax/code", query: [id: typeId], timeout: 15]) { resp ->
+        httpGet([uri: base, path: "/app/ajax/code", query: [id: typeId], timeout: 15]) { resp ->
             internalVer = resp.data?.version?.toString()
         }
     } catch (Exception e) {
-        logError "Could not read the app code version: ${maskSecrets(e.message)}"
+        logError "Could not read the app code version: ${e.message}"
         return false
     }
     if (!internalVer) { logError "Could not determine the app code version"; return false }
     boolean success = false
     try {
-        httpPost([uri: BASE_URL, path: "/app/edit/update", requestContentType: "application/x-www-form-urlencoded",
+        httpPost([uri: base, path: "/app/edit/update", requestContentType: "application/x-www-form-urlencoded",
                   body: [id: typeId, version: internalVer, oauthEnabled: "true", _action_update: "Update"], timeout: 20]) { resp ->
             success = true
         }
     } catch (Exception e) {
-        logError "Could not enable OAuth: ${maskSecrets(e.message)}"
+        logError "Could not enable OAuth: ${e.message}"
     }
     return success
 }
 
+// Creates the access token, turning OAuth on first when the token can't be created yet.
 private boolean checkOAuth() {
     if (state.accessToken) return true
     try {
@@ -598,7 +602,7 @@ private boolean checkOAuth() {
             createAccessToken()
             return state.accessToken != null
         } catch (Exception e2) {
-            logError "OAuth is on but token creation failed: ${maskSecrets(e2.message)}"
+            logError "OAuth is on but token creation failed: ${e2.message}"
             return false
         }
     }

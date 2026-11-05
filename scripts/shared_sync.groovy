@@ -100,7 +100,8 @@ String norm(String s) { s.split('\n', -1).collect { it.replaceAll(/\s+$/, '') }.
 
 // ── Blocks and manifest ───────────────────────────────────────────────
 
-// A block file: header lines "// block-version: N" and "// requires-import: a.b.C", then its items.
+// A block file: header lines "// block-version: N", "// requires-import: a.b.C" and
+// "// requires: name, name" (functions or @Field constants the host file must define), then its items.
 Map loadBlock(File root, String name) {
     File f = new File(root, "shared/${name}.groovy")
     if (!f.exists()) throw new IllegalStateException("shared/${name}.groovy not found")
@@ -109,10 +110,12 @@ Map loadBlock(File root, String name) {
     if (!ver.find()) throw new IllegalStateException("shared/${name}.groovy has no '// block-version: N' line")
     List<String> imports = []
     (text =~ /(?m)^\/\/ requires-import: (\S+)\s*$/).each { imports << it[1] }
+    List<String> needs = []
+    (text =~ /(?m)^\/\/ requires: (.+?)\s*$/).each { needs.addAll(it[1].split(/\s*,\s*/).findAll { n -> n } as List) }
     List<String> lines = text.split('\n', -1) as List
     List<Map> items = itemsOf(text, "shared/${name}.groovy").collect { it + [text: slice(lines, it.start, it.end)] }
     if (!items) throw new IllegalStateException("shared/${name}.groovy defines no function or @Field")
-    return [name: name, version: ver.group(1) as int, imports: imports, items: items]
+    return [name: name, version: ver.group(1) as int, imports: imports, needs: needs, items: items]
 }
 
 File manifestFile(File root) { new File(root, 'shared/manifest.json') }
@@ -152,6 +155,9 @@ Map syncText(String text, String label, List<Map> blocks, Map entry) {
         if (dup) { errors << "${label}: ${dup.join(', ')} defined more than once; block ${b.name} not applied".toString(); return }
         b.imports.each { imp ->
             if (!(text =~ /(?m)^import\s+${java.util.regex.Pattern.quote(imp)}\s*$/).find()) errors << "${label}: block ${b.name} needs 'import ${imp}'".toString()
+        }
+        (b.needs ?: []).each { String n ->
+            if (!(n in blockNames) && !have.any { it.name == n }) errors << "${label}: block ${b.name} needs ${n} defined in the file".toString()
         }
         List<Map> foundMethods = found.findAll { it.kind == 'method' }
         int eof = lines.size() - (lines && lines[-1] == '' ? 1 : 0)

@@ -73,7 +73,6 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static volatile String LIB_JOB_ID = null
 @Field static volatile boolean simulateLibFail = false
 @Field static volatile String uiVersionCache = null
-@Field static volatile boolean githubVersionRefreshPending = false
 
 definition(
     name: "Code Manager",
@@ -248,21 +247,28 @@ private boolean processSyncUIResponse(String html) {
 Map apiSyncUI() { return jsonResponse([success: syncUIBlocking()]) }
 Map apiReinit() { updated(); return jsonResponse([success: true, version: CODE_VERSION]) }
 
-// Stale-while-revalidate GitHub version poll (HubDiagnostics/MultiHubInventory engine).
+// Returns the last version seen on GitHub at once, and asks GitHub again at most once an hour.
+// The hour counts from the request, so a failed request or a lost callback waits for the next
+// hour instead of retrying on every call, and no in-flight flag can stay stuck.
 String checkGithubVersion() {
-    if (now() - ((state.lastGithubVersionCheck ?: 0) as long) >= 3600000L && !githubVersionRefreshPending) {
-        githubVersionRefreshPending = true
-        state.lastGithubVersionCheck = now()   // throttle hourly regardless of outcome
+    long last = (state.lastGithubVersionCheck ?: 0L) as long
+    if (now() - last >= 3600000L) {
+        state.lastGithubVersionCheck = now()
         asynchttpGet('githubVersionCallback', [uri: IMPORT_URL_APP, contentType: "text/plain", timeout: 10])
     }
-    return state.lastGithubVersion
+    return state.lastGithubVersion as String
 }
 
 void githubVersionCallback(resp, data) {
-    githubVersionRefreshPending = false
-    if (resp.hasError() || resp.status != 200) { logDebug "GitHub version check failed: HTTP ${resp.status}"; return }
+    if (resp.hasError() || resp.status != 200) {
+        logNet "GitHub version check failed: HTTP ${resp.status}"
+        return
+    }
     java.util.regex.Matcher m = ((resp.data?.toString() ?: '') =~ /CODE_VERSION\s*=\s*"([^"]+)"/)
-    if (m.find()) { state.lastGithubVersion = m.group(1); refreshUpdateLabel() }
+    if (m.find()) {
+        state.lastGithubVersion = m.group(1)
+        refreshUpdateLabel()
+    }
 }
 void scheduledVersionCheck() { checkGithubVersion(); refreshUpdateLabel() }
 
@@ -285,41 +291,54 @@ void refreshUpdateLabel() {
     } catch (Exception e) { logDebug "refreshUpdateLabel: ${e.message}" }
 }
 
-private String getAppTypeId() {
-    Object resp = hubRequest(USER_APP_TYPES_PATH, "user app types", "json", 10)
-    if (!(resp instanceof List)) return null
-    Map me = (resp as List).find { Map a -> a.name == "Code Manager" && a.namespace == "iamtrep" } as Map
-    return me?.id?.toString()
-}
+private String getAppTypeId() { return app.getAppTypeId()?.toString() }
 private String getAppEditorPath() { String id = getAppTypeId(); return id ? "/app/editor/${id}" : null }
 
+// Creates the access token, turning OAuth on first when the token can't be created yet.
 private boolean checkOAuth() {
     if (state.accessToken) return true
-    try { createAccessToken(); return state.accessToken != null }
-    catch (e) {
-        logDebug "OAuth not enabled yet; attempting auto-enable"
-        if (autoEnableOAuth()) {
-            try { createAccessToken(); return state.accessToken != null }
-            catch (e2) { logError "OAuth enabled but token creation failed: ${e2.message}"; return false }
+    try {
+        createAccessToken()
+        return state.accessToken != null
+    } catch (Exception e) {
+        logDebug "OAuth is not enabled yet, turning it on"
+        if (!autoEnableOAuth()) return false
+        try {
+            createAccessToken()
+            return state.accessToken != null
+        } catch (Exception e2) {
+            logError "OAuth is on but token creation failed: ${e2.message}"
+            return false
         }
-        return false
     }
 }
 
+// Turns OAuth on for this app type through the hub's loopback API, which needs no login.
+// The save needs the code's current version number, read first.
 private boolean autoEnableOAuth() {
-    String typeId = getAppTypeId()
-    if (!typeId) { logError "Could not find Code Manager in user app types"; return false }
-    String lock = null
-    try { httpGet([uri: HUB_BASE, path: "/app/ajax/code", query: [id: typeId], timeout: 15]) { resp -> lock = resp.data?.version?.toString() } }
-    catch (e) { logError "Failed to read app code version: ${e.message}"; return false }
-    if (!lock) return false
-    boolean ok = false
+    String base = "http://127.0.0.1:8080"
+    String typeId = app.getAppTypeId()?.toString()
+    if (!typeId) { logError "Could not find this app's type id"; return false }
+    String internalVer = null
     try {
-        httpPost([uri: HUB_BASE, path: "/app/edit/update", requestContentType: "application/x-www-form-urlencoded",
-                  body: [id: typeId, version: lock, oauthEnabled: "true", _action_update: "Update"], timeout: 20]) { resp -> ok = true }
-        logCfg "OAuth auto-enabled"
-    } catch (e) { logError "Failed to enable OAuth: ${e.message}" }
-    return ok
+        httpGet([uri: base, path: "/app/ajax/code", query: [id: typeId], timeout: 15]) { resp ->
+            internalVer = resp.data?.version?.toString()
+        }
+    } catch (Exception e) {
+        logError "Could not read the app code version: ${e.message}"
+        return false
+    }
+    if (!internalVer) { logError "Could not determine the app code version"; return false }
+    boolean success = false
+    try {
+        httpPost([uri: base, path: "/app/edit/update", requestContentType: "application/x-www-form-urlencoded",
+                  body: [id: typeId, version: internalVer, oauthEnabled: "true", _action_update: "Update"], timeout: 20]) { resp ->
+            success = true
+        }
+    } catch (Exception e) {
+        logError "Could not enable OAuth: ${e.message}"
+    }
+    return success
 }
 
 // ===== Hub request wrappers (HubDiagnostics pattern: one transient retry, fail-soft) =====

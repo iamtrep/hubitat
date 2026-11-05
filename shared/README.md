@@ -11,7 +11,9 @@ Hubitat apps and drivers go to the hub as one file each, so a helper several of 
 
 | Block | What it does | Used by |
 |---|---|---|
-| [quiet-sensors](quiet-sensors.groovy) | Counts a sensor as quiet from its last activity (`getLastActivity()`, so check-ins count). The limit is learned per sensor: twice its second-longest recent gap, never under the app's setting or floor. `recordActivity`, `quietLimitMs`, `isQuiet`. | Switched Heater Thermostat, Sensor Aggregator (both children) |
+| [quiet-sensors](quiet-sensors.groovy) | Counts a sensor as quiet from its last activity (`getLastActivity()`, so check-ins count). The limit is learned per sensor: twice its second-longest recent gap, never under the app's setting or floor. `recordActivity`, `quietLimitMs`, `isQuiet`. | Switched Heater Thermostat, Sensor Aggregator (both children), HVAC Interlock group |
+| [oauth-self-enable](oauth-self-enable.groovy) | An app with mappings turns OAuth on for its own app type and creates its token, so nobody toggles OAuth in the code editor. `checkOAuth`, `autoEnableOAuth`. Needs `oauth: true`, `logDebug`, `logError`. | Code Manager, Event History, Hub Diagnostics, Hub Inspector, HVAC Scheduler, Multi-Hub Inventory, Tool Access Prototype |
+| [github-version](github-version.groovy) | The latest `CODE_VERSION` of the app on GitHub, asked at most hourly, for an "update available" note. `checkGithubVersion`, `githubVersionCallback`. Needs `IMPORT_URL_APP`, `refreshUpdateLabel()`, `logNet`. | Code Manager, Hub Diagnostics, Hub Inspector, Multi-Hub Inventory, Well Monitor |
 
 ## Commands
 
@@ -26,6 +28,7 @@ groovy scripts/shared_sync.groovy --report          # names repeated in 3+ files
 
 - One block per file, named `<block>.groovy`, with a `// block-version: N` line in its header. Raise N when a body changes.
 - `// requires-import: a.b.C` lines name imports the block needs; `sync` refuses a file that lacks them.
+- `// requires: name, name` lines name functions or `@Field` constants the host file must define (its logging helpers, a URL constant, a hook the block calls); `sync` and `--check` refuse a file that lacks one.
 - The comment lines directly above a function belong to it and are copied with it. A comment line starting `// ──` is a section header and stays with the file.
-- Keep blocks free of settings, state and logging where possible, and pass values in as arguments, so each app keeps its own tuning. Test each block in `tests/`, against this source.
+- Keep blocks free of settings, state and logging where possible, and pass values in as arguments, so each app keeps its own tuning. A block that has to call the platform or log names what it needs in `// requires:`. Test each block in `tests/`, against this source.
 - A function removed from a block is reported in each file that still has it, not deleted.

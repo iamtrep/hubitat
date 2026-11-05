@@ -26,14 +26,9 @@ import java.nio.file.AccessDeniedException
 @Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/WellMonitor/WellMonitor.groovy"
 @Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/WellMonitor/wellmonitor-dashboard.html"
 
-// In-flight flag for the GitHub version probe; `volatile` because OAuth endpoint handlers
-// can race on it across threads.
-// App id -> start time of an in-flight GitHub version check. Keyed by instance because
-// @Field static is shared by every WellMonitor instance; an entry older than
-// GITHUB_CHECK_TIMEOUT_MS counts as a lost callback.
-@Field static final ConcurrentHashMap<String, Long> githubVersionRefreshPending = new ConcurrentHashMap<>()
-@Field static final long GITHUB_CHECK_TIMEOUT_MS = 60000L
-// App id -> start time of an in-flight UI download, same scheme as above.
+// App id -> start time of an in-flight UI download. Keyed by instance because @Field static
+// is shared by every WellMonitor instance; an entry older than UI_SYNC_TIMEOUT_MS counts as
+// a lost callback.
 @Field static final ConcurrentHashMap<String, Long> uiSyncPending = new ConcurrentHashMap<>()
 @Field static final long UI_SYNC_TIMEOUT_MS = 45000L
 // Least time between the downloads the /dashboard endpoint starts on its own.
@@ -1390,35 +1385,31 @@ private void appendToCsvLog(long timestamp, BigDecimal durationSeconds, BigDecim
 
 // ==================== GitHub version probe ====================
 
-// Returns the last-known GitHub CODE_VERSION immediately (stale-while-revalidate).
-// Fires an async refresh if the cache is older than 1 hour.
+// Called by githubVersionCallback. The dashboard reads the version from /api/status, so there
+// is no label to refresh.
+private void refreshUpdateLabel() { }
+
+// Returns the last version seen on GitHub at once, and asks GitHub again at most once an hour.
+// The hour counts from the request, so a failed request or a lost callback waits for the next
+// hour instead of retrying on every call, and no in-flight flag can stay stuck.
 String checkGithubVersion() {
-    long lastCheck = (state.lastGithubVersionCheck ?: 0L) as long
-    String key = app.id as String
-    Long pendingAt = githubVersionRefreshPending[key]
-    if (now() - lastCheck >= 3600000L && (pendingAt == null || now() - pendingAt > GITHUB_CHECK_TIMEOUT_MS)) {
-        githubVersionRefreshPending[key] = now()
+    long last = (state.lastGithubVersionCheck ?: 0L) as long
+    if (now() - last >= 3600000L) {
+        state.lastGithubVersionCheck = now()
         asynchttpGet('githubVersionCallback', [uri: IMPORT_URL_APP, contentType: "text/plain", timeout: 10])
     }
     return state.lastGithubVersion as String
 }
 
 void githubVersionCallback(resp, data) {
-    checkVersion()
-    githubVersionRefreshPending.remove(app.id as String)
     if (resp.hasError() || resp.status != 200) {
-        logNet("GitHub version check failed: HTTP ${resp.status}")
+        logNet "GitHub version check failed: HTTP ${resp.status}"
         return
     }
-    try {
-        String text = resp.data ?: ""
-        java.util.regex.Matcher m = (text =~ /CODE_VERSION\s*=\s*"([^"]+)"/)
-        if (m.find()) {
-            state.lastGithubVersion = m.group(1)
-            state.lastGithubVersionCheck = now()
-        }
-    } catch (Exception e) {
-        logNet("GitHub version callback error: ${e.message}")
+    java.util.regex.Matcher m = ((resp.data?.toString() ?: '') =~ /CODE_VERSION\s*=\s*"([^"]+)"/)
+    if (m.find()) {
+        state.lastGithubVersion = m.group(1)
+        refreshUpdateLabel()
     }
 }
 

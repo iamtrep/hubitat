@@ -1,4 +1,61 @@
 {
+    "apps/CodeManager/CodeManager.groovy": {
+        "github-version": {
+            "version": 1,
+            "items": [
+                "checkGithubVersion",
+                "githubVersionCallback"
+            ]
+        },
+        "oauth-self-enable": {
+            "version": 1,
+            "items": [
+                "checkOAuth",
+                "autoEnableOAuth"
+            ]
+        }
+    },
+    "apps/EventHistory/EventHistory.groovy": {
+        "oauth-self-enable": {
+            "version": 1,
+            "items": [
+                "checkOAuth",
+                "autoEnableOAuth"
+            ]
+        }
+    },
+    "apps/HubDiagnostics/HubDiagnostics.groovy": {
+        "github-version": {
+            "version": 1,
+            "items": [
+                "checkGithubVersion",
+                "githubVersionCallback"
+            ]
+        },
+        "oauth-self-enable": {
+            "version": 1,
+            "items": [
+                "checkOAuth",
+                "autoEnableOAuth"
+            ]
+        }
+    },
+    "apps/HubInspector/HubInspector.groovy": {
+        "github-version": {
+            "version": 1,
+            "items": [
+                "checkGithubVersion",
+                "githubVersionCallback"
+            ]
+        },
+        "oauth-self-enable": {
+            "version": 1,
+            "items": [
+                "checkOAuth",
+                "autoEnableOAuth"
+            ]
+        }
+    },
     "apps/HvacInterlock/HvacInterlockGroup.groovy": {
         "quiet-sensors": {
             "version": 1,
@@ -9,6 +66,31 @@
             ]
         }
     },
+    "apps/HvacScheduler/HvacScheduler.groovy": {
+        "oauth-self-enable": {
+            "version": 1,
+            "items": [
+                "checkOAuth",
+                "autoEnableOAuth"
+            ]
+        }
+    },
+    "apps/MultiHubInventory/MultiHubInventory.groovy": {
+        "github-version": {
+            "version": 1,
+            "items": [
+                "checkGithubVersion",
+                "githubVersionCallback"
+            ]
+        },
+        "oauth-self-enable": {
+            "version": 1,
+            "items": [
+                "checkOAuth",
+                "autoEnableOAuth"
+            ]
+        }
+    },
     "apps/SwitchedHeaterThermostat/SwitchedHeaterThermostat.groovy": {
         "quiet-sensors": {
             "version": 1,
@@ -16,6 +98,24 @@
                 "recordActivity",
                 "quietLimitMs",
                 "isQuiet"
+            ]
+        }
+    },
+    "apps/ToolAccessPrototype/ToolAccessPrototype.groovy": {
+        "oauth-self-enable": {
+            "version": 1,
+            "items": [
+                "checkOAuth",
+                "autoEnableOAuth"
+            ]
+        }
+    },
+    "apps/WellMonitor/WellMonitor.groovy": {
+        "github-version": {
+            "version": 1,
+            "items": [
+                "checkGithubVersion",
+                "githubVersionCallback"
             ]
         }
     },

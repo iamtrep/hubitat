@@ -276,60 +276,50 @@ def apiCreate() {
 
 // ── OAuth ─────────────────────────────────────────────────────────────
 
+// Turns OAuth on for this app type through the hub's loopback API, which needs no login.
+// The save needs the code's current version number, read first.
 private boolean autoEnableOAuth() {
+    String base = "http://127.0.0.1:8080"
     String typeId = app.getAppTypeId()?.toString()
-    if (!typeId) { logError "Could not find app type ID."; return false }
-
+    if (!typeId) { logError "Could not find this app's type id"; return false }
     String internalVer = null
     try {
-        httpGet([uri: "http://127.0.0.1:8080", path: "/app/ajax/code", query: [id: typeId], timeout: 15]) { resp ->
+        httpGet([uri: base, path: "/app/ajax/code", query: [id: typeId], timeout: 15]) { resp ->
             internalVer = resp.data?.version?.toString()
         }
-    } catch (e) {
-        logError "Failed to fetch app code version: ${e.message}"
+    } catch (Exception e) {
+        logError "Could not read the app code version: ${e.message}"
         return false
     }
-    if (!internalVer) { logError "Could not determine app code version."; return false }
-
+    if (!internalVer) { logError "Could not determine the app code version"; return false }
     boolean success = false
     try {
-        httpPost([
-            uri: "http://127.0.0.1:8080",
-            path: "/app/edit/update",
-            requestContentType: "application/x-www-form-urlencoded",
-            body: [
-                id: typeId,
-                version: internalVer,
-                oauthEnabled: "true",
-                _action_update: "Update"
-            ],
-            timeout: 20
-        ]) { resp ->
+        httpPost([uri: base, path: "/app/edit/update", requestContentType: "application/x-www-form-urlencoded",
+                  body: [id: typeId, version: internalVer, oauthEnabled: "true", _action_update: "Update"], timeout: 20]) { resp ->
             success = true
         }
-    } catch (e) {
-        logError "Failed to enable OAuth: ${e.message}"
+    } catch (Exception e) {
+        logError "Could not enable OAuth: ${e.message}"
     }
     return success
 }
 
+// Creates the access token, turning OAuth on first when the token can't be created yet.
 private boolean checkOAuth() {
     if (state.accessToken) return true
     try {
         createAccessToken()
-        return (state.accessToken != null)
-    } catch (e) {
-        logDebug "OAuth not enabled yet, attempting auto-enable..."
-        if (autoEnableOAuth()) {
-            try {
-                createAccessToken()
-                return (state.accessToken != null)
-            } catch (e2) {
-                logError "OAuth enabled but token creation failed: ${e2.message}"
-                return false
-            }
+        return state.accessToken != null
+    } catch (Exception e) {
+        logDebug "OAuth is not enabled yet, turning it on"
+        if (!autoEnableOAuth()) return false
+        try {
+            createAccessToken()
+            return state.accessToken != null
+        } catch (Exception e2) {
+            logError "OAuth is on but token creation failed: ${e2.message}"
+            return false
         }
-        return false
     }
 }
 

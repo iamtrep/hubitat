@@ -162,6 +162,33 @@ check('missing import exit', res.code, 1)
 check('missing import message', res.out.contains("needs 'import groovy.transform.Field'"), true)
 check('missing import writes nothing', new File(r, 'apps/A.groovy').text, noImport)
 
+// ── a name the block requires must be defined in the file ──
+String NEEDS_BLOCK = '''// block-version: 1
+// requires: logIt, LIMIT, twice
+
+Long twice(Long x) { logIt "x"; 2L * x * LIMIT }
+'''
+String NEEDS_MANIFEST = '{"apps/A.groovy": {"n": {"version": 1, "items": ["twice"]}}}'
+String noLog = '''import groovy.transform.Field
+
+@Field static final Long LIMIT = 3
+
+void own() { }
+'''
+r = fork(['shared/n.groovy': NEEDS_BLOCK, 'shared/manifest.json': NEEDS_MANIFEST, 'apps/A.groovy': noLog])
+res = tool(toolFile, r, ['sync'])
+check('missing required name exit', res.code, 1)
+check('missing required name message', res.out.contains('block n needs logIt defined in the file'), true)
+check('present required field not reported', res.out.contains('needs LIMIT'), false)
+check('name the block provides not reported', res.out.contains('needs twice'), false)
+check('missing required name writes nothing', new File(r, 'apps/A.groovy').text, noLog)
+String withLog = noLog + '''
+void logIt(String m) { }
+'''
+r = fork(['shared/n.groovy': NEEDS_BLOCK, 'shared/manifest.json': NEEDS_MANIFEST, 'apps/A.groovy': withLog])
+check('required names present syncs', tool(toolFile, r, ['sync']).code, 0)
+check('required names present check clean', tool(toolFile, r, ['--check']).code, 0)
+
 // ── duplicate definition is an error ──
 String dup = synced + '''
 Long twice(Long x, Long y) { x }
