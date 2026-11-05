@@ -352,7 +352,7 @@ void initialize() {
     logCfg("${APP_NAME} initialized. Humidity: ${state.humidityState}, Fan controlled by app: ${state.fanTurnedOnByApp}")
 }
 
-private void checkVersion(boolean reinit = true) {
+void checkVersion(boolean reinit = true) {
     if (state.version == CODE_VERSION) return
     logVer "New version: ${CODE_VERSION} (was: ${state.version})"
     state.version = CODE_VERSION
@@ -1584,9 +1584,10 @@ private void sendNotification(String message) {
 }
 
 void logsOff() {
+    checkVersion()
     app.updateSetting("debugEnable", [value: "false", type: "bool"])
     app.updateSetting("traceEnable", [value: "false", type: "bool"])
-    logWarn("Debug/trace logging auto-disabled")
+    logWarn "debug and trace logging disabled"
 }
 
 // ── Logging (app) ─────────────────────────────────────────────────────

@@ -1259,10 +1259,9 @@ void variableHandler(evt) { checkVersion(); logEvt "${evt.name} ${evt.value}"; e
 
 void logsOff() {
     checkVersion()
-    app.updateSetting("debugEnable", false); app.updateSetting("traceEnable", false)
-    app.removeSetting("testClock")
-    logWarn "debug logging and the test clock turned off"
-    evaluate("test clock cleared", false)
+    app.updateSetting("debugEnable", [value: "false", type: "bool"])
+    app.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "debug and trace logging disabled"
 }
 
 // ── Runtime ───────────────────────────────────────────────────────────

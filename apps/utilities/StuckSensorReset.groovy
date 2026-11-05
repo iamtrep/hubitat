@@ -20,7 +20,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Stuck Sensor Reset"
-@Field static final String CODE_VERSION = "1.0.0"
+@Field static final String CODE_VERSION = "1.0.1"
 
 @Field static final Map<String, Map> SENSOR_TYPES = [
     motion : [setting: "motionSensors",  attr: "motion",  stuck: "active", reset: "inactive"],
@@ -73,8 +73,8 @@ Map mainPage() {
         section("Options") {
             label title: "App name", required: false
             input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
-            input name: "debugLogging", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
-            if (settings.debugLogging) {
+            input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
+            if (settings.debugEnable) {
                 input name: "traceEnable", type: "bool", title: "Enable trace logging", defaultValue: false
             }
         }
@@ -136,10 +136,19 @@ void installed() {
 }
 
 void updated() {
+    migrateDebugSetting()
     unsubscribe()
     unschedule()
     initialize()
-    if (settings.debugLogging || settings.traceEnable) runIn(1800, "logsOff")
+    if (settings.debugEnable || settings.traceEnable) runIn(1800, "logsOff")
+}
+
+// The debug setting was named debugLogging before this version; carry a saved value over once.
+private void migrateDebugSetting() {
+    if (settings.debugLogging == null) return
+    app.updateSetting("debugEnable", [value: settings.debugLogging ? "true" : "false", type: "bool"])
+    app.removeSetting("debugLogging")
+    logWarn "debug logging setting renamed to debugEnable; its value is kept"
 }
 
 void initialize() {
@@ -152,7 +161,7 @@ void initialize() {
     }
 }
 
-private void checkVersion(boolean reinit = true) {
+void checkVersion(boolean reinit = true) {
     if (state.version == CODE_VERSION) return
     logVer "New version: ${CODE_VERSION} (was: ${state.version})"
     state.version = CODE_VERSION
@@ -206,7 +215,8 @@ private void notify(String msg) {
 }
 
 void logsOff() {
-    app.updateSetting("debugLogging", [value: "false", type: "bool"])
+    checkVersion()
+    app.updateSetting("debugEnable", [value: "false", type: "bool"])
     app.updateSetting("traceEnable", [value: "false", type: "bool"])
     logWarn "debug and trace logging disabled"
 }
@@ -215,15 +225,15 @@ void logsOff() {
 //   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
 private String logp(String e) { "${e} ${app.getLabel()}: " }
 
-void logEvt  (String m) { if (settings.debugLogging) log.debug logp('⬇️') + m }
+void logEvt  (String m) { if (debugEnable) log.debug logp('⬇️') + m }
 void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
 void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
-void logNet  (String m) { if (settings.debugLogging) log.debug logp('🌐') + m }
-void logSched(String m) { if (settings.debugLogging) log.debug logp('⏰') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
 void logVer  (String m) { log.warn  logp('🏷️') + m }
 
 void logWarn (String m) { log.warn  logp('⚠️') + m }
 void logError(String m) { log.error logp('🛑') + m }
-void logTrace(String m) { if (settings.traceEnable) log.trace logp('🔬') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
 void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
-void logDebug(String m) { if (settings.debugLogging) log.debug "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${app.getLabel()}: ${m}" }

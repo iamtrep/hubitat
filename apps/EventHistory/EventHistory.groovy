@@ -194,7 +194,7 @@ void initialize() {
 
 void checkVersion(boolean reinit = true) {
     if (state.version == CODE_VERSION) return
-    logVer "version ${CODE_VERSION} (was ${state.version})"
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
     state.version = CODE_VERSION
     if (reinit) runIn(1, "updated")
 }
@@ -981,9 +981,16 @@ static String newAlias(String name, String salt, Set<String> used) {
 
 // ── Logging ───────────────────────────────────────────────────────────
 
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
 private String logp(String e) { "${e} ${app.getLabel()}: " }
 void logVer  (String m) { log.warn  logp('🏷️') + m }
 void logWarn (String m) { log.warn  logp('⚠️') + m }
 void logError(String m) { log.error logp('🛑') + m }
 void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
 void logDebug(String m) { if (debugEnable) log.debug "${app.getLabel()}: ${m}" }
+void logEvt  (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }

@@ -202,14 +202,14 @@ void initialize() {
 
 void logsOff() {
     checkVersion()
-    app.updateSetting("debugEnable", false)
-    app.updateSetting("traceEnable", false)
+    app.updateSetting("debugEnable", [value: "false", type: "bool"])
+    app.updateSetting("traceEnable", [value: "false", type: "bool"])
     logWarn "debug and trace logging disabled"
 }
 
 void checkVersion(boolean reinit = true) {
     if (state.version == CODE_VERSION) return
-    logVer "version ${CODE_VERSION} (was ${state.version})"
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
     state.version = CODE_VERSION
     if (reinit) runIn(1, "updated")
 }

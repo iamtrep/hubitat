@@ -791,11 +791,9 @@ void hubStarted(evt) {
     runIn(1 + new Random().nextInt(60), "pushStreamToken")
 }
 
-// A code push doesn't run updated(); entry points call this so the first one after a
-// push converges as if Done were pressed.
-private void checkVersion(boolean reinit = true) {
+void checkVersion(boolean reinit = true) {
     if (state.version == CODE_VERSION) return
-    logVer "new version: ${CODE_VERSION} (was: ${state.version})"
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
     state.version = CODE_VERSION
     if (reinit) runIn(1, "updated")
 }
@@ -1856,21 +1854,25 @@ private static String formatDuration(long ms) {
 }
 
 void logsOff() {
-    logWarn "debug and trace logging disabled"
+    checkVersion()
     app.updateSetting("debugEnable", [value: "false", type: "bool"])
     app.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "debug and trace logging disabled"
 }
 
 // ── Logging (app) ─────────────────────────────────────────────────────
-//   🔧 Cfg  🌐 Net  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+//   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
 private String logp(String e) { "${e} ${app.getLabel()}: " }
 
 void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
-void logNet  (String m) { if (settings.debugEnable) log.debug logp('🌐') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
 void logVer  (String m) { log.warn  logp('🏷️') + m }
 
 void logWarn (String m) { log.warn  logp('⚠️') + m }
 void logError(String m) { log.error logp('🛑') + m }
-void logTrace(String m) { if (settings.traceEnable) log.trace logp('🔬') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
 void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
-void logDebug(String m) { if (settings.debugEnable) log.debug "${app.getLabel()}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${app.getLabel()}: ${m}" }
+void logEvt  (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }

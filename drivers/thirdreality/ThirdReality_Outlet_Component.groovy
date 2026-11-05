@@ -63,9 +63,9 @@ void deviceTypeUpdated() {
 }
 
 void logsOff() {
-    logWarn "debug and trace logging disabled"
     device.updateSetting("debugEnable", [value: "false", type: "bool"])
     device.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "debug and trace logging disabled"
 }
 
 // Events arrive from the parent as a list of attribute maps.

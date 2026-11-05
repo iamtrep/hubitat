@@ -143,6 +143,7 @@ void updated() {
 }
 
 void logsOff() {
+    checkVersion()
     app.updateSetting("debugEnable", [value: "false", type: "bool"])
     app.updateSetting("traceEnable", [value: "false", type: "bool"])
     logWarn "debug and trace logging disabled"

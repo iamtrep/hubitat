@@ -239,9 +239,9 @@ void deviceTypeUpdated() {
 }
 
 void logsOff() {
-    logWarn "debug logging disabled"
     device.updateSetting("debugEnable", [value: "false", type: "bool"])
     device.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "debug and trace logging disabled"
 }
 
 // Child device management

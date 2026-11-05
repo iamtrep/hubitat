@@ -6,7 +6,7 @@ app:
   type_name: Mirror Switch
   instance_label: Mirror Switch (test)
   config:
-    debugLogging: true
+    debugEnable: true
 
 # All three devices share the single "switches" preference. Each is both a
 # stimulus (we command it) and an observation point (we assert on it), so they

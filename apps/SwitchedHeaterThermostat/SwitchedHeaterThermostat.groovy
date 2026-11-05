@@ -268,7 +268,7 @@ void retryCheckCb(resp, Map data) {
 
 void checkVersion(boolean reinit = true) {
     if (state.version == CODE_VERSION) return
-    logVer "version ${CODE_VERSION} (was ${state.version})"
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
     state.version = CODE_VERSION
     if (reinit) runIn(1, "updated")
 }
@@ -935,4 +935,9 @@ void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
 void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: ${m}" }
 void logDebug(String m) { if (debugEnable) log.debug "${app.getLabel()}: ${m}" }
 
-void logsOff() { checkVersion(); app.updateSetting("debugEnable", false); app.updateSetting("traceEnable", false); logWarn "debug and trace logging disabled" }
+void logsOff() {
+    checkVersion()
+    app.updateSetting("debugEnable", [value: "false", type: "bool"])
+    app.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "debug and trace logging disabled"
+}

@@ -162,6 +162,20 @@ check('missing import exit', res.code, 1)
 check('missing import message', res.out.contains("needs 'import groovy.transform.Field'"), true)
 check('missing import writes nothing', new File(r, 'apps/A.groovy').text, noImport)
 
+// ── one-line functions inserted after a one-line group join it ──
+String LOG_BLOCK = '''// block-version: 1
+
+void logA(String m) { log.info m }
+void logB(String m) { log.info m }
+void logC(String m) { log.info m }
+'''
+String LOG_MANIFEST = '{"apps/A.groovy": {"l": {"version": 1, "items": ["logA", "logB", "logC"]}}}'
+r = fork(['shared/l.groovy': LOG_BLOCK, 'shared/manifest.json': LOG_MANIFEST,
+          'apps/A.groovy': 'void own() { }\n\nvoid logA(String m) { log.info m }\n\nvoid tail() { }\n'])
+tool(toolFile, r, ['sync'])
+check('one-liners join the group', new File(r, 'apps/A.groovy').text,
+      'void own() { }\n\nvoid logA(String m) { log.info m }\nvoid logB(String m) { log.info m }\nvoid logC(String m) { log.info m }\n\nvoid tail() { }\n')
+
 // ── a name the block requires must be defined in the file ──
 String NEEDS_BLOCK = '''// block-version: 1
 // requires: logIt, LIMIT, twice

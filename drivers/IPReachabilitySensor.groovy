@@ -299,9 +299,9 @@ void reschedulePing() {
 }
 
 void logsOff() {
-    logWarn "Debug logging turned off"
     device.updateSetting("debugEnable", [value: "false", type: "bool"])
     device.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "debug and trace logging disabled"
 }
 
 void parse(String description) {

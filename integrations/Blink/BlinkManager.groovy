@@ -302,11 +302,9 @@ void initialize() {
     runIn(2, "pollHomescreen")
 }
 
-// A code push doesn't run updated(); entry points call this so the first one after a
-// push converges as if Done were pressed.
-private void checkVersion(boolean reinit = true) {
+void checkVersion(boolean reinit = true) {
     if (state.version == CODE_VERSION) return
-    logVer "version change: ${state.version} -> ${CODE_VERSION}"
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
     state.version = CODE_VERSION
     if (reinit) runIn(1, "updated")
 }

@@ -234,9 +234,9 @@ void initialize() {
 }
 
 void logsOff() {
-    logWarn "Debug and trace logging turned off"
     device.updateSetting("debugEnable", [value: "false", type: "bool"])
     device.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "debug and trace logging disabled"
 }
 
 
@@ -1251,7 +1251,7 @@ private String randomHex(int n) { Random r = new Random(); (1..n).collect { Stri
 
 
 // ── Logging ───────────────────────────────────────────────────────────
-//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
 private String logp(String e) { "${e} ${device.displayName}: " }
 
 void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
@@ -1265,3 +1265,5 @@ void logError(String m) { log.error logp('🛑') + m }
 void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
 void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
 void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }

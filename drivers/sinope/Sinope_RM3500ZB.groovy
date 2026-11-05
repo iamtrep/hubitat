@@ -547,9 +547,9 @@ private static int hexToSignedInt16(String hex) {
 }
 
 void logsOff() {
-    logWarn "debug and trace logging disabled"
     device.updateSetting("debugEnable", [value: "false", type: "bool"])
     device.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "debug and trace logging disabled"
 }
 
 // ── Logging ───────────────────────────────────────────────────────────
@@ -565,3 +565,7 @@ void logError(String m) { log.error logp('🛑') + m }
 void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
 void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
 void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }

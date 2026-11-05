@@ -176,7 +176,9 @@ Map syncText(String text, String label, List<Map> blocks, Map entry) {
             }
         }
         if (newFields) edits << [start: fieldAnchor + 1, end: fieldAnchor, text: newFields.join('\n')]
-        if (newMethods) edits << [start: methodAnchor + 1, end: methodAnchor, text: '\n' + newMethods.join('\n\n')]
+        Map anchorMethod = foundMethods ? foundMethods.max { it.end } : null
+        boolean joinGroup = anchorMethod != null && anchorMethod.start == anchorMethod.end && oneLine(newMethods ? newMethods[0] : '\n')
+        if (newMethods) edits << [start: methodAnchor + 1, end: methodAnchor, text: (joinGroup ? '' : '\n') + joinMethods(newMethods)]
         List<String> previous = ((entry?.get(b.name) as Map)?.items ?: []) as List
         (previous - blockNames).each { gone ->
             if (have.any { it.name == gone }) notes << "${label}: ${gone} left block ${b.name}; remove it by hand if nothing calls it".toString()
@@ -191,6 +193,19 @@ Map syncText(String text, String label, List<Map> blocks, Map entry) {
     }
     return [text: lines.join('\n'), notes: notes, errors: errors]
 }
+
+// Inserted functions are separated by a blank line, except one-line functions that follow each
+// other, which stay together as they do in a logging block.
+String joinMethods(List<String> texts) {
+    StringBuilder sb = new StringBuilder()
+    texts.eachWithIndex { String t, int i ->
+        if (i > 0) sb.append((oneLine(t) && oneLine(texts[i - 1])) ? '\n' : '\n\n')
+        sb.append(t)
+    }
+    return sb.toString()
+}
+
+boolean oneLine(String t) { !t.contains('\n') }
 
 int lastImportLine(List<String> lines) {
     int last = 0

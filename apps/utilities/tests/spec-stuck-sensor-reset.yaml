@@ -9,7 +9,7 @@ app:
   instance_label: test-stuck-sensor-reset
   config:
     staleHours: 1
-    debugLogging: true
+    debugEnable: true
 
 inputs:
   - { name: test-ssr-motion,  driver: "Virtual Health Sensor (Test)", role: motionSensors }

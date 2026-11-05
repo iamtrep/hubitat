@@ -40,8 +40,9 @@ rather than expanding the helper set.
 
 ## Driver block
 
-Paste at the bottom of a driver, reusing its existing `debugEnable`/`traceEnable`
-gates:
+The source is [`shared/logging-driver.groovy`](../shared/logging-driver.groovy); a driver takes it
+through `shared/manifest.json` and `scripts/shared_sync.groovy`, not by pasting
+(`shared/README.md`). `logsOff` is the separate `logs-off-driver` block. The text:
 
 ```groovy
 // ── Logging ───────────────────────────────────────────────────────────
@@ -87,8 +88,10 @@ void logInfo (String m) { if (txtEnable != false) log.info  "${app.getLabel()}: 
 void logDebug(String m) { if (debugEnable) log.debug "${app.getLabel()}: ${m}" }
 ```
 
-Substitute the file's existing gate variables (`txtEnable`/`debugEnable`/`traceEnable`,
-`enableDebug`, …) — do not rename an existing gate. Keep every
+The source is [`shared/logging-app.groovy`](../shared/logging-app.groovy), with `logsOff` in
+`logs-off-app`. The blocks read `txtEnable`/`debugEnable`/`traceEnable`. A file gated on another
+name (`enableDebug`, `logEnable`, …) keeps its own copy with its gate: renaming a saved
+preference needs a migration, so don't rename one in passing. Keep every
 helper even if the file emits none of that category.
 
 `txtEnable` ("Enable info logging") gates every info-level helper: `logInfo`,

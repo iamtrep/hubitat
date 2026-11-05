@@ -544,9 +544,9 @@ private static String toLEHex32(long value) {
 }
 
 void logsOff() {
-    logWarn 'debug/trace logging disabled'
-    device.updateSetting('debugEnable', [value: 'false', type: 'bool'])
-    device.updateSetting('traceEnable', [value: 'false', type: 'bool'])
+    device.updateSetting("debugEnable", [value: "false", type: "bool"])
+    device.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "debug and trace logging disabled"
 }
 
 // ── Logging ───────────────────────────────────────────────────────────

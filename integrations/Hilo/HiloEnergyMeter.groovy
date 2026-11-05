@@ -297,20 +297,25 @@ void parse(String s) {
 private static String enc(String s) { return URLEncoder.encode(s, "UTF-8").replace("+", "%20") }
 
 void logsOff() {
-    logWarn "debug and trace logging disabled"
     device.updateSetting("debugEnable", [value: "false", type: "bool"])
     device.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "debug and trace logging disabled"
 }
 
 // ── Logging (driver) ──────────────────────────────────────────────────
-//   🌐 Net  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
 private String logp(String e) { "${e} ${device.displayName}: " }
 
-void logNet  (String m) { if (settings.debugEnable) log.debug logp('🌐') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
 void logVer  (String m) { log.warn  logp('🏷️') + m }
 
 void logWarn (String m) { log.warn  logp('⚠️') + m }
 void logError(String m) { log.error logp('🛑') + m }
-void logTrace(String m) { if (settings.traceEnable) log.trace logp('🔬') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
 void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
-void logDebug(String m) { if (settings.debugEnable) log.debug "${device.displayName}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }
+void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }

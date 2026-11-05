@@ -1,10 +1,151 @@
 {
+    "apps/AttributeLogger.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "apps/AttributeLoggerChild.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "apps/BathroomLightingShadow.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "apps/BatteryChangeLogger.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
     "apps/CodeManager/CodeManager.groovy": {
         "github-version": {
             "version": 1,
             "items": [
                 "checkGithubVersion",
                 "githubVersionCallback"
+            ]
+        },
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
             ]
         },
         "oauth-self-enable": {
@@ -15,12 +156,66 @@
             ]
         }
     },
+    "apps/ContactStateSetter.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
     "apps/EventHistory/EventHistory.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
         "oauth-self-enable": {
             "version": 1,
             "items": [
                 "checkOAuth",
                 "autoEnableOAuth"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
             ]
         }
     },
@@ -56,7 +251,92 @@
             ]
         }
     },
+    "apps/HumidityFanController.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "apps/HvacInterlock/HvacInterlock.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
     "apps/HvacInterlock/HvacInterlockGroup.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
         "quiet-sensors": {
             "version": 1,
             "items": [
@@ -64,14 +344,359 @@
                 "quietLimitMs",
                 "isQuiet"
             ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "apps/HvacInterlock/HvacInterlockGroupStatus.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
         }
     },
     "apps/HvacScheduler/HvacScheduler.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
         "oauth-self-enable": {
             "version": 1,
             "items": [
                 "checkOAuth",
                 "autoEnableOAuth"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "apps/HvacScheduler/HvacSchedulerProgram.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "apps/HvacScheduler/HvacSchedulerProgramDevice.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "apps/HvacSeasonManager/HvacSeasonManager.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "apps/HvacSeasonManager/HvacSeasonManagerSeason.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "apps/HydroPeakEvents/HydroPeak.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "apps/IndoorAirQualityController/IndoorAirQualityController.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "apps/IndoorAirQualityController/IndoorAirQualityControllerAir.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "apps/LocationEventMapper/LocationEventMapper.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "apps/LocationEventMapper/LocationEventMapperChild.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "apps/MirrorSwitch.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
             ]
         }
     },
@@ -91,7 +716,118 @@
             ]
         }
     },
+    "apps/PowerStateMonitor/PowerStateMonitor.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "apps/PowerStateMonitor/PowerStateMonitorState.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "apps/StartupShutdownMonitor.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
     "apps/SwitchedHeaterThermostat/SwitchedHeaterThermostat.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
         "quiet-sensors": {
             "version": 1,
             "items": [
@@ -99,9 +835,32 @@
                 "quietLimitMs",
                 "isQuiet"
             ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
         }
     },
     "apps/ToolAccessPrototype/ToolAccessPrototype.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
         "oauth-self-enable": {
             "version": 1,
             "items": [
@@ -117,9 +876,230 @@
                 "checkGithubVersion",
                 "githubVersionCallback"
             ]
+        },
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "apps/ZigbeeRadioWatchdog/ZigbeeRadioWatchdog.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "apps/ZigbeeWorkbench/ZigbeeWorkbench.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "apps/ZigbeeWorkbench/ZigbeeWorkbenchRadio.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "apps/mmWaveSensorComparison.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "apps/sensors/MotionFusionChild.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "apps/sensors/SensorAggregator.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
         }
     },
     "apps/sensors/SensorAggregatorChild.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
         "quiet-sensors": {
             "version": 1,
             "items": [
@@ -130,12 +1110,1177 @@
         }
     },
     "apps/sensors/SensorAggregatorDiscreteChild.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
         "quiet-sensors": {
             "version": 1,
             "items": [
                 "recordActivity",
                 "quietLimitMs",
                 "isQuiet"
+            ]
+        }
+    },
+    "apps/sensors/SensorFilterChild.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "apps/sensors/SensorFilterManager.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "apps/utilities/DeviceInUseEnumerator.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "apps/utilities/DeviceSwapHelper.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "apps/utilities/ReconnectOfflineDevices.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "apps/utilities/StuckSensorReset.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "drivers/AwairElement.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "drivers/EcobeeCompanion.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "drivers/EnvironmentCanada_AQHI.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        }
+    },
+    "drivers/IKEA-Blinds.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "drivers/IPReachabilitySensor.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "drivers/QuebecIQA.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        }
+    },
+    "drivers/VirtualSwitchPowerSource.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "drivers/XfinityContactSensor.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "drivers/androidtv/AndroidTVRemote.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "drivers/aqara/Aqara_MCCGQ11LM.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "drivers/aqara/Aqara_WSDCGQ11LM.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "drivers/aqara/Aqara_WS_USC01.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "drivers/sinope/Sinope_DM2500ZB.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "drivers/sinope/Sinope_RM3250ZB.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "drivers/sinope/Sinope_RM3500ZB.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "drivers/sinope/Sinope_SW2500ZB.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "drivers/sinope/Sinope_TH112xZB.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "drivers/sinope/Sinope_TH13X0ZB.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "drivers/sinope/Sinope_VA422xZB.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "drivers/thirdreality/ThirdReality_3RDP01072Z.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "drivers/thirdreality/ThirdReality_3RPL01084Z.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "drivers/thirdreality/ThirdReality_3RSP02028BZ.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "drivers/thirdreality/ThirdReality_Outlet_Component.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "drivers/visiblair/visiblair.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        }
+    },
+    "drivers/zigbee_helpers/ZigbeeMeshProbe.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "drivers/zigbee_helpers/ZigbeeResponder.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "integrations/Blink/BlinkCamera.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        }
+    },
+    "integrations/Blink/BlinkManager.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "integrations/Blink/BlinkNetwork.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        }
+    },
+    "integrations/FGLair/FGLairManager.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "integrations/FGLair/FujitsuMiniSplit.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "integrations/Hilo/HiloEnergyMeter.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "integrations/Hilo/HiloManager.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "integrations/visiblair/VisiblAirManager.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "integrations/visiblair/VisiblAirSensorC.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        }
+    },
+    "integrations/visiblair/VisiblAirSensorE.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        }
+    },
+    "integrations/visiblair/VisiblAirSensorO.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        }
+    },
+    "integrations/visiblair/VisiblAirSensorX.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        }
+    },
+    "integrations/visiblair/VisiblAirSensorXW.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
             ]
         }
     }
