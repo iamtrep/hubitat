@@ -182,11 +182,12 @@ Affiche le prochain événement annoncé, ou la fenêtre en cours ou suivante co
 - `expectedCurtailment` — kWh effacés si le plan est suivi et l'événement réduit jusqu'au plancher
 - `anchorUsed` / `anchorWindow` — l'énergie de la période d'ancrage jusqu'ici, comptée d'après la puissance en direct, pendant 1 h–4 h et 12 h–14 h
 - `eventUsed` — l'énergie de l'événement jusqu'ici, comptée de la même façon, pendant 6 h–10 h et 16 h–20 h
+- `anchorStop` (`true` / `false`), `anchorChecked` — pendant la période d'ancrage d'un événement annoncé quand le plan est `at most` : `anchorStop` passe à `true` dès que `anchorUsed`, plus la réserve (3 kW par défaut) pour le reste de la période, atteint `anchorTarget`, et reste `true` jusqu'à la fin de la période. Quand le flux de puissance se tait, le compte est projeté à la puissance de la dernière lecture. `anchorChecked` (`AAAA-MM-JJ HH:mm`) change chaque minute de cette période, pour qu'une règle sur un autre hub voie quand les mises à jour cessent.
 - `target`, `advice` (`pending` / `cut` / `keep`), `keepUse` — à la fin de la période d'ancrage. `keep` signifie que consommer `keepUse` kWh pendant l'événement garde 40 kWh effacés et paie plus que réduire jusqu'au plancher.
 - `referenceDays`, `summary` (ce dernier dans la langue choisie)
 - `lastWindow` (`AAAA-MM-JJ AM` / `PM`), `lastAnnounced` (`true` / `false`), `lastConsumed`, `lastCurtailed` — kWh, `lastCredit` — $, `lastFinal` (`false` tant qu'il repose sur le compte en direct plutôt que sur les heures de Hilo)
 
-Une règle peut arrêter le préchauffage quand `anchorPlan` vaut `at most` et que `anchorUsed` atteint `anchorTarget`. **Refresh** recalcule.
+Une règle peut arrêter le préchauffage quand `anchorStop` passe à `true`. **Refresh** recalcule.
 
 Le dernier calcul, données d'entrée comprises, est dans File Manager sous `hilo-<id de l'emplacement>-peak-target.json`.
 

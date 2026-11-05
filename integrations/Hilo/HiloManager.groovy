@@ -43,7 +43,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "0.1.3"
+@Field static final String CODE_VERSION = "0.2.0"
 
 @Field static final String AUTH_URL = "https://connexion.hiloenergie.com/HiloDirectoryB2C.onmicrosoft.com/B2C_1A_SIGN_IN/oauth2/v2.0/"
 @Field static final String CLIENT_ID = "1ca9f585-4a55-4085-8e30-9746a65fa561"
@@ -111,6 +111,7 @@ definition(
         "sec.wc"            : "Winter credit settings",
         "wc.enable"         : "Compute the reference energy of each peak event the evening before",
         "wc.floor"          : "kWh the home uses during a 4-hour event with the heating cut",
+        "wc.reserve"        : "kW the home still draws once an \"at most\" pre-heat stops",
         "wc.extra"          : "Events missing from Hydro-Québec's open data (e.g. 2025-12-07 PM, 2026-01-05 AM)",
         "wc.notify"         : "Notify",
         "wc.notifyTime"     : "Evening notification at",
@@ -224,6 +225,7 @@ definition(
         "sec.wc"            : "Réglages du crédit hivernal",
         "wc.enable"         : "Calculer l'énergie de référence de chaque événement de pointe la veille au soir",
         "wc.floor"          : "kWh consommés par le domicile pendant un événement de 4 heures, chauffage coupé",
+        "wc.reserve"        : "kW que le domicile consomme encore après l'arrêt d'un préchauffage « au plus »",
         "wc.extra"          : "Événements absents des données ouvertes d'Hydro-Québec (ex. 2025-12-07 PM, 2026-01-05 AM)",
         "wc.notify"         : "Notifier",
         "wc.notifyTime"     : "Notification du soir à",
@@ -385,6 +387,7 @@ Map mainPage() {
                 input "wcEnable", "bool", title: tr("wc.enable"), defaultValue: false, submitOnChange: true
                 if (settings.wcEnable) {
                     input "wcFloor", "decimal", title: tr("wc.floor"), defaultValue: 3.0, range: "0..40", width: 6
+                    input "wcReserve", "decimal", title: tr("wc.reserve"), defaultValue: 3.0, range: "0..20", width: 6
                     input "wcExtraEvents", "text", title: tr("wc.extra"), required: false, width: 6
                     input "wcNotify", "capability.notification", title: tr("wc.notify"), multiple: true, required: false, width: 6
                     input "wcNotifyTime", "time", title: tr("wc.notifyTime"), defaultValue: "22:00", required: false, width: 6
@@ -888,7 +891,7 @@ void logout() {
     dropSecret("refreshTokenEnc")
     ["refreshTokenEnc", "locations", "locationId", "locationHiloId", "locationName", "pollStreak", "childError", "childRequestedAt",
      "historyStart", "lastCompleteDay", "historyBusy", "backfilling", "finalDay", "lastHourMs",
-     "todayHours", "yesterdayHours", "peakEvents", "peakLast", "anchorLive", "uiLangSynced"].each { state.remove(it) }
+     "todayHours", "yesterdayHours", "peakEvents", "peakLast", "anchorLive", "anchorStopFor", "uiLangSynced"].each { state.remove(it) }
     app.removeSetting("locationId")
     meterChild()?.stopLiveStream()
     meterChild()?.updateHealth("offline", tr("health.loggedOut", [:], "en"), tr("health.loggedOut"))
@@ -1406,6 +1409,8 @@ private void peakInitialize() {
     schedule("0 1 4,14 ? * *", "peakAnchorEnded")
     // A minute after each event window ends, so its result shows without waiting for the next read.
     schedule("0 1 10,20 ? * *", "peakRun")
+    // Every minute of the anchor windows: the "at most" stop.
+    schedule("0 * 1-3,12-13 ? * *", "peakStopTick")
     subscribe(meterChild(), "power", "peakPowerHandler")
     runIn(10, "fetchPeakEvents")
 }
@@ -1645,9 +1650,54 @@ private BigDecimal liveCount(String key, String day, Integer startHour, BigDecim
     return send ? used : null
 }
 
+// During an announced event's "at most" anchor window: anchorStop turns true once the count, plus
+// the reserve for the rest of the window, reaches anchorTarget, and stays true until the window
+// ends. The count is projected at the last reading's power when the stream is quiet. anchorChecked
+// changes each minute, so a rule on another hub can tell this hub has stopped answering.
+void peakStopTick() {
+    if (!settings.wcEnable) return
+    long t = now()
+    Date d = new Date(t)
+    int h = d.format("H", location.timeZone) as int
+    String day = d.format("yyyy-MM-dd", location.timeZone)
+    Integer anchorFor = (h >= 1 && h < 4) ? 6 : ((h >= 12 && h < 14) ? 16 : null)
+    Map next = (state.peakLast as Map)?.next as Map
+    if (anchorFor == null || !(next?.event && next.day == day && next.startHour == anchorFor && next.plan == "at most")) return
+    long start = timeOf(day, anchorFor == 6 ? 1 : 12), end = timeOf(day, anchorFor == 6 ? 4 : 14)
+    Map live = state.anchorLive as Map
+    BigDecimal used
+    if (live?.open && live.day == day && live.startHour == anchorFor) used = anchorProjected(live, t)
+    else used = anchorProjected([kWh: 0.0, lastMs: start, lastW: (meterChild()?.currentValue("power") ?: 0) as BigDecimal], t)
+    String key = "${day} ${anchorFor}"
+    BigDecimal reserve = (settings.wcReserve != null ? settings.wcReserve : 3.0) as BigDecimal
+    boolean stop = state.anchorStopFor == key || anchorStopReached(used, next.anchorTarget as BigDecimal, reserve, t, end)
+    if (stop && state.anchorStopFor != key) {
+        state.anchorStopFor = key
+        logInfo "anchor stop: ${round3(used)} kWh + ${reserve} kW to ${d.format('HH:mm', location.timeZone)}-${anchorFor == 6 ? '04:00' : '14:00'} reaches ${next.anchorTarget} kWh"
+    }
+    peakChild()?.updatePeak([anchorStop: stop ? "true" : "false", anchorChecked: d.format("yyyy-MM-dd HH:mm", location.timeZone)])
+}
+
+// The anchor count at t: the last reading's power held since it came, as liveCount counts it.
+@CompileStatic
+static BigDecimal anchorProjected(Map live, long t) {
+    long dt = Math.max(t - (live.lastMs as long), 0L)
+    return (live.kWh as BigDecimal) + (live.lastW as BigDecimal) * dt / 3_600_000_000.0
+}
+
+// Whether an "at most" pre-heat must stop: the count plus the reserve for the rest of the window
+// reaches the plan.
+@CompileStatic
+static boolean anchorStopReached(BigDecimal used, BigDecimal target, BigDecimal reserveKW, long t, long windowEnd) {
+    if (used == null || target == null) return false
+    BigDecimal hoursLeft = Math.max(windowEnd - t, 0L) / 3_600_000.0
+    return used + reserveKW * hoursLeft >= target
+}
+
 // After an anchor window: recompute and, on an event day, say what the event needs.
 void peakAnchorEnded() {
     if (!settings.wcEnable) return
+    peakChild()?.updatePeak([anchorStop: "false"])
     peakRun()
     Date t = new Date()
     String day = t.format("yyyy-MM-dd", location.timeZone)

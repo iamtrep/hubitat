@@ -33,7 +33,8 @@ String fields = src.readLines().findAll { it.startsWith('@Field static final') &
     .collect { it.replace('@Field static final', 'static final') }.join('\n')
 String code = 'import java.time.LocalDate\nimport groovy.transform.CompileStatic\nclass PeakTarget {\n' + fields + '\n' +
     ['static LocalDate easterSunday(int year) {', 'static Set<String> noPeakDays(LocalDate day) {', 'static Map peakTarget(',
-     'static BigDecimal curtailedKWh(', 'static String windowPhase(', 'static List<Map> timelineWindows(']
+     'static BigDecimal curtailedKWh(', 'static String windowPhase(', 'static List<Map> timelineWindows(',
+     'static BigDecimal anchorProjected(', 'static boolean anchorStopReached(']
         .collect { '@CompileStatic\n' + extract(src, it) }.join('\n') + '\n}\nPeakTarget'
 Class PT = new GroovyShell().evaluate(code)
 
@@ -138,6 +139,25 @@ check('a later announced event is added', PT.timelineWindows(ws, 40 * H)*.i == [
 ws[5].event = false
 check('first hours: the first window and the next', PT.timelineWindows(ws, 0L)*.i == [0, 1])
 check('all finished but the last', PT.timelineWindows(ws, 70 * H)*.i == [0, 1, 2, 3, 4, 5])
+
+println '"at most" stop'
+long M = 60_000L
+// Window 01:00-04:00 as 1 h to 4 h; target 30 kWh, reserve 3 kW.
+BigDecimal T = 30.0, RES = 3.0
+check('not yet: 15 kWh at 02:00, + 3 kW x 2 h = 21', !PT.anchorStopReached(15.0, T, RES, 2 * H, 4 * H))
+check('stop: 24 kWh at 02:00, + 3 kW x 2 h = 30', PT.anchorStopReached(24.0, T, RES, 2 * H, 4 * H))
+check('stop: 27.1 kWh at 03:00, + 3 kW x 1 h = 30.1', PT.anchorStopReached(27.1, T, RES, 3 * H, 4 * H))
+check('no reserve after the window ends', !PT.anchorStopReached(29.9, T, RES, 5 * H, 4 * H))
+check('no reserve: stop only at the target', !PT.anchorStopReached(29.9, T, 0.0, 2 * H, 4 * H) && PT.anchorStopReached(30.0, T, 0.0, 2 * H, 4 * H))
+check('no target, no stop', !PT.anchorStopReached(50.0, null, RES, 2 * H, 4 * H))
+check('no count, no stop', !PT.anchorStopReached(null, T, RES, 2 * H, 4 * H))
+Map live = [kWh: 12.0, lastMs: 2 * H, lastW: 10000.0]
+check('projection: 12 kWh + 10 kW for 30 min = 17', near(PT.anchorProjected(live, 2 * H + 30 * M), 17))
+check('projection: none at the reading', near(PT.anchorProjected(live, 2 * H), 12))
+check('projection: a clock behind the reading adds nothing', near(PT.anchorProjected(live, 2 * H - M), 12))
+// Frozen at 02:00 with 12 kWh at 10 kW: projected 12 + 10t, stop when 12 + 10t + 3(2 - t) >= 30, t >= 12/7 h.
+check('frozen stream: no stop at 03:40', !PT.anchorStopReached(PT.anchorProjected(live, 2 * H + 100 * M), T, RES, 2 * H + 100 * M, 4 * H))
+check('frozen stream: stop at 03:43', PT.anchorStopReached(PT.anchorProjected(live, 2 * H + 103 * M), T, RES, 2 * H + 103 * M, 4 * H))
 
 println "\n=== ${pass}/${pass + fail} passed ==="
 System.exit(fail == 0 ? 0 : 1)

@@ -33,6 +33,8 @@ metadata {
         attribute "anchorTarget",        "number"
         attribute "anchorUsed",          "number"
         attribute "anchorWindow",        "string"
+        attribute "anchorStop",          "enum", ["true", "false"]
+        attribute "anchorChecked",       "string"
         attribute "eventUsed",           "number"
         attribute "expectedCurtailment", "number"
         attribute "target",              "number"
@@ -56,7 +58,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.2.0"
 
 // Preference titles, in the language the parent app sets. Logs stay in English.
 @Field static final Map<String, Map<String, String>> I18N = [
