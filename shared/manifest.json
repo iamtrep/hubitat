@@ -2159,6 +2159,32 @@
             ]
         }
     },
+    "integrations/Hilo/HiloWinterCredit.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
     "integrations/visiblair/VisiblAirManager.groovy": {
         "logging-app": {
             "version": 1,
