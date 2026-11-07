@@ -104,6 +104,16 @@ check('keep 24 kWh beats a capped 33', r4.advice == 'keep' && near(r4.keepUse, 2
 Map r5 = PT.peakTarget(low, '2026-01-07', 6, [] as Set, 3.0, 14.25)
 check('anchor on plan: curtailment 40, no cap', near(r5.target, 43) && near(r5.cut, 40) && r5.advice == 'cut')
 
+println 'margin'
+Map m3 = PT.peakTarget(low, '2026-01-07', 6, [] as Set, 3.0, null, 1.0)
+check('margin 1: at most (39 + 3 - 28) x 3/4 + 3 = 13.5, curtail 39', m3.anchorPlan == 'at most' && near(m3.anchorTarget, 13.5) && near(m3.expectedCut, 39))
+Map m4 = PT.peakTarget(low, '2026-01-07', 6, [] as Set, 3.0, 30.0, 1.0)
+check('margin 1: keep 64 - 39 = 25 kWh', m4.advice == 'keep' && near(m4.keepUse, 25) && near(m4.cut, 33))
+Map m5 = PT.peakTarget(low, '2026-01-07', 6, [] as Set, 3.0, 13.5 + 0.7, 1.0)
+check('margin 1 absorbs 0.7 kWh of anchor over plan: curtailment 39.93, no cap', near(m5.cut, 39 + 0.7 * 4 / 3) && m5.cut < 40)
+Map mAtLeast = PT.peakTarget(hours, '2026-01-07', 6, [] as Set, 3.0, null, 1.0)
+check('margin leaves an at-least plan alone', mAtLeast.anchorPlan == 'at least' && near(mAtLeast.anchorTarget, r.anchorTarget))
+
 println 'target, evening'
 Map pm = PT.peakTarget(hours, '2026-01-07', 16, [] as Set, 3.0, 20.0)
 check('anchor hours 12 and 13', pm.anchorHours == [12, 13] && near(pm.anchorRef, 6))

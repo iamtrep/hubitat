@@ -111,6 +111,7 @@ definition(
         "sec.wc"            : "Winter credit settings",
         "wc.enable"         : "Compute the reference energy of each peak event the evening before",
         "wc.floor"          : "kWh the home uses during a 4-hour event with the heating cut",
+        "wc.margin"         : "kWh below the 40 kWh limit that an \"at most\" or \"keep\" plan aims for",
         "wc.reserve"        : "kW the home still draws once an \"at most\" pre-heat stops",
         "wc.extra"          : "Events missing from Hydro-Québec's open data (e.g. 2025-12-07 PM, 2026-01-05 AM)",
         "wc.notify"         : "Notify",
@@ -225,6 +226,7 @@ definition(
         "sec.wc"            : "Réglages du crédit hivernal",
         "wc.enable"         : "Calculer l'énergie de référence de chaque événement de pointe la veille au soir",
         "wc.floor"          : "kWh consommés par le domicile pendant un événement de 4 heures, chauffage coupé",
+        "wc.margin"         : "kWh sous la limite de 40 kWh que vise un plan « au plus » ou « garder »",
         "wc.reserve"        : "kW que le domicile consomme encore après l'arrêt d'un préchauffage « au plus »",
         "wc.extra"          : "Événements absents des données ouvertes d'Hydro-Québec (ex. 2025-12-07 PM, 2026-01-05 AM)",
         "wc.notify"         : "Notifier",
@@ -388,6 +390,7 @@ Map mainPage() {
                 if (settings.wcEnable) {
                     input "wcFloor", "decimal", title: tr("wc.floor"), defaultValue: 3.0, range: "0..40", width: 6
                     input "wcReserve", "decimal", title: tr("wc.reserve"), defaultValue: 3.0, range: "0..20", width: 6
+                    input "wcMargin", "decimal", title: tr("wc.margin"), defaultValue: 1.0, range: "0..10", width: 6
                     input "wcExtraEvents", "text", title: tr("wc.extra"), required: false, width: 6
                     input "wcNotify", "capability.notification", title: tr("wc.notify"), multiple: true, required: false, width: 6
                     input "wcNotifyTime", "time", title: tr("wc.notifyTime"), defaultValue: "22:00", required: false, width: 6
@@ -1315,11 +1318,12 @@ static Set<String> noPeakDays(LocalDate day) {
  * mean), base, anchorRef, k, cappedTarget, anchorPlan ("at most" / "at least"), anchorTarget,
  * expectedCut, missing (hours with no value) and, with anchorActual: target, cut (curtailment if
  * the event is cut to the floor), keepUse (event use that holds curtailment at 40, or null) and
- * advice ("cut" / "keep").
+ * advice ("cut" / "keep"). marginKWh: how far below 40 kWh a plan aims its curtailment, for
+ * Hydro-Québec's own reading of the anchor window and our stop; the cap rule itself is unchanged.
  */
 @CompileStatic
 static Map peakTarget(Map<String, Map<Integer, BigDecimal>> hours, String day, int startHour, Set<String> eventDays,
-                      BigDecimal floorKWh, BigDecimal anchorActual) {
+                      BigDecimal floorKWh, BigDecimal anchorActual, BigDecimal marginKWh = 0.0) {
     LocalDate d0 = LocalDate.parse(day)
     boolean weekend = d0.dayOfWeek.value >= 6
     Set<String> noPeak = noPeakDays(d0)
@@ -1368,10 +1372,10 @@ static Map peakTarget(Map<String, Map<Integer, BigDecimal>> hours, String day, i
         out.anchorTarget = 3 * anchorRef
         out.expectedCut = capped - floorKWh
     } else {
-        // The cap would cost: anchor use that puts the target at floor + 40, and no more.
+        // The cap would cost: anchor use that puts the target at floor + 40 - margin, and no more.
         out.anchorPlan = "at most"
-        out.anchorTarget = [(CAP_KWH + floorKWh - base) / k + anchorRef, 0.0].max()
-        out.expectedCut = [base + k * ((out.anchorTarget as BigDecimal) - anchorRef) - floorKWh, CAP_KWH].min()
+        out.anchorTarget = [(CAP_KWH - marginKWh + floorKWh - base) / k + anchorRef, 0.0].max()
+        out.expectedCut = [base + k * ((out.anchorTarget as BigDecimal) - anchorRef) - floorKWh, CAP_KWH - marginKWh].min()
     }
     if (anchorActual != null) {
         BigDecimal target = base + k * (anchorActual - anchorRef)
@@ -1379,9 +1383,10 @@ static Map peakTarget(Map<String, Map<Integer, BigDecimal>> hours, String day, i
         if (cut > CAP_KWH && target > capped) cut = capped - floorKWh
         out.target = target
         out.cut = [cut, 0.0].max()
-        BigDecimal keep = target - CAP_KWH
-        // Keeping 40 kWh pays when it beats the capped curtailment by more than the energy it uses.
-        boolean keepPays = keep > floorKWh && CAP_KWH * CREDIT_CENTS - (keep - floorKWh) * ENERGY_CENTS > (out.cut as BigDecimal) * CREDIT_CENTS
+        BigDecimal aim = CAP_KWH - marginKWh
+        BigDecimal keep = target - aim
+        // Keeping 40 kWh (less the margin) pays when it beats the capped curtailment by more than the energy it uses.
+        boolean keepPays = keep > floorKWh && aim * CREDIT_CENTS - (keep - floorKWh) * ENERGY_CENTS > (out.cut as BigDecimal) * CREDIT_CENTS
         out.keepUse = keepPays ? keep : null
         out.advice = keepPays ? "keep" : "cut"
     }
@@ -1545,10 +1550,11 @@ void peakRun() {
     Set<String> eventDays = slots.collect { it[0] as String } as Set
     Map<String, Map<Integer, BigDecimal>> hours = peakHours(today.minusDays(PEAK_LOOKBACK_DAYS + 1), today)
     BigDecimal floorKWh = (settings.wcFloor ?: 3.0) as BigDecimal
+    BigDecimal marginKWh = wcMargin()
     long t = now()
     List<Map> results = [-1, 0, 1].collectMany { int off ->
         String day = today.plusDays(off).toString()
-        [6, 16].collect { int h -> peakWindow(hours, day, h, slots, eventDays, floorKWh, t) }
+        [6, 16].collect { int h -> peakWindow(hours, day, h, slots, eventDays, floorKWh, marginKWh, t) }
     }
     // The device shows the next announced event, else the current or next window.
     Map next = results.find { it.event && (it.end as long) > t } ?: results.find { (it.end as long) > t }
@@ -1557,15 +1563,15 @@ void peakRun() {
     state.peakWindows = results.collect { Map r -> r.findAll { k, v -> !(k in ["rows", "refDays", "skipped", "missing", "anchorHours"]) } }
     state.peakLast = [at: t, next: peakBrief(next)]
     peakChild()?.updatePeak(peakAttributes(next) + lastAttributes(last) + [summaryLog: peakBrief(next)?.message])
-    writePeakFile(results, floorKWh)
+    writePeakFile(results, floorKWh, marginKWh)
 }
 
 // One window: its target, the times of its anchor period and event, and once the event has
 // started the energy used (Hilo's hourly values when all four are in, else the live count) and
 // what that curtails.
 private Map peakWindow(Map<String, Map<Integer, BigDecimal>> hours, String day, int h, List<List> slots, Set<String> eventDays,
-                       BigDecimal floorKWh, long t) {
-    Map r = peakTarget(hours, day, h, eventDays.findAll { it != day } as Set<String>, floorKWh, peakAnchorActual(day, h, hours))
+                       BigDecimal floorKWh, BigDecimal marginKWh, long t) {
+    Map r = peakTarget(hours, day, h, eventDays.findAll { it != day } as Set<String>, floorKWh, peakAnchorActual(day, h, hours), marginKWh)
     r.event = slots.any { it[0] == day && it[1] == h }
     int back = h < 12 ? 5 : 4, alen = h < 12 ? 3 : 2
     r.anchorStart = timeOf(day, h - back)
@@ -1774,9 +1780,9 @@ private Map lastAttributes(Map r) {
 
 
 // File Manager copy of the last computation, inputs included, for the history viewer.
-private void writePeakFile(List<Map> results, BigDecimal floorKWh) {
+private void writePeakFile(List<Map> results, BigDecimal floorKWh, BigDecimal marginKWh) {
     // events: every event day and start hour the computation knew, extra ones included.
-    Map doc = [generated: new Date().format("yyyy-MM-dd'T'HH:mm:ssXXX", location.timeZone), floor: floorKWh,
+    Map doc = [generated: new Date().format("yyyy-MM-dd'T'HH:mm:ssXXX", location.timeZone), floor: floorKWh, margin: marginKWh,
                offer: PEAK_OFFER, events: peakEventSlots(), results: results]
     try {
         uploadHubFile(peakFile(), JsonOutput.toJson(doc).getBytes("UTF-8"))
@@ -1784,6 +1790,9 @@ private void writePeakFile(List<Map> results, BigDecimal floorKWh) {
         logWarn "could not write ${peakFile()}: ${getObjectClassName(e)}: ${e.message}"
     }
 }
+
+// Unset means the default; 0 is a real choice (aim at 40 exactly).
+private BigDecimal wcMargin() { return (settings.wcMargin != null ? settings.wcMargin : 1.0) as BigDecimal }
 
 private String peakFile() { return "hilo-${state.locationId}-peak-target.json" }
 

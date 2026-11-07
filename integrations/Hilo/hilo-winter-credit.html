@@ -747,7 +747,7 @@ function noPeakDays(day) {
 }
 
 // hours: {day: {hour: kWh}}. Returns the same fields as Hilo Manager's peakTarget.
-function peakTarget(hours, day, startHour, eventDays, floor, anchorActual) {
+function peakTarget(hours, day, startHour, eventDays, floor, anchorActual, margin = 0) {
     const weekend = isWeekend(day), noPeak = noPeakDays(day);
     const back = startHour < 12 ? 5 : 4, alen = startHour < 12 ? 3 : 2, k = 4 / alen;
     const refDays = [], skipped = [];
@@ -786,15 +786,15 @@ function peakTarget(hours, day, startHour, eventDays, floor, anchorActual) {
         out.anchorPlan = 'at least'; out.anchorTarget = 3 * anchorRef; out.expectedCut = capped - floor;
     } else {
         out.anchorPlan = 'at most';
-        out.anchorTarget = Math.max((WC_CAP + floor - base) / k + anchorRef, 0);
-        out.expectedCut = Math.min(base + k * (out.anchorTarget - anchorRef) - floor, WC_CAP);
+        out.anchorTarget = Math.max((WC_CAP - margin + floor - base) / k + anchorRef, 0);
+        out.expectedCut = Math.min(base + k * (out.anchorTarget - anchorRef) - floor, WC_CAP - margin);
     }
     if (anchorActual != null) {
         const target = base + k * (anchorActual - anchorRef);
         out.target = target;
         out.cut = Math.max(curtailed(target, capped, floor), 0);
-        const keep = target - WC_CAP;
-        const keepPays = keep > floor && WC_CAP * 58.490 - (keep - floor) * 11.142 > out.cut * 58.490;
+        const aim = WC_CAP - margin, keep = target - aim;
+        const keepPays = keep > floor && aim * 58.490 - (keep - floor) * 11.142 > out.cut * 58.490;
         out.keepUse = keepPays ? keep : null;
         out.advice = keepPays ? 'keep' : 'cut';
     }
@@ -832,6 +832,7 @@ function wcHours() {
 // else computed here from the history files, with the event day's own use when it is on file.
 function wcCompute(day, start) {
     const floor = wcFile ? +wcFile.floor : 3;
+    const margin = wcFile && wcFile.margin != null ? +wcFile.margin : 1;
     const slots = wcSlots();
     const isEvent = slots.some(x => x.day === day && x.start === start);
     const fromApp = wcFile && (wcFile.results || []).find(r => r.day === day && r.startHour === start);
@@ -841,7 +842,7 @@ function wcCompute(day, start) {
     const own = hours[day];
     const anchor = own ? Array.from({ length: alen }, (_, i) => own[start - back + i]) : [];
     const anchorActual = anchor.length && anchor.every(v => v != null) ? anchor.reduce((s, v) => s + v, 0) : null;
-    const r = peakTarget(hours, day, start, new Set(slots.filter(x => x.day !== day).map(x => x.day)), floor, anchorActual);
+    const r = peakTarget(hours, day, start, new Set(slots.filter(x => x.day !== day).map(x => x.day)), floor, anchorActual, margin);
     const used = own ? [0, 1, 2, 3].map(i => own[start + i]) : [];
     if (used.length && used.every(v => v != null)) r.used = used.reduce((s, v) => s + v, 0);
     r.event = isEvent;

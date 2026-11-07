@@ -156,7 +156,7 @@ Le calcul reproduit les énergies de référence d'Hydro-Québec de l'hiver 2025
 Tout sauf la consommation de la période d'ancrage est connu la veille au soir; le plan l'est donc aussi :
 
 - **Énergie de référence avec la limite d'au moins 40 kWh au-dessus de ce que le domicile consomme chauffage coupé** (le *plancher*) : réduisez au maximum pendant l'événement. Une consommation de la période d'ancrage d'au moins 3 × sa référence porte l'énergie de référence à l'énergie de référence avec la limite; davantage ne change rien.
-- **Énergie de référence avec la limite plus basse que ça :** consommez **au plus** le budget de la période d'ancrage pendant celle-ci, ce qui fixe l'énergie de référence au plancher + 40, et faites le reste du préchauffage après (4 h–6 h ou 14 h–16 h ne comptent pas). Réduire au maximum efface alors exactement 40 kWh.
+- **Énergie de référence avec la limite plus basse que ça :** consommez **au plus** le budget de la période d'ancrage pendant celle-ci, ce qui fixe l'énergie de référence au plancher + 40 moins la marge, et faites le reste du préchauffage après (4 h–6 h ou 14 h–16 h ne comptent pas). Réduire au maximum efface alors 40 kWh moins la marge.
 
 ### Réglages
 
@@ -164,6 +164,7 @@ Sous **Réglages du crédit hivernal** dans la page de l'application :
 
 - **Calculer l'énergie de référence de chaque événement de pointe la veille au soir** active la fonction et crée l'appareil Hilo Winter Credit.
 - **kWh consommés par le domicile pendant un événement de 4 heures, chauffage coupé** : le plancher, 3 kWh par défaut.
+- **kWh sous la limite de 40 kWh que vise un plan « au plus » ou « garder »** : la marge, 1 kWh par défaut. Effacer ne serait-ce qu'un peu plus de 40 kWh remplace l'énergie de référence par celle avec la limite, ce qui coûte plusieurs kWh de crédit; un plan vise donc un peu en dessous. Elle couvre un petit écart entre la lecture de la période d'ancrage par Hydro-Québec et celle du compteur, et un préchauffage qui s'arrête un peu tard. 0 vise exactement 40 kWh.
 - **Notifier** et **Notification du soir à** (22:00 par défaut) : la veille d'un événement, une notification avec l'énergie de référence avec la limite et le plan pour la période d'ancrage. Avec **Notifier chaque soir d'hiver, même sans événement**, une chaque soir de décembre à mars, comme si le lendemain matin était un événement.
 - **Événements absents des données ouvertes d'Hydro-Québec** : les données ouvertes ont manqué un événement; ajoutez-le sous la forme `AAAA-MM-JJ AM` ou `PM`, séparés par des virgules. Un événement passé manquant change les jours de référence.
 - **Calculer maintenant** calcule tout de suite, en toute saison.

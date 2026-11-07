@@ -154,7 +154,7 @@ This reproduces Hydro-Québec's targets for winter 2025–26 to 0.1 kWh, the eve
 Everything but the anchor-window use is known the evening before, so the plan is too:
 
 - **Capped target at least 40 kWh above what the home uses with the heating cut** (the *floor*): cut as deep as possible during the event. Anchor-window use of at least 3 × its reference lifts the target to the capped target; more changes nothing.
-- **Capped target lower than that:** use **at most** the anchor budget in the anchor window, which sets the target at floor + 40, and do the rest of the pre-heat after it (04:00–06:00 or 14:00–16:00 count for nothing). Cutting deep then curtails exactly 40 kWh.
+- **Capped target lower than that:** use **at most** the anchor budget in the anchor window, which sets the target at floor + 40 less the margin, and do the rest of the pre-heat after it (04:00–06:00 or 14:00–16:00 count for nothing). Cutting deep then curtails 40 kWh less the margin.
 
 ### Settings
 
@@ -162,6 +162,7 @@ Under **Winter credit settings** on the app page:
 
 - **Compute the reference energy of each peak event the evening before** turns the feature on and creates the Hilo Winter Credit device.
 - **kWh the home uses during a 4-hour event with the heating cut**: the floor, 3 kWh by default.
+- **kWh below the 40 kWh limit that an "at most" or "keep" plan aims for**: the margin, 1 kWh by default. Curtailing even slightly more than 40 kWh replaces the target with the capped one, which costs several kWh of credit, so a plan aims a little below. It covers a small difference between Hydro-Québec's reading of the anchor window and the meter's, and a pre-heat that stops a little late. 0 aims at exactly 40 kWh.
 - **Notify** and **Evening notification at** (22:00 by default): the evening before an event, a notification with the reference energy with the limit and the plan for the anchor period. With **Notify every winter evening**, one every evening from December to March, as if the next morning were an event.
 - **Events missing from Hydro-Québec's open data**: the open data has missed an event; add it as `YYYY-MM-DD AM` or `PM`, comma-separated. A missing past event changes the reference days.
 - **Compute now** computes at once, in any season.

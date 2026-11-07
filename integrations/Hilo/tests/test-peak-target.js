@@ -75,6 +75,12 @@ check('plan: at most 14.25, curtail 40', r3.anchorPlan === 'at most' && near(r3.
 const r4 = P.peakTarget(low, '2026-01-07', 6, new Set(), 3, 30);
 check('anchor over plan: keep 24 beats a capped 33', near(r4.target, 64) && r4.advice === 'keep' && near(r4.keepUse, 24) && near(r4.cut, 33));
 
+console.log('margin');
+const m3 = P.peakTarget(low, '2026-01-07', 6, new Set(), 3, null, 1);
+check('margin 1: at most 13.5, curtail 39', m3.anchorPlan === 'at most' && near(m3.anchorTarget, 13.5) && near(m3.expectedCut, 39));
+const m4 = P.peakTarget(low, '2026-01-07', 6, new Set(), 3, 30, 1);
+check('margin 1: keep 25', m4.advice === 'keep' && near(m4.keepUse, 25));
+
 console.log('target, evening');
 const pm = P.peakTarget(hours, '2026-01-07', 16, new Set(), 3, 20);
 check('anchor 12-13, factor 2, target 56', eq(pm.anchorHours, [12, 13]) && near(pm.k, 2) && near(pm.target, 56));
