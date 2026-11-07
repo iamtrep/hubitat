@@ -284,6 +284,7 @@ Four patterns let one piece of automation command an app. They differ in who can
 - A driver takes a `password`-type preference: `/device/fullJson` lists it with `type: "password"`, and its `title` can be built from `state` *(probed 2.5.3.107, C-8 Pro)*.
 - `device.removeSetting(name)` from driver code (here in `updated()` and in a command) deletes a saved preference: `/device/fullJson` `settings[]` then shows it with no value. That lets a driver take a secret once, keep it `encrypt()`ed in `state`, and leave nothing in the preferences an admin can read *(probed 2.5.3.107, C-8 Pro)*.
 - `device.updateSetting(name, [value: "false", type: "bool"])` for a name no input of the driver declares stores nothing: `settings.name` reads null in the same execution, `settings` keeps only the declared names, and `/device/fullJson` `settings[]` lists no such row. So a shared `logsOff` can clear `traceEnable` in a driver that has no such input *(probed 2.5.3.117, C-8 Pro, throwaway driver)*.
+- In a driver's `updated()`, after `device.updateSetting("deviceIp", [type: "text", value: v])` on a declared `text` input, the bare name `deviceIp` still reads the old value for the rest of that execution; the stored value is the new one. A driver that cleans up a setting on Save has to re-run its setup in a new execution (`runIn(1, "updated")`) or carry the new value itself *(probed 2.5.3.119, C-8 Pro, Samsung TV Remote driver)*.
 
 ## What only an app can do
 
