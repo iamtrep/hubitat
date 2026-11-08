@@ -120,6 +120,7 @@ tr:nth-child(even){background:var(--alt)} tr:hover{background:var(--hover)}
 .b-builtin{background:var(--tag-builtin-bg);color:var(--tag-builtin)} .b-community{background:var(--tag-community-bg);color:var(--tag-community)} .b-platform{background:var(--tag-platform-bg);color:var(--tag-platform)}
 
 .alert{padding:8px 12px;border-radius:6px;margin-bottom:6px;font-size:13px;display:flex;align-items:center;gap:6px}
+.alert.rel-row{display:block}.rel-row a{white-space:nowrap}
 .a-crit{background:var(--crit-bg);border-left:4px solid var(--crit);color:var(--crit)}
 .a-warn{background:var(--warn-bg);border-left:4px solid var(--warn);color:var(--warn-text)}
 .a-ok{background:var(--ok-bg);border-left:4px solid var(--ok);color:var(--ok)}
@@ -1354,6 +1355,67 @@ function alertRow(a,text){
   const sev=(a.severity==='critical')?'crit':((a.severity==='info')?'info':'warn');const icon=(a.severity==='critical')?'\u26D4':((a.severity==='info')?'\u2139':'\u26A0');
   const body=a.href?'<a class="live-only" href="'+a.href+'" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline">'+h(text)+' ↗</a><span class="report-only">'+h(text)+'</span>':h(text);
   return'<div class="alert a-'+sev+'">'+icon+' '+body+'</div>'}
+// Reliability Center (firmware 2.5.3+): pure summary of the raw payload. null = absent, {available:false} = read failed.
+const REL_T={silentDevice:'Silent device',lowBattery:'Low battery',offline:'Offline',missingIp:'No IP address',networkOffline:'Network offline',matterSubscription:'Matter subscription',hubLoad:'Hub load',hubMemory:'Hub memory',hubScheduler:'Hub scheduler',hubCloud:'Hub cloud connection',hubThread:'Thread network',zwaveRadioUnhealthy:'Z-Wave radio',zigbeeRadioUnhealthy:'Zigbee radio',zwaveFailed:'Failed Z-Wave node',zwaveWeakSignal:'Weak Z-Wave signal',zwaveRouteChanges:'Z-Wave route changes',zigbeeInactive:'Inactive Zigbee device',zigbeeWeakLink:'Weak Zigbee link',missingSubscriptions:'Rule with no trigger',overdueSchedule:'Overdue rule schedule'};
+function relLabel(t){return REL_T[t]||t}
+// Hub Inspector targets per finding type (keys of REL_GO). Hub-page links come first in relLinks; unknown types get those only.
+const REL_GO={dev:['Devices','devices','devTbl',1],rcz:['Radio capture','radio-capture','','zigbee'],rcw:['Radio capture','radio-capture','','zwave'],rcm:['Radio capture','radio-capture','','matter'],nzb:['Zigbee network','network','nc-zigbee'],nzw:['Z-Wave mesh','network','zwMeshTbl',1],nmt:['Matter devices','network','matterDevTbl',1],nmd:['mDNS','network','mdnsTbl'],perf:['Performance','performance'],mem:['Resource history','health','memChart'],cc:['Cloud calls','performance','cloudCallsTbl'],app:['App runtime','performance','appStatsTbl',1]};
+const REL_TG={silentDevice:'dev,rc',lowBattery:'dev',offline:'dev',zigbeeWeakLink:'rcz,nzb',zigbeeInactive:'nzb',zigbeeRadioUnhealthy:'nzb',zwaveFailed:'nzw',zwaveWeakSignal:'nzw',zwaveRouteChanges:'nzw',zwaveRadioUnhealthy:'nzw',matterSubscription:'nmt,rcm',hubThread:'nmt,rcm',missingIp:'nmd',networkOffline:'nmd',hubLoad:'perf,mem',hubMemory:'perf,mem',hubCloud:'cc',missingSubscriptions:'app',overdueSchedule:'app'};
+// One finding -> its links: {label,href} for hub pages, {label,go:{tab,id,q,sub}} for Hub Inspector targets (q=1: filter fills with the name).
+function relLinks(f){const l=[];if(f.deviceId!=null)l.push({label:'Device page',href:'/device/edit/'+f.deviceId});
+  if(f.appId!=null){const a=String(f.appId).replace(/^APP-/,'');l.push({label:'App page',href:'/installedapp/configure/'+a},{label:'App status',href:'/installedapp/status/'+a})}
+  if(/^hub/.test(f.type||''))l.push({label:'Hub alerts',href:'/alerts'});
+  const zw=/z-?wave/i.test(f.proto||'');
+  (REL_TG[f.type]||'').split(',').filter(Boolean).forEach(k=>{if(k==='rc')k=zw?'rcw':'rcz';const g=REL_GO[k];if(g)l.push({label:g[0],go:{tab:g[1],id:g[2]||'',q:g[3]===1?1:0,sub:typeof g[3]==='string'?g[3]:''}})});
+  return l}
+// Name to fill into a filter: the Devices row for a device id (generalFindings carry only a title), else the finding's own name.
+function relName(f,rows){const r=f.deviceId!=null&&(rows||[]).find(x=>x.id==f.deviceId);return r?(r.label||r.name||''):(f.name||'')}
+// Row title: app findings show the app name (hub title as tooltip); with obfuscation on a device finding shows the Devices-tab alias plus its key metric, never the hub's title.
+function relTitle(f,rows){const nm=relName(f,rows);
+  if(f.appId!=null&&f.name)return{text:Obf.nm(f.name),tip:Obf.enabled||f.title===f.name?'':f.title};
+  if(Obf.enabled&&f.deviceId!=null&&nm&&f.title!==f.name)return{text:Obf.nm(nm),meta:f.metric,tip:''};
+  return{text:Obf.nm(f.title),tip:''}}
+function relSub(f){return f.hrs!=null?'last heard '+fago(Date.now()-f.hrs*3600000):f.sub}
+const REL_RCF={zigbee:'rc-zb-f-q',zwave:'rc-zw-f-q',matter:'rc-m-f-q'};
+let relFilled=null;   // the one filter relGo filled last: {el,v}
+function relFill(el,v){el.value=v;el.dispatchEvent(new Event('input'));relFilled={el,v}}
+async function relGo(g,f){
+  // Undo the previous deep link's filter, unless the user has typed in it since.
+  if(relFilled){const o=relFilled;relFilled=null;if(o.el.isConnected&&o.el.value===o.v){o.el.value='';o.el.dispatchEvent(new Event('input'))}}
+  const wait=async id=>{for(let i=0;i<150&&!document.getElementById(id);i++)await new Promise(r=>setTimeout(r,100));return document.getElementById(id)};
+  await go(g.tab);let q='';
+  if(g.sub||g.q){let rows=[];if(f.deviceId!=null){try{rows=(await api('devices')).deviceRows}catch(e){}}q=relName(f,rows)}
+  if(g.sub){await wait('rc-subtabs');const b=document.querySelector('#rc-subtabs [data-rcsub="'+g.sub+'"]');if(b)b.click();
+    // Radio Capture filters match real names; with obfuscation on, leave the box empty rather than show one.
+    const fi=document.getElementById(REL_RCF[g.sub]);if(fi&&q&&!Obf.enabled)relFill(fi,q);return}
+  const fi=g.q&&q?await wait('flt_'+g.id):null;
+  if(fi){const dt=fi.closest('details');if(dt)dt.open=true;relFill(fi,Obf.nm(q))}
+  const el=g.id&&await wait(g.id);if(el)el.scrollIntoView({block:'start'})}
+function relSummary(rel){
+  if(!rel)return null;if(rel.unavailable)return{available:false};
+  const L=x=>Array.isArray(x)?x:[],byType={};let critical=0,warning=0;
+  const all=[...L(rel.findings),...L(rel.generalFindings),...L(rel.appFindings)].map(f=>{
+    const sev=f.severity==='critical'?'critical':'warning',t=f.findingType||'other',m=L(f.metrics).find(x=>x&&!/threshold/i.test(x.label));
+    if(sev==='critical')critical++;else warning++;byType[t]=(byType[t]||0)+1;
+    return{severity:sev,type:t,title:f.title||f.deviceName||f.appName||relLabel(t),sub:f.subtitle||f.protocol||'',hrs:f.hoursSilent,metric:m?m.label+': '+m.value:'',deviceId:f.deviceId,appId:f.appId,name:f.deviceName||f.appName||'',proto:f.protocol||f.subtitle||''}});
+  all.sort((a,b)=>(a.severity==='critical'?0:1)-(b.severity==='critical'?0:1));
+  return{available:true,critical,warning,total:all.length,byType,top:all.slice(0,10),monitored:rel.monitoredDeviceCount,generatedAt:rel.generatedAtMs}}
+let relQ=[];   // Hub Inspector link targets of the rendered card, indexed by data-rg
+function relCard(rs,rows){
+  relQ=[];
+  const lk=hp('/hub/reliability','Open Reliability Center'),n=rs.monitored,dv=n==1?'device':'devices';
+  if(!rs.available)return'<div class="card"><div class="card-h">Reliability Center'+lk+'</div><div class="card-b muted">Could not read the Reliability Center.</div></div>';
+  if(!rs.total)return'<div class="alert a-ok">\u2705 Reliability Center: no findings'+(n!=null?' ('+n+' '+dv+' monitored)':'')+'. '+lk+'</div>';
+  const ty=Object.keys(rs.byType);
+  let o='<div class="card"><div class="card-h">Reliability Center'+lk+'</div><div class="card-b"><div class="metrics">'+mc('Critical',rs.critical,rs.critical?'var(--crit)':'')+mc('Warning',rs.warning,rs.warning?'var(--warn)':'')+(n!=null?mc(n==1?'Device monitored':'Devices monitored',n):'')+'</div>';
+  o+='<div class="muted" style="margin:8px 0">'+(ty.length>1||rs.total>1?h(ty.map(t=>relLabel(t)+': '+rs.byType[t]).join(' \u00b7 '))+'. ':'')+'These are the hub\u2019s own findings and are not counted in Alerts.</div>';
+  o+='<div role="list" aria-label="Reliability Center findings">';
+  rs.top.forEach(f=>{const c=f.severity==='critical',t=relTitle(f,rows),sb=[t.meta,relSub(f)].filter(Boolean).join(' \u00b7 '),an=Obf.nm(relName(f,rows))||Obf.scrub(f.title);
+    o+='<div role="listitem" class="alert rel-row a-'+(c?'crit':'warn')+'">'+(c?'\u26D4':'\u26A0')+' <b>'+h(relLabel(f.type))+':</b> <span'+(t.tip?' title="'+h(t.tip)+'"':'')+'>'+h(t.text)+'</span>'+(sb?' <span class="muted">('+h(Obf.scrub(sb))+')</span>':'')
+      +' '+relLinks(f).map(x=>{const al=' aria-label="'+h(x.label+': '+an)+'"';return x.go?'<a href="#" class="live-only"'+al+' data-rg="'+(relQ.push({g:x.go,f})-1)+'">'+x.label+'</a>':'<a href="'+x.href+'" target="_blank" rel="noopener"'+al+'>'+x.label+' \u2197</a>'}).join(' \u00b7 ')+'</div>'});
+  o+='</div>';if(rs.total>rs.top.length)o+='<div class="muted">and '+(rs.total-rs.top.length)+' more on the hub\u2019s page</div>';
+  if(rs.generatedAt)o+='<div class="muted" style="font-size:12px;margin-top:6px">Scanned '+fdt(rs.generatedAt)+' ('+fago(rs.generatedAt)+')</div>';
+  return o+'</div></div>'}
 function composeAlerts(d){
   const out=[];
   const sig=d.alertSignals||{};
@@ -1442,6 +1504,7 @@ function assembleForumData(r){
     eventStateLimits: hlth.eventStateLimits||null,
     alertSignals: hlth.alertSignals||dash.alertSignals||{},
     firmwareUpdate: hlth.firmwareUpdate||dash.firmwareUpdate||null,
+    reliability: hlth.reliability||null,
     deviceStats: {
       totalDevices: ds.totalDevices, activeDevices: ds.activeDevices,
       inactiveDevices: ds.inactiveDevices, disabledDevices: ds.disabledDevices,
@@ -1550,6 +1613,8 @@ function forumMarkdownBody(d){
   }else{
     L('');L('No active alerts.');
   }
+  const rel=relSummary(d.reliability);
+  if(rel&&rel.total){L('');L(`Reliability Center: ${rel.critical} critical, ${rel.warning} warning (${Object.keys(rel.byType).map(t=>relLabel(t)+' '+rel.byType[t]).join(', ')})`)}
 
   // ── 2. Device Inventory ──
   L('');L('### Devices');
@@ -3193,7 +3258,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
       {l:'Msgs',f:'msgCount',t:'n'},{l:'Msgs/Min',f:'msgPerMin',t:'n',r:rateCell},
       {l:'Driver',f:'driverType',r:r=>r.driverType==='usr'?'<span style="color:var(--link)">User</span>':r.driverType==='sys'?'Built-in':'\u2014'},
       {l:'State',f:'state',r:r=>'<span style="color:'+(r.state==='OK'?'var(--ok)':'var(--crit)')+'">'+h(r.state)+'</span>'}
-    ],d.zwave.mesh.nodes,{sc:0,sd:'asc',collapse:1,collapseLabel:'Z-Wave Mesh Nodes'});
+    ],d.zwave.mesh.nodes,{sc:0,sd:'asc',filter:true,collapse:1,collapseLabel:'Z-Wave Mesh Nodes'});
   // Zigbee neighbor detail table
   if(d.zigbee&&d.zigbee.mesh&&d.zigbee.mesh.neighborDetails&&d.zigbee.mesh.neighborDetails.length)
     tbl('zbNeighborTbl',[
@@ -3234,6 +3299,7 @@ async function rHealth(){const P='p-health';loading(P);try{
   if(allAlerts.length){o+='<div class="card"><div class="card-h">Alerts ('+allAlerts.length+')</div><div class="card-b" role="status" aria-live="polite" aria-label="Active alerts">';
     allAlerts.forEach(a=>{o+=alertRow(a,a.message)});o+='</div></div>'}
   else o+='<div class="alert a-ok">\u2705 No active alerts</div>';
+  const rs=relSummary(d.reliability);if(rs){let rr=[];if(Obf.enabled&&rs.available){try{rr=(await api('devices')).deviceRows}catch(e){}}o+=relCard(rs,rr)}
   // Resources
   if(d.resources){const r=d.resources;
     o+='<div class="card"><div class="card-h">System Resources<span id="res-health-ts" style="float:right;font-size:11px;font-weight:normal;opacity:.6"></span></div><div class="card-b"><div id="res-health">'+renderHealthRes(r,d)+'</div></div></div>'}
@@ -6007,8 +6073,9 @@ function go(t){
   document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active',e.dataset.tab===t));
   document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active',p.id==='p-'+t));
   const p=document.getElementById('p-'+t);
-  if(!p.children.length||p.querySelector('.loading')||p.querySelector('.err'))R[t]();
+  return(!p.children.length||p.querySelector('.loading')||p.querySelector('.err'))?R[t]():Promise.resolve();
 }
+document.getElementById('p-health').addEventListener('click',e=>{const a=e.target.closest('a[data-rg]');if(!a)return;e.preventDefault();const q=relQ[+a.dataset.rg];if(q)relGo(q.g,q.f)});
 document.getElementById('tabs').addEventListener('click',e=>{if(e.target.dataset.tab)go(e.target.dataset.tab)});
 
 async function refreshLive(){

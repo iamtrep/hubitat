@@ -34,6 +34,8 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final String RUNTIME_STATS_PATH = "/logs/json"
 @Field static final String CLOUD_CALLS_PATH = "/logs/cloudCalls/json"   // 2.5.2.129+, 404 before
 @Field static final String CLOUD_CALLS_MIN_FW = "2.5.2.129"
+@Field static final String RELIABILITY_PATH = "/hub/reliability/checkins"   // 2.5.3+, 404 before
+@Field static final String RELIABILITY_MIN_FW = "2.5.3.104"
 @Field static final String DATABASE_SIZE_PATH = "/hub/advanced/databaseSize"
 @Field static final String INTERNAL_TEMP_PATH = "/hub/advanced/internalTempCelsius"
 @Field static final String ZIGBEE_CHILD_ROUTE_PATH = "/hub/zigbee/getChildAndRouteInfo"
@@ -202,7 +204,8 @@ import java.util.concurrent.atomic.AtomicInteger
 
 // Unified session-scoped TTL cache (Tier 2 — see ARCHITECTURE.md "Caching Strategy").
 // Key → [data: Object, at: Long]. Wiped on reboot/code push; cleared wholesale in updated().
-// Fetch closures MUST return null (not an empty map) on failure so misses are never cached.
+// Fetch closures MUST return null (not an empty map) on failure so misses are never cached
+// (one deliberate exception: fetchReliability, which caches its failure marker).
 @Field static final ConcurrentHashMap<String, Map> TTL_CACHE = new ConcurrentHashMap<>()
 
 private Object cachedFetch(String key, long ttlMs, Closure fetch) {
@@ -1461,7 +1464,8 @@ Map getHealthData(Map shared = [:]) {
         backups: fetchBackups(),
         loadThreshold: fetchExcessiveLoadThreshold(),
         cpuInfo: fetchCpuInfo(),
-        events: fetchHubEvents()
+        events: fetchHubEvents(),
+        reliability: fetchReliability()
     ]
 }
 
@@ -2006,6 +2010,19 @@ Map fetchCloudCalls(long ttlMs = CLOUD_CALLS_CACHE_TTL_MS) {
     return (Map) cachedFetch('cloudCalls', ttlMs) {
         Map w = hubMapRequest(CLOUD_CALLS_PATH, "cloud calls", 10)
         return (w.ok && w.data) ? w.data : null
+    }
+}
+
+// /hub/reliability/checkins: Reliability Center findings, raw plus generatedAtMs. Each call runs a hub scan, hence the 5 min cache.
+// null before 2.5.3.104 (no request: the 404 would logError per load); [unavailable: true] when the read failed.
+// The failure is cached too, unlike other slots: one logged error per TTL instead of one per Health load.
+Map fetchReliability() {
+    if (!isVersionAtLeast(getHubFirmwareVersion(), RELIABILITY_MIN_FW)) return null
+    return (Map) cachedFetch('reliability', LOAD_THRESHOLD_CACHE_TTL_MS) {
+        Map w = hubMapRequest(RELIABILITY_PATH, "reliability center", 15, false)
+        if (!w.ok || !w.data) return [unavailable: true]
+        w.data.generatedAtMs = parseDate(w.data.generatedAt)
+        return w.data
     }
 }
 

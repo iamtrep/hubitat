@@ -743,6 +743,22 @@ else:
     else:
         fail("Missing 'loadThreshold' field (v5.9.0+)")
 
+    # 6.2.0+ Reliability Center: an object on firmware >= 2.5.3.104, null below it.
+    # The same gate as RELIABILITY_MIN_FW in HubInspector.groovy.
+    fw = [int(x) for x in re.findall(r"\d+", str(h.get("firmware") or ""))]
+    if "reliability" not in health:
+        fail("Missing 'reliability' field (6.2.0+)")
+    elif fw >= [2, 5, 3, 104]:
+        rel = health["reliability"]
+        if isinstance(rel, dict) and ("findings" in rel or rel.get("unavailable") is True):
+            ok(f"reliability is an object on fw {h.get('firmware')} ({'unavailable' if rel.get('unavailable') else 'monitored=' + str(rel.get('monitoredDeviceCount'))})")
+        else:
+            fail(f"reliability must be an object with 'findings' or 'unavailable' on fw {h.get('firmware')}, got {rel!r:.80}")
+    elif health["reliability"] is None:
+        ok(f"reliability is null below 2.5.3.104 (fw {h.get('firmware')})")
+    else:
+        fail(f"reliability must be null below 2.5.3.104 (fw {h.get('firmware')}), got {health['reliability']!r:.80}")
+
     # v5.9.0+ backups card data
     if "backups" in health:
         ok("Has 'backups' field")

@@ -135,6 +135,13 @@ t('radioStats passthrough + uptimeMin derived + names aliased unless the forum o
   assert.strictEqual(d.obfuscate, true);
   assert.strictEqual(assembleForumData(Object.assign({}, r, { settings: { forumObfuscate: false } })).obfuscate, false);
 });
+t('reliability passes through; null when the health payload lacks it', () => {
+  assert.strictEqual(d.reliability, null);
+  const r3 = JSON.parse(JSON.stringify(r)); r3.health.reliability = { findings: [{ findingType: 'silentDevice' }], monitoredDeviceCount: 6 };
+  assert.strictEqual(assembleForumData(r3).reliability.monitoredDeviceCount, 6);
+  r3.health.reliability = { unavailable: true };
+  assert.strictEqual(assembleForumData(r3).reliability.unavailable, true);
+});
 t('Matter / Hub Mesh / Performance sections carried through for the builder', () => {
   // Matter is a raw passthrough; builder reads networkData.matter.{installed,networkState,fabricId}.
   assert.strictEqual(d.networkData.matter.fabricId, 'A98634F7');

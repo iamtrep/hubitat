@@ -22,15 +22,17 @@ function extractFn(name) {
   return src.slice(s, i);
 }
 const HELPERS = ['makeObf', 'assembleForumData', 'buildForumMarkdown', 'forumMarkdownBody', 'composeAlerts', 'flattenRadioDevices',
-  'fmem', 'ftemp', 'tScale', 'tSym', 'c2u', 'splitGhostNodes', 'zbWeakNeighbors', 'zbStaleNeighbors', 'zbMeshDetails', 'zwMeshStats', 'noTags', 'isNewer'];
+  'fmem', 'ftemp', 'tScale', 'tSym', 'c2u', 'splitGhostNodes', 'zbWeakNeighbors', 'zbStaleNeighbors', 'zbMeshDetails', 'zwMeshStats', 'noTags', 'isNewer', 'relSummary', 'relLabel'];
 const CD = (src.match(/const CD=\{[^;]*\};/) || [])[0];
 assert(CD, 'CD const not found');
 const THRESHOLDS = (src.match(/const ZWAVE_PER_CRIT=[^;]+;/) || [])[0];
 assert(THRESHOLDS, 'threshold consts not found');
+const REL_T = (src.match(/const REL_T=\{[^;]*\};/) || [])[0];
+assert(REL_T, 'REL_T const not found');
 const harness =
   'const CODE_VERSION="5.58.0";\n' +
   'let TH={temperatureScale:"C",critMemMb:75,warnMemMb:100,warnCpuLoad:4,critCpuLoad:8,warnTempC:50,critTempC:60,chattyDeviceThreshold:10};\n' +
-  THRESHOLDS + '\n' + CD + '\n' + HELPERS.map(extractFn).join('\n') +
+  THRESHOLDS + '\n' + CD + '\n' + REL_T + '\n' + HELPERS.map(extractFn).join('\n') +
   '\nconst Obf = makeObf();' +
   '\nmodule.exports = { assembleForumData, buildForumMarkdown, Obf };';
 const tmp = path.join(os.tmpdir(), 'hd_render_' + process.pid + '.js');
@@ -259,6 +261,33 @@ has2('**Fabric:** 9F93BB6F02A43E79', 'Matter still renders');
   const real = buildForumMarkdown(assembleForumData(Object.assign({}, rl, { settings: { forumObfuscate: false } })));
   assert.ok(real.includes('LEAK_runtimeDevice') && real.includes('LEAK_meshPeerHub'), 'real-names export lost the names');
   console.log('  ok   default export aliases every printed name; real names only on request');
+}
+
+// --- Reliability Center line: absent == null (the 2.5.2 path), and a payload adds one line after Alerts ---
+{
+  const base = JSON.parse(JSON.stringify(r2));
+  const mdAbsent = buildForumMarkdown(assembleForumData(base));
+  const withNull = JSON.parse(JSON.stringify(r2)); withNull.health.reliability = null;
+  const withUnavail = JSON.parse(JSON.stringify(r2)); withUnavail.health.reliability = { unavailable: true };
+  const withEmpty = JSON.parse(JSON.stringify(r2)); withEmpty.health.reliability = { findings: [], generalFindings: [], appFindings: [], monitoredDeviceCount: 6 };
+  assert.ok(!/Reliability/.test(mdAbsent), 'absent reliability must add no text');
+  assert.strictEqual(buildForumMarkdown(assembleForumData(withNull)), mdAbsent, 'null == absent');
+  assert.strictEqual(buildForumMarkdown(assembleForumData(withUnavail)), mdAbsent, 'unavailable adds nothing');
+  assert.strictEqual(buildForumMarkdown(assembleForumData(withEmpty)), mdAbsent, 'no findings adds nothing');
+  const withRel = JSON.parse(JSON.stringify(r2));
+  withRel.health.reliability = {
+    findings: [{ findingType: 'silentDevice', deviceId: 5, deviceName: 'Hall Sensor', severity: 'critical', hoursSilent: 100 }],
+    generalFindings: [{ findingType: 'lowBattery', deviceId: 6, title: 'Low battery', severity: 'warning' }],
+    appFindings: [{ findingType: 'missingSubscriptions', appId: 7, title: 'Test Rule', severity: 'warning' }, { findingType: 'futureType', appId: 8, title: 'X' }]
+  };
+  const mdRel = buildForumMarkdown(assembleForumData(withRel));
+  const line = 'Reliability Center: 1 critical, 3 warning (Silent device 1, Low battery 1, Rule with no trigger 1, futureType 1)';
+  assert.deepStrictEqual(mdRel.split('\n').filter(x => !mdAbsent.split('\n').includes(x)), [line], 'exactly one new content line');
+  const ls = mdRel.split('\n'), i = ls.indexOf(line);
+  assert.ok(i > ls.indexOf('### Alerts') && i < ls.indexOf('### Devices'), 'line is between Alerts and Devices');
+  assert.ok(!/Hall Sensor|Test Rule/.test(mdRel), 'no names in the forum line');
+  pass++;
+  console.log('  ok   reliability forum line (absent/null/unavailable/empty add nothing; payload adds one line after Alerts)');
 }
 
 console.log(`\n${pass}/${pass + fail} passed${fail ? `, ${fail} failed` : ''}`);
