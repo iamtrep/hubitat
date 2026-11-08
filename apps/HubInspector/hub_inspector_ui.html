@@ -1355,7 +1355,7 @@ function alertRow(a,text){
   const sev=(a.severity==='critical')?'crit':((a.severity==='info')?'info':'warn');const icon=(a.severity==='critical')?'\u26D4':((a.severity==='info')?'\u2139':'\u26A0');
   const body=a.href?'<a class="live-only" href="'+a.href+'" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline">'+h(text)+' ↗</a><span class="report-only">'+h(text)+'</span>':h(text);
   return'<div class="alert a-'+sev+'">'+icon+' '+body+'</div>'}
-// Reliability Center (firmware 2.5.3+): pure summary of the raw payload. null = absent, {available:false} = read failed.
+// Troubleshooting Center (firmware 2.5.3+): pure summary of the raw payload. null = absent, {available:false} = read failed.
 const REL_T={silentDevice:'Silent device',lowBattery:'Low battery',offline:'Offline',missingIp:'No IP address',networkOffline:'Network offline',matterSubscription:'Matter subscription',hubLoad:'Hub load',hubMemory:'Hub memory',hubScheduler:'Hub scheduler',hubCloud:'Hub cloud connection',hubThread:'Thread network',zwaveRadioUnhealthy:'Z-Wave radio',zigbeeRadioUnhealthy:'Zigbee radio',zwaveFailed:'Failed Z-Wave node',zwaveWeakSignal:'Weak Z-Wave signal',zwaveRouteChanges:'Z-Wave route changes',zigbeeInactive:'Inactive Zigbee device',zigbeeWeakLink:'Weak Zigbee link',missingSubscriptions:'Rule with no trigger',overdueSchedule:'Overdue rule schedule'};
 function relLabel(t){return REL_T[t]||t}
 // Hub Inspector targets per finding type (keys of REL_GO). Hub-page links come first in relLinks; unknown types get those only.
@@ -1403,13 +1403,13 @@ function relSummary(rel){
 let relQ=[];   // Hub Inspector link targets of the rendered card, indexed by data-rg
 function relCard(rs,rows){
   relQ=[];
-  const lk=hp('/hub/reliability','Open Reliability Center'),n=rs.monitored,dv=n==1?'device':'devices';
-  if(!rs.available)return'<div class="card"><div class="card-h">Reliability Center'+lk+'</div><div class="card-b muted">Could not read the Reliability Center.</div></div>';
-  if(!rs.total)return'<div class="alert a-ok">\u2705 Reliability Center: no findings'+(n!=null?' ('+n+' '+dv+' monitored)':'')+'. '+lk+'</div>';
+  const lk=hp('/hub/reliability','Open Troubleshooting Center'),n=rs.monitored,dv=n==1?'device':'devices';
+  if(!rs.available)return'<div class="card"><div class="card-h">Troubleshooting Center'+lk+'</div><div class="card-b muted">Could not read the Troubleshooting Center.</div></div>';
+  if(!rs.total)return'<div class="alert a-ok">\u2705 Troubleshooting Center: no findings'+(n!=null?' ('+n+' '+dv+' monitored)':'')+'. '+lk+'</div>';
   const ty=Object.keys(rs.byType);
-  let o='<div class="card"><div class="card-h">Reliability Center'+lk+'</div><div class="card-b"><div class="metrics">'+mc('Critical',rs.critical,rs.critical?'var(--crit)':'')+mc('Warning',rs.warning,rs.warning?'var(--warn)':'')+(n!=null?mc(n==1?'Device monitored':'Devices monitored',n):'')+'</div>';
+  let o='<div class="card"><div class="card-h">Troubleshooting Center'+lk+'</div><div class="card-b"><div class="metrics">'+mc('Critical',rs.critical,rs.critical?'var(--crit)':'')+mc('Warning',rs.warning,rs.warning?'var(--warn)':'')+(n!=null?mc(n==1?'Device monitored':'Devices monitored',n):'')+'</div>';
   o+='<div class="muted" style="margin:8px 0">'+(ty.length>1||rs.total>1?h(ty.map(t=>relLabel(t)+': '+rs.byType[t]).join(' \u00b7 '))+'. ':'')+'These are the hub\u2019s own findings and are not counted in Alerts.</div>';
-  o+='<div role="list" aria-label="Reliability Center findings">';
+  o+='<div role="list" aria-label="Troubleshooting Center findings">';
   rs.top.forEach(f=>{const c=f.severity==='critical',t=relTitle(f,rows),sb=[t.meta,relSub(f)].filter(Boolean).join(' \u00b7 '),an=Obf.nm(relName(f,rows))||Obf.scrub(f.title);
     o+='<div role="listitem" class="alert rel-row a-'+(c?'crit':'warn')+'">'+(c?'\u26D4':'\u26A0')+' <b>'+h(relLabel(f.type))+':</b> <span'+(t.tip?' title="'+h(t.tip)+'"':'')+'>'+h(t.text)+'</span>'+(sb?' <span class="muted">('+h(Obf.scrub(sb))+')</span>':'')
       +' '+relLinks(f).map(x=>{const al=' aria-label="'+h(x.label+': '+an)+'"';return x.go?'<a href="#" class="live-only"'+al+' data-rg="'+(relQ.push({g:x.go,f})-1)+'">'+x.label+'</a>':'<a href="'+x.href+'" target="_blank" rel="noopener"'+al+'>'+x.label+' \u2197</a>'}).join(' \u00b7 ')+'</div>'});
@@ -1614,7 +1614,7 @@ function forumMarkdownBody(d){
     L('');L('No active alerts.');
   }
   const rel=relSummary(d.reliability);
-  if(rel&&rel.total){L('');L(`Reliability Center: ${rel.critical} critical, ${rel.warning} warning (${Object.keys(rel.byType).map(t=>relLabel(t)+' '+rel.byType[t]).join(', ')})`)}
+  if(rel&&rel.total){L('');L(`Troubleshooting Center: ${rel.critical} critical, ${rel.warning} warning (${Object.keys(rel.byType).map(t=>relLabel(t)+' '+rel.byType[t]).join(', ')})`)}
 
   // ── 2. Device Inventory ──
   L('');L('### Devices');

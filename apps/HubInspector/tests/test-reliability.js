@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 PJ
 // SPDX-License-Identifier: MIT
 //
-// Unit test for relSummary / relLabel / relLinks (hub_inspector_ui.html), the Reliability Center
+// Unit test for relSummary / relLabel / relLinks (hub_inspector_ui.html), the Troubleshooting Center
 // card's derivation (firmware 2.5.3+). Extracted by name from the shipped SPA and run directly.
 // Fixtures use invented names and ids.
 //

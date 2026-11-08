@@ -2013,7 +2013,7 @@ Map fetchCloudCalls(long ttlMs = CLOUD_CALLS_CACHE_TTL_MS) {
     }
 }
 
-// /hub/reliability/checkins: Reliability Center findings, raw plus generatedAtMs. Each call runs a hub scan, hence the 5 min cache.
+// /hub/reliability/checkins: Troubleshooting Center findings, raw plus generatedAtMs. Each call runs a hub scan, hence the 5 min cache.
 // null before 2.5.3.104 (no request: the 404 would logError per load); [unavailable: true] when the read failed.
 // The failure is cached too, unlike other slots: one logged error per TTL instead of one per Health load.
 Map fetchReliability() {

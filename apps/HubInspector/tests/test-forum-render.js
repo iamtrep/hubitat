@@ -263,7 +263,7 @@ has2('**Fabric:** 9F93BB6F02A43E79', 'Matter still renders');
   console.log('  ok   default export aliases every printed name; real names only on request');
 }
 
-// --- Reliability Center line: absent == null (the 2.5.2 path), and a payload adds one line after Alerts ---
+// --- Troubleshooting Center line: absent == null (the 2.5.2 path), and a payload adds one line after Alerts ---
 {
   const base = JSON.parse(JSON.stringify(r2));
   const mdAbsent = buildForumMarkdown(assembleForumData(base));
@@ -281,7 +281,7 @@ has2('**Fabric:** 9F93BB6F02A43E79', 'Matter still renders');
     appFindings: [{ findingType: 'missingSubscriptions', appId: 7, title: 'Test Rule', severity: 'warning' }, { findingType: 'futureType', appId: 8, title: 'X' }]
   };
   const mdRel = buildForumMarkdown(assembleForumData(withRel));
-  const line = 'Reliability Center: 1 critical, 3 warning (Silent device 1, Low battery 1, Rule with no trigger 1, futureType 1)';
+  const line = 'Troubleshooting Center: 1 critical, 3 warning (Silent device 1, Low battery 1, Rule with no trigger 1, futureType 1)';
   assert.deepStrictEqual(mdRel.split('\n').filter(x => !mdAbsent.split('\n').includes(x)), [line], 'exactly one new content line');
   const ls = mdRel.split('\n'), i = ls.indexOf(line);
   assert.ok(i > ls.indexOf('### Alerts') && i < ls.indexOf('### Devices'), 'line is between Alerts and Devices');
