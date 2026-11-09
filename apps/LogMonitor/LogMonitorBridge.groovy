@@ -4,17 +4,22 @@
 /**
  * Log Monitor Bridge — WebSocket Bridge Driver
  *
- * Connects to the hub's logsocket and forwards every log entry to its
- * parent app (Log Monitor) via parent.processLogEntry(). No filtering
- * or processing — purely a transport bridge.
+ * Connects to the hub's logsocket and forwards the log entries its parent app (Log Monitor)
+ * can use via parent.processLogEntry(). A transport bridge: parse() only counts, drops frames
+ * no filter wants (a substring check) and queues the rest; drain() does the JSON work once a
+ * second, a bounded batch at a time.
+ *
+ * Why: /logsocket is one stream shared by every client, and a client that reads slowly
+ * stalls it for all of them. parse() must therefore return at once.
  */
 
 import groovy.json.JsonSlurper
 import groovy.transform.Field
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "1.0.6"
+@Field static final String CODE_VERSION = "1.0.7"
 @Field static final int STARTUP_DELAY_SECS = 60
 // Set by disconnect() so the socket-closed callback doesn't reconnect. Not atomicState: in a
 // driver, a state write-back at method exit overwrites atomicState keys written after the
@@ -35,6 +40,30 @@ import java.util.concurrent.atomic.AtomicInteger
 // nothing (seen for 36 h on a remote bridge), so a long silence triggers a reconnect.
 @Field static final ConcurrentHashMap<String, Long> LAST_MESSAGE = new ConcurrentHashMap<>()
 @Field static final int DEFAULT_SILENCE_MINS = 30
+// Frames waiting for drain(), keyed by device id, and their count (ConcurrentLinkedQueue.size()
+// walks the list, so parse() keeps its own counter).
+@Field static final ConcurrentHashMap<String, ConcurrentLinkedQueue<String>> FRAMES = new ConcurrentHashMap<>()
+@Field static final ConcurrentHashMap<String, AtomicInteger> FRAMES_QUEUED = new ConcurrentHashMap<>()
+// Frames dropped because the queue was full, keyed by device id.
+@Field static final ConcurrentHashMap<String, AtomicInteger> LOGS_DROPPED = new ConcurrentHashMap<>()
+// "type/level" pairs the parent's filters want from this bridge, keyed by device id. Absent
+// (after a push or reboot) means keep every frame until drain() has fetched it from the parent.
+@Field static final ConcurrentHashMap<String, Set<String>> WANTED = new ConcurrentHashMap<>()
+// When the queue first stood at the cap without leaving it, keyed by device id.
+@Field static final ConcurrentHashMap<String, Long> FULL_SINCE = new ConcurrentHashMap<>()
+// When drain() last ran, so the periodic check can restart a chain that died.
+@Field static final ConcurrentHashMap<String, Long> DRAIN_LAST = new ConcurrentHashMap<>()
+// The last "status: closing" seen, keyed by device id, to confirm disconnect() closed the socket.
+@Field static final ConcurrentHashMap<String, Long> CLOSING_SEEN = new ConcurrentHashMap<>()
+// Device ids whose code version has been checked since the last push: parse() runs per frame and
+// reading state there costs a deserialization.
+@Field static final ConcurrentHashMap<String, String> VERSION_CHECKED = new ConcurrentHashMap<>()
+@Field static final int DRAIN_INTERVAL_MS = 1000
+@Field static final int DRAIN_BATCH = 200            // frames handed to the parent per drain()
+@Field static final long DRAIN_BUDGET_MS = 800L      // a drain() stops starting frames after this
+@Field static final int QUEUE_CAP = 2000             // frames beyond this are dropped and counted
+@Field static final long BACKLOG_LIMIT_MS = 30000L   // queue at the cap this long: reconnect
+@Field static final int CLOSE_CONFIRM_SECS = 5
 // Decrypted hub password, kept in memory only: decrypt() costs 350–830 ms. Keyed by device id;
 // value [ciphertext, plaintext].
 @Field static final ConcurrentHashMap<String, List<String>> PASSWORD_CACHE = new ConcurrentHashMap<>()
@@ -95,8 +124,8 @@ void installed() {
 void updated() {
     logDebug "updated()"
     storePassword()
+    unschedule()      // before disconnect(), which schedules its own close check
     disconnect()
-    unschedule()
     initialize()
     if (enableDebug || enableTrace) runIn(1800, "logsOff")
 }
@@ -114,6 +143,7 @@ void uninstalled() {
     OWN_CLOSE_AT.remove(device.id as String)
     PASSWORD_CACHE.remove(device.id as String)
     LAST_MESSAGE.remove(device.id as String)
+    [FRAMES, FRAMES_QUEUED, LOGS_DROPPED, WANTED, FULL_SINCE, DRAIN_LAST, CLOSING_SEEN, VERSION_CHECKED].each { it.remove(device.id as String) }
 }
 
 void deviceTypeUpdated() {
@@ -133,6 +163,9 @@ void initialize() {
     state.wsConnected = false
     reconnectAttempts().set(0)
     logsReceived().set(0)
+    logsDropped().set(0)
+    clearFrames()
+    WANTED.remove(device.id as String)   // fetched again from the parent by the next drain()
 
     atomicState.remove("logsReceived")
     state.remove("logsReceived")
@@ -140,7 +173,8 @@ void initialize() {
     sendEvent(name: "connectionStatus", value: "initializing")
 
     runIn(location.hub.uptime < STARTUP_DELAY_SECS ? STARTUP_DELAY_SECS : 2, "connect")
-    runEvery5Minutes("checkSilence")
+    // Every minute, not every 5: the check also restarts a drain chain that died.
+    runEvery1Minute("checkSilence")
 }
 
 private void checkVersion(boolean reinit = true) {
@@ -206,13 +240,27 @@ void disconnect() {
     OWN_CLOSE_AT.put(device.id.toString(), now())
     unschedule("connect")
 
+    unschedule("drain")
+    clearFrames()
+    String key = device.id as String
+    boolean wasConnected = state.wsConnected as boolean
+    CLOSING_SEEN.remove(key)
     try {
         interfaces.webSocket.close()
         state.wsConnected = false
         sendEvent(name: "connectionStatus", value: "disconnected")
         logInfo "WebSocket disconnected"
+        // A close that never completes keeps the hub's stream held for every client. The
+        // platform reports "status: closing" after our own close(); no report is worth a warning.
+        if (wasConnected) runIn(CLOSE_CONFIRM_SECS, "closeCheck")
     } catch (Exception e) {
         logError "Error disconnecting WebSocket: ${e.message}"
+    }
+}
+
+void closeCheck() {
+    if (CLOSING_SEEN.get(device.id as String) == null) {
+        logWarn "No 'status: closing' ${CLOSE_CONFIRM_SECS} s after close(); the socket may still be open on the hub"
     }
 }
 
@@ -238,6 +286,9 @@ private void scheduleReconnect() {
 void webSocketStatus(String message) {
     checkVersion()
     logTrace "WebSocket status: ${message}"
+    if (message.contains("status: closing") || message.contains("status: closed")) {
+        CLOSING_SEEN.put(device.id as String, now())
+    }
 
     if (message.contains("failure") || message.contains("error")) {
         state.wsConnected = false
@@ -256,6 +307,8 @@ void webSocketStatus(String message) {
         state.wsConnected = true
         state.lastConnectionTime = now()
         LAST_MESSAGE.put(device.id as String, now())
+        FULL_SINCE.remove(device.id as String)
+        runInMillis(DRAIN_INTERVAL_MS, "drain")
         runIn(STABLE_SECS, "connectionStable")
         sendEvent(name: "connectionStatus", value: "connected")
         logInfo "WebSocket connected"
@@ -275,11 +328,53 @@ void webSocketStatus(String message) {
     }
 }
 
+// Minimum work: this runs on the thread that reads the socket, and a slow reader stalls the hub's
+// stream for every client. No JSON, no unescaping, no call to the parent.
 void parse(String message) {
-    checkVersion()
+    String key = device.id as String
+    if (VERSION_CHECKED.get(key) != CODE_VERSION) {
+        VERSION_CHECKED.put(key, CODE_VERSION)
+        checkVersion()
+    }
     logsReceived().incrementAndGet()
-    LAST_MESSAGE.put(device.id as String, now())
+    LAST_MESSAGE.put(key, now())
 
+    if (!wantedFrame(message, WANTED.get(key))) return
+    if (!offerCapped(frames(), framesQueued(), QUEUE_CAP, message)) logsDropped().incrementAndGet()
+}
+
+// Called once a second while connected, by a runInMillis chain started when the socket opens.
+// Takes a bounded batch off the queue and does what parse() used to do for each frame.
+void drain() {
+    String key = device.id as String
+    try {
+        DRAIN_LAST.put(key, now())
+        if (WANTED.get(key) == null) fetchWanted()
+        checkBacklog(key)
+        long start = now()
+        List<String> batch = takeBatch(frames(), framesQueued(), DRAIN_BATCH)
+        for (int i = 0; i < batch.size(); i++) {
+            processFrame(batch[i])
+            if (now() - start > DRAIN_BUDGET_MS) {
+                // Out of time: the rest goes back on the queue for the next turn.
+                requeue(batch.subList(i + 1, batch.size()))
+                break
+            }
+        }
+    } catch (Exception e) {
+        logDebug "Drain error: ${e.message}"
+    } finally {
+        // The chain runs while the socket is up; disconnect() and the close callbacks end it.
+        if (state.wsConnected && !INTENTIONAL_DISCONNECT.get(key)) runInMillis(DRAIN_INTERVAL_MS, "drain")
+    }
+}
+
+private void requeue(List<String> rest) {
+    // Order across a rare overrun is not worth a deque: the rest goes behind what arrived meanwhile.
+    rest.each { String f -> offerCapped(frames(), framesQueued(), QUEUE_CAP, f) }
+}
+
+private void processFrame(String message) {
     try {
         Map logEntry = new JsonSlurper().parseText(message)
 
@@ -313,6 +408,101 @@ void parse(String message) {
     }
 }
 
+// A queue that stays at the cap means the parent can't keep up with what the filters want.
+// Reconnecting empties it and starts the stream over.
+private void checkBacklog(String key) {
+    Long since = FULL_SINCE.get(key)
+    boolean full = framesQueued().get() >= QUEUE_CAP
+    if (!full) {
+        if (since != null) FULL_SINCE.remove(key)
+        return
+    }
+    if (since == null) {
+        FULL_SINCE.put(key, now())
+    } else if (backlogExceeded(since, now(), BACKLOG_LIMIT_MS)) {
+        FULL_SINCE.remove(key)
+        logWarn "Backlog at ${QUEUE_CAP} frames for over ${(BACKLOG_LIMIT_MS / 1000) as int} s (${logsDropped().get()} dropped); reconnecting"
+        reconnect()
+    }
+}
+
+// The parent's wanted set for this bridge, fetched when the cache is empty. The parent also
+// pushes a new one through setWanted() whenever its filters change.
+private void fetchWanted() {
+    try {
+        List<String> w = parent?.bridgeWanted(device.deviceNetworkId) as List<String>
+        if (w != null) WANTED.put(device.id as String, new HashSet<String>(w))
+    } catch (Exception e) {
+        logDebug "Could not fetch the wanted set: ${e.message}"
+    }
+}
+
+// Called by the parent (not a command). null clears the cache; drain() fetches it again.
+void setWanted(List<String> pairs) {
+    if (pairs == null) WANTED.remove(device.id as String)
+    else WANTED.put(device.id as String, new HashSet<String>(pairs))
+}
+
+private void clearFrames() {
+    frames().clear()
+    framesQueued().set(0)
+    FULL_SINCE.remove(device.id as String)
+}
+
+// ============================================================================
+// Pure helpers (extracted by tests/test-bridge-queue.groovy: no platform calls, no state)
+// ============================================================================
+
+// The value of a string field in a logsocket frame, without parsing it. A quote inside a value
+// is escaped (\") or HTML-escaped (&quot;), so a '"key":"' in a message can't be mistaken for
+// the field.
+static String frameField(String frame, String key) {
+    String marker = '"' + key + '":"'
+    int i = frame.indexOf(marker)
+    if (i < 0) return null
+    int from = i + marker.length()
+    int to = frame.indexOf('"', from)
+    return to < 0 ? null : frame.substring(from, to)
+}
+
+// Whether a frame can match a filter: its "type/level" pair is in the wanted set. No set yet,
+// a frame without both fields, or one of another type, is kept: drain() judges it.
+static boolean wantedFrame(String frame, Set<String> wanted) {
+    if (wanted == null) return true
+    String type = frameField(frame, "type")
+    String level = frameField(frame, "level")
+    if (type == null || level == null) return true
+    // A type the parent's filters have no switch for is judged by drain(), as matchesFilter does.
+    if (type != "dev" && type != "app" && type != "sys") return true
+    return wanted.contains(type + "/" + level)
+}
+
+// Adds a frame unless the queue holds cap of them; false when it was dropped. The counter is
+// approximate under concurrent callers (one parse() and one drain() at a time in practice).
+static boolean offerCapped(ConcurrentLinkedQueue<String> q, AtomicInteger depth, int cap, String frame) {
+    if (depth.get() >= cap) return false
+    q.add(frame)
+    depth.incrementAndGet()
+    return true
+}
+
+// Up to n frames from the head of the queue, oldest first.
+static List<String> takeBatch(ConcurrentLinkedQueue<String> q, AtomicInteger depth, int n) {
+    List<String> out = new ArrayList<String>()
+    String f
+    while (out.size() < n && (f = q.poll()) != null) {
+        out.add(f)
+        depth.decrementAndGet()
+    }
+    return out
+}
+
+static boolean backlogExceeded(Long fullSince, long nowMs, long limitMs) {
+    return fullSince != null && nowMs - fullSince > limitMs
+}
+
+// End of pure helpers
+
 /**
  * Returns the total count of logs received by this bridge.
  * Can be called by the parent app to display status without attribute overhead.
@@ -320,6 +510,11 @@ void parse(String message) {
 // Not a command: a parent calling a method that is also declared as a command gets null back.
 int getLogsReceivedCount() {
     return logsReceived().get()
+}
+
+// Frames dropped because the queue was full; the parent shows it next to the received count.
+int getLogsDroppedCount() {
+    return logsDropped().get()
 }
 
 // ============================================================================
@@ -407,7 +602,14 @@ private String login(String host) {
 void checkSilence() {
     int mins = (silenceTimeout != null ? silenceTimeout : DEFAULT_SILENCE_MINS) as int
     String key = device.id as String
-    if (mins <= 0 || !state.wsConnected || INTENTIONAL_DISCONNECT.get(key)) return
+    if (!state.wsConnected || INTENTIONAL_DISCONNECT.get(key)) return
+    // The drain chain is a runInMillis chain; if an execution was lost, start it again.
+    Long drained = DRAIN_LAST.get(key)
+    if (drained == null || now() - drained > 10 * DRAIN_INTERVAL_MS) {
+        logInfo "Drain was not running; restarting it"
+        runInMillis(DRAIN_INTERVAL_MS, "drain")
+    }
+    if (mins <= 0) return
     Long last = LAST_MESSAGE.get(key)
     if (last == null) {
         // In-memory times are lost on a code push or reboot: start counting now.
@@ -431,6 +633,24 @@ private AtomicInteger reconnectAttempts() {
     String key = device.id as String
     RECONNECT_ATTEMPTS.putIfAbsent(key, new AtomicInteger())
     return RECONNECT_ATTEMPTS.get(key)
+}
+
+private ConcurrentLinkedQueue<String> frames() {
+    String key = device.id as String
+    FRAMES.putIfAbsent(key, new ConcurrentLinkedQueue<String>())
+    return FRAMES.get(key)
+}
+
+private AtomicInteger framesQueued() {
+    String key = device.id as String
+    FRAMES_QUEUED.putIfAbsent(key, new AtomicInteger())
+    return FRAMES_QUEUED.get(key)
+}
+
+private AtomicInteger logsDropped() {
+    String key = device.id as String
+    LOGS_DROPPED.putIfAbsent(key, new AtomicInteger())
+    return LOGS_DROPPED.get(key)
 }
 
 private AtomicInteger logsReceived() {

@@ -18,7 +18,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.regex.Matcher
 import java.util.regex.Pattern
 
-@Field static final String CODE_VERSION = "1.2.1"
+@Field static final String CODE_VERSION = "1.2.2"
 @Field static final int MAX_BRIDGES = 5
 @Field static final int MAX_FILTERS = 10
 @Field static final int MAX_DEDUPE_HISTORY = 100
@@ -91,9 +91,11 @@ Map mainPage() {
                     String status = dev?.currentValue("connectionStatus") ?: "unknown"
                     String ip = br.hubAddress ?: "local"
                     long received = dev?.getLogsReceivedCount() ?: 0
+                    long dropped = dev?.getLogsDroppedCount() ?: 0
+                    String droppedNote = dropped > 0 ? ", <b>bridge dropped ${dropped} lines</b>" : ""
                     href(name: "editBridge${i}", page: "bridgePage",
                         title: "<b>${br.label}</b>",
-                        description: "${ip} — <b>${status}</b> (${received} logs)",
+                        description: "${ip} — <b>${status}</b> (${received} logs${droppedNote})",
                         params: [bridgeIndex: i])
                 }
             }
@@ -360,6 +362,7 @@ Map deleteFilterPage(Map params) {
             }
         }
         state.filters = filters
+        pushWanted()
         queueWork([kind: "prune", keep: httpUrlKeys(filters)])
         drain()
     }
@@ -415,6 +418,7 @@ private void initialize() {
     runEvery1Minute("resetRateLimitCounters")
 
     refreshNotifyDeviceIds()
+    pushWanted()
 
     unschedule("seedNames")
     if ((state.filters as List).any { it.hidePrivate }) {
@@ -641,6 +645,7 @@ private void savePendingFilter() {
     }
 
     state.filters = filters
+    pushWanted()
     // Saving a filter retries its URL now; drop backoff for URLs no filter uses any more.
     // Backoff is keyed by the ciphertext: encrypt() is deterministic, so equal URLs share a key.
     Set<String> urls = httpUrlKeys(filters)
@@ -685,6 +690,38 @@ private void clearFilterSettings() {
 // ============================================================================
 // Log Entry Processing (called by bridge driver via parent.processLogEntry)
 // ============================================================================
+
+// The "type/level" pairs the filters that read from this bridge can match, for the bridge's
+// cheap pre-filter: it drops other frames before parsing them. Only these two fields are
+// considered; ids and patterns are still checked in matchesFilter().
+List<String> bridgeWanted(String bridgeDni) {
+    return wantedPairs((state.filters ?: []) as List<Map>, bridgeDni)
+}
+
+static List<String> wantedPairs(List<Map> filters, String bridgeDni) {
+    Set<String> pairs = new LinkedHashSet<String>()
+    for (Map f : filters) {
+        String fb = f.bridgeDni as String
+        if (fb && fb != bridgeDni) continue
+        List<String> types = []
+        if (f.monitorDev as boolean) types << "dev"
+        if (f.monitorApp as boolean) types << "app"
+        if (f.monitorSys as boolean) types << "sys"
+        for (String t : types) for (String l : ((f.levels ?: []) as List<String>)) pairs << (t + "/" + l)
+    }
+    return pairs as List<String>
+}
+
+// Tells each bridge its wanted set again. Called wherever the filters change.
+private void pushWanted() {
+    ((state.bridges ?: []) as List<Map>).each { Map br ->
+        try {
+            getChildDevice(br.dni as String)?.setWanted(bridgeWanted(br.dni as String))
+        } catch (Exception e) {
+            logDebug "Could not update bridge ${br.dni}: ${e.message}"
+        }
+    }
+}
 
 void processLogEntry(String bridgeDni, Map logEntry) {
     if (state.version != CODE_VERSION && VERSION_CHECKED.put(app.id.toString(), CODE_VERSION) != CODE_VERSION) checkVersion()
