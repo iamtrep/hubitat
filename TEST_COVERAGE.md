@@ -87,7 +87,6 @@ Per [`TESTING.md`](TESTING.md) section 2.2, driver tests are not required by def
 | [`drivers/EnvironmentCanada_AQHI.groovy`](drivers/EnvironmentCanada_AQHI.groovy) | HTTP polling (public XML) | — | N | — | Smallest-surface candidate for the parked mock-service pattern (no auth). |
 | [`drivers/IKEA-Blinds.groovy`](drivers/IKEA-Blinds.groovy) | Zigbee | — | N | — | `parse()`-injection pattern would apply (parked). |
 | [`drivers/IPReachabilitySensor.groovy`](drivers/IPReachabilitySensor.groovy) | HTTP polling | — | N | — | Mock-service pattern would apply (parked). |
-| [`drivers/LogEventMonitor.groovy`](drivers/LogEventMonitor.groovy) | Hub log subscription | — | N | — | The Log Event Monitor Test fixture is its companion. No test script uses it now. |
 | [`drivers/QuebecIQA.groovy`](drivers/QuebecIQA.groovy) | HTTP polling | — | N | — | Mock-service pattern would apply (parked). |
 | [`drivers/VirtualSwitchPowerSource.groovy`](drivers/VirtualSwitchPowerSource.groovy) | Virtual | — | N | — | Driven by direct command, no `parse()`. |
 | [`drivers/XfinityContactSensor.groovy`](drivers/XfinityContactSensor.groovy) | Zigbee | — | N | — | Smallest-surface candidate for the parked `parse()`-injection pattern (single attribute). |
@@ -124,7 +123,6 @@ Per [`TESTING.md`](TESTING.md) section 2.2, driver tests are not required by def
 | [`drivers/tests/ArchitectureClaimsProbeDriver.groovy`](drivers/tests/ArchitectureClaimsProbeDriver.groovy) | Platform probe (fixture) | (fixture) | exempt | — | Driven by `apps/tests/test-architecture-claims.sh`; see Platform tests. |
 | [`drivers/tests/DeviceInspector.groovy`](drivers/tests/DeviceInspector.groovy) | Fixture / introspection | (fixture) | exempt | — | Diagnostic driver, not a device driver. |
 | [`drivers/tests/GenericWebsocket.groovy`](drivers/tests/GenericWebsocket.groovy) | LAN (WebSocket) | (fixture) | exempt | — | Test-only generic WebSocket client. |
-| [`drivers/tests/LogEventMonitorTest.groovy`](drivers/tests/LogEventMonitorTest.groovy) | Fixture (paired) | (fixture) | exempt | — | Companion of the Log Event Monitor driver; emits log messages at chosen levels. No test script uses it now. |
 | [`drivers/tests/NotificationCapture.groovy`](drivers/tests/NotificationCapture.groovy) | Virtual (fixture) | (fixture) | exempt | — | Captures notifications. Used by the Switched Heater Thermostat and Stuck Sensor Reset specs. |
 | [`drivers/tests/SingleThreadedProbeChild.groovy`](drivers/tests/SingleThreadedProbeChild.groovy) | Platform probe (fixture) | (fixture) | exempt | — | Child driver of the singleThreaded probe; see Platform tests. |
 | [`drivers/tests/SingleThreadedProbeDriver.groovy`](drivers/tests/SingleThreadedProbeDriver.groovy) | Platform probe (fixture) | (fixture) | exempt | — | Driver of the singleThreaded probe; see Platform tests. |

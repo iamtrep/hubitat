@@ -18,7 +18,6 @@ Hubitat Elevation device drivers for Zigbee devices, BLE sensors, and cloud APIs
 | **Environment Canada AQHI** | Air Quality Health Index driver using the Environment Canada GeoMet OGC API — current observations, hourly forecasts, and alerts |
 | **IKEA Window Blinds** | Zigbee driver for IKEA window blinds |
 | **IP Reachability Sensor** | Checks whether a host is reachable by ICMP ping and/or HTTP GET and reports it as a contact sensor |
-| **Log Event Monitor** | Monitors the hub log stream and fires events on pattern matches |
 | **Québec Air Quality Index (IQA)** | Hourly Québec air quality index (IQA) from the nearest provincial or Montréal monitoring station |
 | **Universal Electronics / Visonic / Xfinity Contact Sensor** | Zigbee contact sensor with battery, tamper, and temperature |
 | **Virtual Switch + PowerSource** | Virtual device with synced Switch and PowerSource capabilities for testing power outage detection |

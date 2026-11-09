@@ -23,7 +23,6 @@ Virtual drivers, sandbox introspection tools, and companion test apps that exerc
 
 - `DeviceInspector.groovy` — dumps `DeviceWrapper` properties to the logs (one-shot diagnostic)
 - `GenericWebsocket.groovy` — development scaffold for testing arbitrary WebSocket connections
-- `LogEventMonitorTest.groovy` — companion test device for the Log Event Monitor driver
 
 ## Companion apps
 

@@ -10,8 +10,7 @@
  * Mode 1 tests drive both inputs deterministically via Maker API
  * without needing a real Zigbee endpoint.
  *
- * Companion to drivers/tests/LogEventMonitorTest.groovy — follows the
- * same "test-only driver in drivers/tests/" convention.
+ * Follows the "test-only driver in drivers/tests/" convention.
  */
 
 metadata {
