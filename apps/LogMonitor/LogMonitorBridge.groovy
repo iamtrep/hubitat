@@ -36,6 +36,7 @@ import java.util.concurrent.atomic.AtomicInteger
 // handshake (a secured hub refusing an unauthenticated logsocket) must still back off.
 @Field static final ConcurrentHashMap<String, AtomicInteger> RECONNECT_ATTEMPTS = new ConcurrentHashMap<>()
 @Field static final int STABLE_SECS = 30
+@Field static final long QUICK_CLOSE_MS = 2000L   // a hub close this soon after open: likely auth
 // Time of the last message received, keyed by device id. A socket can stay "open" and deliver
 // nothing (seen for 36 h on a remote bridge), so a long silence triggers a reconnect.
 @Field static final ConcurrentHashMap<String, Long> LAST_MESSAGE = new ConcurrentHashMap<>()
@@ -318,9 +319,18 @@ void webSocketStatus(String message) {
             logNet "Ignoring the report of our own close (${message})"
             return
         }
+        boolean wasOpen = state.wsConnected
+        Long openedAt = state.lastConnectionTime as Long
         state.wsConnected = false
         unschedule("connectionStable")
         sendEvent(name: "connectionStatus", value: "disconnected")
+        // A secured hub closes an unauthenticated logsocket right after the handshake; without
+        // this the log shows only "connected" and a reconnect. Warn on the first close and
+        // about hourly at the longest backoff.
+        if (wasOpen && !hubUsername && openedAt != null && now() - openedAt < QUICK_CLOSE_MS
+                && reconnectAttempts().get() % 12 == 0) {
+            logWarn "The hub closed the log socket right after connecting; if it has hub security, set Hub username and Hub password"
+        }
 
         if (autoReconnect && !INTENTIONAL_DISCONNECT.get(device.id.toString())) {
             scheduleReconnect()
