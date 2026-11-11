@@ -187,6 +187,37 @@
             ]
         }
     },
+    "apps/EnergyFromPower/EnergyFromPower.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
     "apps/EventHistory/EventHistory.groovy": {
         "logging-app": {
             "version": 1,
