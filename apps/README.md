@@ -28,6 +28,7 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 <!-- AUTO:apps-subfolders -->
 | Folder | Description |
 |---|---|
+| [EnergyFromPower/](./EnergyFromPower/) | Builds an energy total (kWh) from a power meter's readings and publishes it on an energy meter device |
 | [EventHistory/](./EventHistory/) | Keeps hub and location events past the hub's own limits, in capped File Manager files |
 | [HubInspector/](./HubInspector/) | Comprehensive hub diagnostics: inventory, performance tracking, network analysis, and snapshot comparison |
 | [HvacInterlock/](./HvacInterlock/) | Gates heating and cooling equipment by season and open windows |
