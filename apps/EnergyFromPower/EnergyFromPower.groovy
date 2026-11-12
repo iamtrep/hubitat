@@ -17,12 +17,13 @@ import groovy.transform.Field
 import java.math.RoundingMode
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
+@Field static final long HOUR_MS = 3600000L
 @Field static final String OUTPUT_DRIVER = "Virtual Power/Energy Meter"
 
-// Concurrency. One record per instance (total, power held, its time, what was published, the step
-// timer) is read, changed and written back by every entry point: each power reading, the step timer,
-// the end-of-hour publish, the energy meter's echo and the reset button, and these run in parallel.
+// Concurrency. One record per instance (total, power held, its time, what was published) is read,
+// changed and written back by every entry point: each power reading, the hourly check, the energy
+// meter's echo and the reset button, and these run in parallel.
 // Every change goes through ConcurrentHashMap.compute() on the instance's key, which runs one at a
 // time per key, so no change is lost; inside it the record is saved to atomicState (saved at once,
 // in the order of the changes) and the total is published. The map is memory only: after a reboot
@@ -95,9 +96,6 @@ Map mainPage() {
         }
         section("Advanced", hideable: true, hidden: true) {
             paragraph hint("Most setups need none of these.")
-            input "hourlyPublish", "bool", title: "Publish at the end of each hour", defaultValue: true
-            paragraph hint("At 59 min 50 s past the hour, when the total has grown at all. Keeps hourly charts, such as the " +
-                           "Power and Energy Tracker's, in the right hour.")
             input "decimals", "number", title: "Decimals in the published total", defaultValue: 3, range: "0..6", required: true
             input "limitHold", "bool", title: "Stop counting when the power meter goes offline", defaultValue: false,
                   submitOnChange: true
@@ -125,23 +123,13 @@ Map mainPage() {
     }
 }
 
-// The publish rule in words, with how long a step takes at the meter's current power.
+// The publish rule in words.
 String stepHint() {
-    BigDecimal step = stepSetting()
-    String rule = hourlyPublish != false ? "Also published at the end of every hour, whichever comes first." : ""
-    BigDecimal w = meter ? toWatts(numOrNull((meter as DeviceWrapper).currentValue("power")), null) : null
-    if (w == null || w <= 0.0G) return rule
-    long s = (step * 3600000.0G / w).setScale(0, java.math.RoundingMode.HALF_UP).longValue()
-    return "${rule} At the meter's ${fmtNum(w)} W now, ${fmtNum(step)} kWh takes ${fmtDuration(s)}.".trim()
+    "Checked at each power reading. If the meter sends nothing for over an hour, the total is published " +
+    "when it has grown at all."
 }
 
 BigDecimal stepSetting() { numOrNull(stepKwh) ?: 1.0G }
-
-String fmtDuration(long s) {
-    if (s < 120L) return "${s} s"
-    if (s < 7200L) return "${s.intdiv(60L)} min"
-    return "${s.intdiv(3600L)} h"
-}
 
 String statusHtml() {
     Map rec = record()
@@ -192,16 +180,20 @@ void initialize() {
     subscribe(location, "systemStart", "systemStartHandler")
     int rm = pollMeter ? ((refreshMinutes ?: 15) as int) : 0
     if (rm > 0) schedule("${new Random().nextInt(60)} */${rm} * ? * *", "refreshMeter")
-    if (hourlyPublish != false) schedule("50 59 * * * ?", "hourlyHandler")
+    // The fallback for a meter that goes quiet: hourly, at a minute and second picked at random.
+    Random rng = new Random()
+    schedule("${rng.nextInt(60)} ${rng.nextInt(60)} * ? * *", "hourlyHandler")
     // unschedule() above cancelled the step timer, so the record must forget it.
-    change("settings saved", false) { Map rec -> rec.wakeAt = null; rec }
-    state.remove("published")   // kept in the record since 0.1.0's first builds
+    change("settings saved", "save") { Map rec -> rec.remove("wakeAt"); rec }
+    // Left by 0.1.0: the step timer and the end-of-hour setting are gone.
+    state.remove("published")
     state.remove("wakeAt")
+    app.removeSetting("hourlyPublish")
 }
 
 void systemStartHandler(evt) {
     checkVersion()
-    change("hub restart", false) { Map rec -> rec }
+    change("hub restart", "restart") { Map rec -> rec }
 }
 
 void logsOff() {
@@ -226,7 +218,7 @@ void powerHandler(evt) {
     if (w == null) { logWarn "ignored a power reading that is not a number: ${evt.value}"; return }
     logEvt "${fmtNum(w)} W"
     long t = evt.date.time as long
-    change("reading", false) { Map rec -> takeReading(rec, w, t, maxHoldMs()) }
+    change("reading", "reading") { Map rec -> takeReading(rec, w, t, maxHoldMs()) }
     if (copyPower) {
         DeviceWrapper out = outputDevice()
         if (out?.hasCommand("setPower")) out.setPower(w)
@@ -240,7 +232,7 @@ void outputEnergyHandler(evt) {
     BigDecimal v = numOrNull(evt.value)
     if (v == null || record() == null) return
     boolean adopted = false
-    change("energy meter set", false) { Map rec ->
+    change("energy meter set", "echo") { Map rec ->
         if (!isForeignTotal(v, numOrNull(rec.pub), stepSetting())) return rec
         Map next = integrate(rec, now(), maxHoldMs())
         next.wh = v * 1000.0G
@@ -251,14 +243,14 @@ void outputEnergyHandler(evt) {
     if (adopted) logInfo "the energy meter was set to ${fmtNum(v)} kWh outside the app; counting on from there"
 }
 
+// 0.1.0 set a step timer; one left over runs this, which re-runs updated() through checkVersion().
 void wakeHandler() {
     checkVersion()
-    change("step reached", false) { Map rec -> rec.wakeAt = null; rec }
 }
 
 void hourlyHandler() {
     checkVersion()
-    change("hourly", true) { Map rec -> rec }
+    change("hourly", "hourly") { Map rec -> rec }
 }
 
 void refreshMeter() {
@@ -270,7 +262,7 @@ void refreshMeter() {
 void appButtonHandler(String btn) {
     checkVersion()
     if (btn != "resetTotal" || record() == null) return
-    change("reset", false) { Map rec ->
+    change("reset", "button") { Map rec ->
         Map next = integrate(rec, now(), maxHoldMs())
         next.wh = 0.0G
         next.pub = 0.0G
@@ -285,7 +277,7 @@ void appButtonHandler(String btn) {
 String recKey() { app.id.toString() }
 
 // The record as it stands, from memory or, after a reboot or code push, from atomicState.
-// [wh: Wh, p: W held, t: counted up to, r: when that power was read, pub: kWh published, wakeAt: step timer]
+// [wh: Wh, p: W held, t: counted up to, r: when that power was read, pub: kWh published]
 Map record() { RECORDS.get(recKey()) ?: loadRecord() }
 
 Map loadRecord() {
@@ -308,39 +300,25 @@ Map newRecord() {
 }
 
 // The one way the record changes. Inside compute(), one at a time for this instance: apply the
-// change, count the energy up to now, publish when the total has grown by the step (or, with
-// anyGrowth, at all), note when the next step falls, and save. The step timer is set afterwards,
-// outside the lock.
-void change(String why, boolean anyGrowth, Closure<Map> f) {
+// change, count the energy up to now, publish by the rule for what triggered it (shouldPublish),
+// and save.
+void change(String why, String trigger, Closure<Map> f) {
     if (outputError()) return
-    Long arm = null
     Map done = RECORDS.compute(recKey(), { String k, Map held ->
         Map cur = held ?: loadRecord() ?: newRecord()
         Map rec = f.call(new LinkedHashMap(cur)) as Map
         long t = now()
         rec = integrate(rec, t, maxHoldMs())
-        BigDecimal step = stepSetting()
         BigDecimal kwh = whToKwh(numOrNull(rec.wh), decimalPlaces())
         BigDecimal pub = numOrNull(rec.pub) ?: 0.0G
-        if (kwh - pub >= step || (anyGrowth && kwh != pub)) {
+        if (shouldPublish(trigger, kwh, pub, stepSetting(), t - (rec.r as long), HOUR_MS)) {
             logDebug "publishing ${fmtNum(kwh)} kWh (${why})"
             outputDevice()?.setEnergy(kwh)
             rec.pub = kwh
-            pub = kwh
-        }
-        // A chatty meter changes the step time on every reading. Moving the timer only when the
-        // step comes sooner keeps that to about one schedule write per step; a timer that fires
-        // early finds nothing to publish and sets the next one.
-        Long at = nextStepAt(rec, pub, step, maxHoldMs())
-        Long armed = rec.wakeAt as Long
-        if (at != null && (armed == null || armed <= t || at < armed)) {
-            rec.wakeAt = at
-            arm = at
         }
         atomicState.acc = rec
         return rec
     } as java.util.function.BiFunction)
-    if (arm != null) runInMillis(Math.max(1000L, (arm as long) - now()), "wakeHandler")
     logTrace "${why}: ${done}"
 }
 
@@ -447,20 +425,14 @@ Map takeReading(Map acc, BigDecimal w, long t, long maxHoldMs) {
     return next
 }
 
-// When the total will have grown by step past the published value at the power held, or null
-// when it won't: no power, or the hold limit ends first.
+// A power reading publishes when the total has grown by the step since the last publish. The
+// hourly check publishes only for a quiet meter: no reading for quietMs, and the total grew at all.
+// Nothing else (a save, a restart, the energy meter's echo, the reset button) publishes on its own.
 @CompileStatic
-Long nextStepAt(Map acc, BigDecimal published, BigDecimal step, long maxHoldMs) {
-    BigDecimal p = numOrNull(acc.p) ?: 0.0G
-    if (p <= 0.0G) return null
-    BigDecimal needWh = (published + step) * 1000.0G - (numOrNull(acc.wh) ?: 0.0G)
-    long ms = needWh <= 0.0G ? 0L : (needWh * 3600000.0G / p).setScale(0, RoundingMode.CEILING).longValue()
-    long at = (acc.t as long) + ms
-    if (maxHoldMs > 0L) {
-        long r = acc.r != null ? (acc.r as long) : (acc.t as long)
-        if (at > r + maxHoldMs) return null
-    }
-    return at
+boolean shouldPublish(String trigger, BigDecimal kwh, BigDecimal published, BigDecimal step, long sinceReadingMs, long quietMs) {
+    if (trigger == 'reading') return kwh - published >= step
+    if (trigger == 'hourly') return sinceReadingMs >= quietMs && kwh != published
+    return false
 }
 
 // True when an energy value on the meter is not the app's own echo: it differs from what was

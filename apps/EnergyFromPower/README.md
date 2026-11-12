@@ -13,7 +13,7 @@ The app reads one power meter and adds up power × time into a running total in 
 
 Each reading counts until the next one. A power meter reports when its reading changes (send-on-delta), so between reports the power has stayed at the last reading [1]. Counting each reading for the time it held (a zero-order hold, the "left" Riemann sum) is exact for a load that steps between fixed levels, such as a water heater element or a compressor [2]. A trapezoid between readings would spread each step over the gap between reports, which is wrong for these loads.
 
-The total is published each time it has grown by the set step (1 kWh by default) and at the end of each hour, whichever comes first. The app works out when the power held will reach the next step and publishes then, so it needs no polling. The end-of-hour publish, at 59 min 50 s past the hour, gives a chart that reads the total on the hour that hour's energy.
+At each power reading the app counts the energy up to that reading and publishes the total when it has grown by the set step (1 kWh by default) since the last publish. A meter that stays quiet for over an hour, such as one holding a steady load, doesn't hold the total back: an hourly check publishes it then if it has grown at all.
 
 ## Install
 
@@ -31,10 +31,9 @@ Most installs pick the power meter and press **Done**. The settings that only so
 |---|---|---|
 | Power meter | | Any device with the Power Meter capability. A reading in kW is scaled to W |
 | Publish the total on | a device this app creates | Or a device you pick, which needs a `setEnergy` command. The page links to the device in use |
-| Publish the total each time it grows by (kWh) | 1 | The page shows how long a step takes at the meter's current power |
+| Publish the total each time it grows by (kWh) | 1 | Checked at each power reading |
 | Reset the total to 0 kWh | button | |
 | **Advanced** | | |
-| Publish at the end of each hour | on | When the total has grown since the last publish |
 | Decimals in the published total | 3 | |
 | Stop counting when the power meter goes offline | off | For a meter that can drop off the network while it reads high, which would otherwise keep counting that power. Then **Count the load as off after this long without a reading** (60 min by default). Leave it off for a plug that reports only when the power changes: it can be silent for hours while the load runs steadily |
 | Ask the power meter for a reading on a schedule | off | For a meter that does not send readings on its own: calls its `refresh()` every 15 min by default |
@@ -48,13 +47,13 @@ Across a hub restart, the power read before the restart counts for the time the 
 
 ## Using it with the Power and Energy Tracker
 
-The hub's Power and Energy Tracker takes an energy meter, not a power meter, so it can't read a meter that reports only power. Select this app's energy meter in the tracker instead. The tracker reads the total once an hour, on the hour, and reads nothing else from the device. The power meter can stay as it is for the apps that take power, such as Load Shedder and Power Aggregator.
+The hub's Power and Energy Tracker takes an energy meter, not a power meter, so it can't read a meter that reports only power. Select this app's energy meter in the tracker instead. The tracker reads the total once an hour, on the hour, and reads nothing else from the device. Its hourly figures move in steps: energy counts in the hour the total is published, so with a 1 kWh step a light load shows as 1 kWh every few hours. A smaller step evens that out. The power meter can stay as it is for the apps that take power, such as Load Shedder and Power Aggregator.
 
 The tracker's first reading counts the whole total as that hour's usage, so select a new energy meter, at 0 kWh, or expect the first hour to show the total the device held. A reset of the total shows as negative usage in the hour it happens.
 
 ## Tests
 
-`tests/test_core.groovy` runs the app's pure core off-hub: integration over step loads, readings handled late, the offline limit, publish timing and telling its own values from outside ones.
+`tests/test_core.groovy` runs the app's pure core off-hub: integration over step loads, readings handled late, the offline limit, the publish rule and telling its own values from outside ones.
 
 ## References
 

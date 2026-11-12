@@ -50,8 +50,6 @@ check('out-of-order keeps the held time', core.integrate([wh: 5.0G, p: 600.0G, t
 Map held = core.takeReading([wh: 0.0G, p: 0.0G, t: 0L], 600.0G, 0L, 30L * 60000L)
 held = core.integrate(held, H, 30L * 60000L)
 check('hold counts from the reading, not the last update', core.integrate(held, 3L * H, 30L * 60000L).wh, 300)
-check('no step past the hold limit', core.nextStepAt([wh: 0.0G, p: 600.0G, t: 0L, r: 0L], 0.0G, 0.1G, 5L * 60000L), null)
-check('a step inside the hold limit', core.nextStepAt([wh: 0.0G, p: 600.0G, t: 0L, r: 0L], 0.0G, 0.1G, 30L * 60000L), 600000L)
 
 // A water heater element: off, on 4500 W from 10 min to 40 min, off again. 30 min at 4.5 kW.
 check('one heating cycle', replayWh([[0, 0], [600, 4500], [2400, 0]], 3600L), 2250)
@@ -81,10 +79,14 @@ check('a late reading keeps other keys', core.takeReading(core.integrate(extra, 
 check('integrate copies', core.integrate(extra, H, 0L).is(extra), false)
 
 // ── publishing ──
-check('next step at 4500 W, 0.1 kWh', core.nextStepAt([wh: 0.0G, p: 4500.0G, t: 0L], 0.0G, 0.1G, 0L), 80000L)
-check('next step counts what is already in', core.nextStepAt([wh: 50.0G, p: 4500.0G, t: 0L], 0.0G, 0.1G, 0L), 40000L)
-check('no next step at 0 W', core.nextStepAt([wh: 0.0G, p: 0.0G, t: 0L], 0.0G, 0.1G, 0L), null)
-check('step already passed wakes now', core.nextStepAt([wh: 150.0G, p: 10.0G, t: 5L], 0.0G, 0.1G, 0L), 5L)
+check('a reading publishes at the step', core.shouldPublish('reading', 2.0G, 1.0G, 1.0G, 0L, H), true)
+check('a reading below the step does not', core.shouldPublish('reading', 1.999G, 1.0G, 1.0G, 0L, H), false)
+check('a reading after an hour of silence: still the step', core.shouldPublish('reading', 1.5G, 1.0G, 1.0G, 2L * H, H), false)
+check('hourly check while readings come: nothing, even past the step', core.shouldPublish('hourly', 3.0G, 1.0G, 1.0G, H - 1L, H), false)
+check('hourly check after an hour without a reading: any growth', core.shouldPublish('hourly', 1.001G, 1.0G, 1.0G, H, H), true)
+check('hourly check with nothing new', core.shouldPublish('hourly', 1.0G, 1.0G, 1.0G, 5L * H, H), false)
+check('a save does not publish', core.shouldPublish('save', 5.0G, 1.0G, 1.0G, 5L * H, H), false)
+check('a reset below the published total is not a step', core.shouldPublish('reading', 0.0G, 5.0G, 1.0G, 0L, H), false)
 
 // ── foreign totals on the energy meter ──
 check('own echo', core.isForeignTotal(12.345G, 12.345G, 0.1G), false)
