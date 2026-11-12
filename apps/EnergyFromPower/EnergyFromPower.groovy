@@ -115,8 +115,7 @@ Map mainPage() {
             }
             input "copyPower", "bool", title: "Forward each power reading to the energy meter", defaultValue: false, submitOnChange: true
             paragraph "<div class='p-message p-message-warn p-3 border-round'><b>Adds load to the hub.</b> Every power reading " +
-                      "becomes a second event on the energy meter. With a meter that reports often, this can slow the hub. Use it " +
-                      "only when a dashboard needs power and energy on one device.</div>"
+                      "becomes a second event on the energy meter. With a meter that reports often, this can slow the hub.</div>"
         }
         section("Logging", hideable: true, hidden: true) {
             input "txtEnable", "bool", title: "Enable info logging", defaultValue: true

@@ -38,7 +38,7 @@ Most installs pick the power meter and press **Done**. The settings that only so
 | Decimals in the published total | 3 | |
 | Stop counting when the power meter goes offline | off | For a meter that can drop off the network while it reads high, which would otherwise keep counting that power. Then **Count the load as off after this long without a reading** (60 min by default). Leave it off for a plug that reports only when the power changes: it can be silent for hours while the load runs steadily |
 | Ask the power meter for a reading on a schedule | off | For a meter that does not send readings on its own: calls its `refresh()` every 15 min by default |
-| Forward each power reading to the energy meter | off | Every power reading becomes a second event, which adds load to the hub with a meter that reports often. Only for a dashboard that needs power and energy on one device |
+| Forward each power reading to the energy meter | off | Every power reading becomes a second event, which adds load to the hub with a meter that reports often |
 
 ## The total
 
