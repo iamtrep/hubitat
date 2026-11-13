@@ -4704,12 +4704,37 @@ const RC_SCROLL_SUPPRESS_MS = 80;   // window during which rcTailOnScroll ignore
 // added on top, existing rows unchanged in order (the 1 Hz ingest path). The table HTML is always rebuilt
 // wholesale, so the scroll correction relies on the height delta, not a DOM-level prepend. Any paint that can
 // reorder or drop existing rows (filter change) must pass { repin:true } instead, or the anchor math is wrong.
+// The tail renders only the newest RC_TAIL_MAX_ROWS rows; the recording buffer keeps (and downloads) everything.
+// Each tick used to parse the whole buffer and rebuild one table row per frame, so the cost grew with the capture.
+// Structured Matter parsing windows the source to the newest RC_MATTER_TAIL_LINES lines for the same reason.
+const RC_TAIL_MAX_ROWS=500;
+const RC_MATTER_TAIL_LINES=5000;
+
+// Newest-first rows for a buffer, at most RC_TAIL_MAX_ROWS. pick(line) returns the row or null (filtered out
+// or unparsable). Rows already built for a frame are reused from the previous tick, so a tick parses only the
+// frames that arrived since; key invalidates the reuse when the filter or the decoder changes. Sets z.displayCapped.
+function rcTailCollect(z, src, key, pick){
+  const prev=(z._rowCacheKey===key&&z._rowCache)?z._rowCache:null;
+  const next=new Map(),out=[];
+  for(let i=src.length-1;i>=0;i--){
+    if(out.length>=RC_TAIL_MAX_ROWS){z.displayCapped=true;break}
+    const fr=src[i];
+    let r=prev?prev.get(fr):undefined;
+    if(r===undefined)r=pick(fr.line);
+    if(!r)continue;
+    next.set(fr,r);out.push(r);
+  }
+  if(out.length<RC_TAIL_MAX_ROWS)z.displayCapped=false;
+  z._rowCache=next;z._rowCacheKey=key;
+  return out;
+}
+
 function rcTailPaint(cfg, opt){
   opt=opt||{};
   const z=cfg.z;
   const live=document.getElementById(cfg.liveId);if(!live)return;
   const n=z.displayBuf.length,u=cfg.unit||'frame';
-  const headerHtml='Live tail ('+n+' '+u+(n===1?'':'s')+') '
+  const headerHtml='Live tail ('+n+' '+u+(n===1?'':'s')+(z.displayCapped?', newest shown':'')+') '
     +'<span style="font-weight:normal;font-size:12px;opacity:.7">— click a row to expand; top is live, scroll down for history</span>';
   let tbl=document.getElementById(cfg.tblId);
   if(!tbl){
@@ -4772,15 +4797,11 @@ function rcTailJumpToLive(cfg){
 
 function rcZbRenderTail(opt){
   const z=RC.zigbee;
-  // Rebuild displayBuf from the entire recording buffer (filter-respecting). Newest first.
-  // Buffer accumulates without cap — the visible area is constrained by max-height + overflow-y on the wrapper.
+  // Rebuild displayBuf from the newest frames of the recording buffer (filter-respecting), newest first,
+  // at most RC_TAIL_MAX_ROWS rows. The buffer itself is uncapped by count; download still has every frame.
   const src=z.buf?z.buf.frames:[];
   const filters=z.filters;
-  z.displayBuf=[];
-  for(let i=src.length-1;i>=0;i--){
-    if(!rcZbFrameMatchesFilter(src[i].line,filters))continue;
-    const r=rcZbFrameToRow(src[i].line);if(r)z.displayBuf.push(r);
-  }
+  z.displayBuf=rcTailCollect(z,src,JSON.stringify(filters),line=>rcZbFrameMatchesFilter(line,filters)?rcZbFrameToRow(line):null);
   // If the selected row scrolled out (e.g., ring overflow dropped it), deselect.
   if(z.selectedRaw&&!z.displayBuf.some(r=>r._raw===z.selectedRaw))z.selectedRaw=null;
   rcTailPaint({liveId:'rc-zb-live',tblId:'rc-zb-tail-tbl',z:z,rowsHtml:rcZbRenderTailHtml(z.displayBuf,z.selectedRaw)},opt);
@@ -5126,15 +5147,13 @@ function rcZwRawFrameToRow(text){
 
 function rcZwRenderTail(opt){
   const z=RC.zwave;
-  // Rebuild displayBuf from the full recording buffer, newest first.
+  // Rebuild displayBuf from the newest frames of the recording buffer, newest first, at most RC_TAIL_MAX_ROWS rows.
   const src=z.buf?z.buf.frames:[];
   const filters=z.filters;
-  z.displayBuf=[];
-  for(let i=src.length-1;i>=0;i--){
-    const r=rcZwFrameToRow(src[i].line);if(!r)continue;
-    if(!rcZwRowMatchesFilter(r,filters))continue;
-    z.displayBuf.push(r);
-  }
+  const stack=z.stack||RC.zwaveStack||'unknown';
+  z.displayBuf=rcTailCollect(z,src,stack+'|'+JSON.stringify(filters),line=>{
+    const r=rcZwFrameToRow(line);return(r&&rcZwRowMatchesFilter(r,filters))?r:null;
+  });
   if(z.selectedRaw&&!z.displayBuf.some(r=>r._raw===z.selectedRaw))z.selectedRaw=null;
   rcTailPaint({liveId:'rc-zw-live',tblId:'rc-zw-tail-tbl',z:z,rowsHtml:rcZwRenderTailHtml(z.displayBuf,z.selectedRaw,z.stack)},opt);
 }
@@ -5983,7 +6002,8 @@ function rcMatterRenderTail(opt){
   if(m.viewMode==='raw'){
     // Newest-first to match the sibling sub-tabs.
     const lines=[];
-    for(let i=src.length-1;i>=0;i--)lines.push(src[i].line);
+    for(let i=src.length-1;i>=0&&lines.length<RC_TAIL_MAX_ROWS;i--)lines.push(src[i].line);
+    m.displayCapped=src.length>RC_TAIL_MAX_ROWS;
     // Update displayBuf to the (filtered) lines for pin-baseline arithmetic.
     m.displayBuf = lines;
     rcTailPaint({liveId:'rc-m-live',tblId:'rc-m-tail-tbl',unit:'line',z:m,rowsHtml:rcMatterRenderRawHtml(lines)},opt);
@@ -5991,7 +6011,8 @@ function rcMatterRenderTail(opt){
   }
   // Structured: group lines into entries, then map → rows. Buffer is line-ordered (oldest first),
   // so we group in-order and reverse the resulting entries to put newest first.
-  const rawLines=src.map(f=>f.line);
+  const winFrom=Math.max(0,src.length-RC_MATTER_TAIL_LINES);
+  const rawLines=src.slice(winFrom).map(f=>f.line);
   const entries=groupChipByExchange(rawLines);
   // Component-set maintenance (drives the filter dropdown).
   const compSet=new Set();
@@ -6008,7 +6029,9 @@ function rcMatterRenderTail(opt){
   // Apply filters before mapping → cheaper.
   const fComp=m.filters.component, fOp=m.filters.op, f=m.filters;
   const rows=[];
+  m.displayCapped=false;
   for(let i=entries.length-1;i>=0;i--){
+    if(rows.length>=RC_TAIL_MAX_ROWS){m.displayCapped=true;break}
     const e=entries[i];
     if(fComp && e.component !== fComp)continue;
     const newRows=rcMatterFrameToRow(e);

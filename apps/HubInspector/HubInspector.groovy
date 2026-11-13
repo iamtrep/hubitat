@@ -187,6 +187,9 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final long       HUB_LIST_CACHE_TTL_MS = 120_000L
 @Field static final long       HUB_DATA_CACHE_TTL_MS = 30_000L
 @Field static final long       SYSTEM_RESOURCES_CACHE_TTL_MS = 10_000L
+// /logs/json is the most expensive read the app makes. Tab loads (Network, Apps, Performance)
+// share one build per window; checkpoints and Compare -> Now read it fresh and refresh the slot.
+@Field static final long       RUNTIME_STATS_CACHE_TTL_MS = 30_000L
 // apiLive polls every 30s by default and fans out to 5 hub HTTP calls. The slow-changing ones
 // (temperature, databaseSize, cpuInfo, loadThreshold) carry longer TTLs to spare the hub.
 // cpuInfo also carries the 1-minute load average, so it stays on the 60 s tier.
@@ -958,7 +961,7 @@ Map apiPerformanceCompare() {
 
     // Resolve checkpoint
     if (checkpoint == "now") {
-        Map statsWrap = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats")
+        Map statsWrap = fetchRuntimeStats(true)
         if (!statsWrap.ok) return jsonResponse([success: false, error: "Unable to fetch current runtime stats"])
         checkpointStats = statsWrap.data
         Map currentResources = fetchSystemResources()
@@ -1362,7 +1365,7 @@ Map getAppsData() {
 
 Map getNetworkData(Map shared = [:]) {
     Map networkData = analyzeNetwork()
-    Map statsWrap = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats")
+    Map statsWrap = fetchRuntimeStats()
     Map statsRaw = statsWrap.ok ? statsWrap.data : null
     Map stats = statsRaw
     Integer uptimeSeconds = stats ? parseUptime(stats.uptime as String) : null
@@ -1479,7 +1482,7 @@ Map getHealthData(Map shared = [:]) {
 }
 
 Map getPerformanceData(Map shared = [:]) {
-    Map statsWrap = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats")
+    Map statsWrap = fetchRuntimeStats()
     Map stats = statsWrap.ok ? statsWrap.data : null
 
     Map resources = (shared.resources as Map) ?: fetchSystemResources()
@@ -1682,6 +1685,18 @@ Map apiStats() {
  */
 private Object hubRequest(String path, String name, String type = "json", int timeout = 30) {
     return hubRequestInternal(path, name, type, timeout, true)
+}
+
+// /logs/json through the TTL slot. fresh = true skips the read but still refreshes the slot.
+// Callers add keys to the returned map, so the slot keeps its own shallow copy and hands out another.
+private Map fetchRuntimeStats(boolean fresh = false) {
+    if (!fresh) {
+        Object hit = cachePeek('runtimeStats', RUNTIME_STATS_CACHE_TTL_MS)
+        if (hit != null) return [ok: true, data: new LinkedHashMap((Map) hit), error: null]
+    }
+    Map wrap = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats")
+    if (wrap.ok && wrap.data) cachePut('runtimeStats', new LinkedHashMap((Map) wrap.data))
+    return wrap
 }
 
 private Map hubMapRequest(String path, String name, int timeout = 30, boolean allowRetry = true) {
@@ -3105,7 +3120,7 @@ Map analyzeApps(boolean deep = true) {
     // Identify platform-only apps by comparing runtime stats against appsList
     stats.platformApps = []
     try {
-        Map runtimeWrap = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats")
+        Map runtimeWrap = fetchRuntimeStats()
         if (runtimeWrap.ok) {
             List runtimeAppStats = runtimeWrap.data.appStats ?: []
             stats.runtimeTotalApps = runtimeAppStats.size()
@@ -3839,7 +3854,7 @@ private Map fetchRadioForCheckpoint(boolean zwave) {
 private boolean doCreateCheckpoint() {
     logInfo "Creating perf checkpoint..."
 
-    Map statsWrap = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats")
+    Map statsWrap = fetchRuntimeStats(true)
     if (!statsWrap.ok) {
         logError "Failed to fetch current stats"
         return false

@@ -93,6 +93,7 @@ TTLs are proportional to how fast the underlying metric actually moves, sized so
 | `TEMPERATURE_CACHE_TTL_MS` | 60 s | hub temperature | Slow-changing. |
 | `DATABASE_SIZE_CACHE_TTL_MS` | 60 s | database size | Grows over hours, not seconds. |
 | `HUB_LIST_CACHE_TTL_MS` | 2 min | apps list (every path, via `fetchAppsList()`); devices list (Performance path only) | Large payloads; topology only changes on install/remove. One dashboard load or snapshot reads the apps list once. The device and audit paths fetch the devices list uncached. |
+| `RUNTIME_STATS_CACHE_TTL_MS` | 30 s | `/logs/json` runtime stats, read through `fetchRuntimeStats()` by the Network, Apps (`analyzeApps`) and Performance builds | The slowest read the app makes, and Network uses it only for `uptime`. Checkpoints (`doCreateCheckpoint`) and Compare -> Now pass `fresh = true`, which reads live and refreshes the slot; the async checkpoint chain keeps its own 60 s request. A failed read is not cached. |
 | `HUB_DATA_CACHE_TTL_MS` | 30 s | `/hub2/hubData`: hub alerts, model, cloud-controller flag | Slow to build and read by several endpoints; 30 s folds one page load's reads into one fetch while alerts stay current. |
 | `CPU_INFO_CACHE_TTL_MS` | 60 s | `/hub/cpuInfo`: core count, and the 1-minute load average parsed from the same response | Core count is constant per install; the 1-minute load average sets the TTL. |
 | `LOAD_THRESHOLD_CACHE_TTL_MS` | 5 min | platform load threshold | Rarely changes. |
