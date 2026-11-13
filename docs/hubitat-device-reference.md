@@ -12,6 +12,23 @@ they exist. How the hub itself handles these protocols is in the [`zigbee` helpe
 reference](hubitat-zigbee-helper.md) and the [platform notes](hubitat-platform-notes.md).
 Every fact carries an evidence mark ([EVIDENCE.md](EVIDENCE.md)).
 
+**Sections**
+
+- [Xiaomi / Aqara (lumi FF01)](#xiaomi--aqara-lumi-ff01)
+- [Sinopé](#sinopé)
+- [Stelpro Allia (HT402)](#stelpro-allia-ht402)
+- [IKEA window blinds](#ikea-window-blinds)
+- [Fujitsu / Ayla (FGLair)](#fujitsu--ayla-fglair)
+- [Philips Hue](#philips-hue)
+- [ThirdReality 3RPL01084Z](#thirdreality-3rpl01084z)
+- [ThirdReality 3RSP plugs](#thirdreality-3rsp-plugs)
+- [ThirdReality vibration sensor](#thirdreality-vibration-sensor)
+- [Linptech / Moes ES1 (Tuya TS0225 presence sensor)](#linptech--moes-es1-tuya-ts0225-presence-sensor)
+- [Universal Electronics / Visonic URC4460BC0 (Xfinity contact sensor)](#universal-electronics--visonic-urc4460bc0-xfinity-contact-sensor)
+- [Android TV / Google TV (Remote protocol v2)](#android-tv--google-tv-remote-protocol-v2)
+- [Samsung Tizen TVs](#samsung-tizen-tvs)
+- [Hubitat hubs](#hubitat-hubs)
+
 ## Xiaomi / Aqara (lumi FF01)
 
 Xiaomi/Aqara `lumi.*` endpoints report a manufacturer-specific TLV blob in the `0xFF01`

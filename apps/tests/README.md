@@ -3,9 +3,9 @@ Copyright (c) 2025-2026 PJ
 SPDX-License-Identifier: MIT
 -->
 
-# Hub Stress Tests
+# Hub Stress Tests and App Tests
 
-Hubitat Elevation apps for stress-testing various hub subsystems. These are diagnostic tools — install them temporarily, run the tests, then remove them.
+Hubitat Elevation apps for stress-testing various hub subsystems, platform probe apps, and the tests of the apps that sit directly in [`apps/`](../README.md). The stress apps are diagnostic tools — install them temporarily, run the tests, then remove them.
 
 ## Apps
 
@@ -76,6 +76,24 @@ Benchmarks the hub's file storage APIs by running a configurable number of itera
 4. `readFile()` — HTTP download from `/local/{filename}`
 
 Logs average latency per operation. Triggered via a **Start** button in the UI.
+
+## Tests in this folder
+
+The modes are those of [`TESTING.md`](../../TESTING.md); [`TEST_COVERAGE.md`](../../TEST_COVERAGE.md) lists each test against its app. A `test-*.sh` script needs a reachable hub, and each behavior test is generated from the `spec-*.yaml` of the same name.
+
+| Test | What it is |
+|---|---|
+| `test-attribute-logger-child.sh` | Mode 1 behavior test, Attribute Logger Child |
+| `test-attribute-logger-rotation.groovy` | Mode 4 extraction test of Attribute Logger Child's log rotation helpers, off the hub |
+| `test-bathroom-lighting-shadow.sh` | Mode 1 behavior test, Bathroom Lighting Shadow |
+| `test-battery-change-logger.sh` | Mode 1 behavior test, Battery Change Logger |
+| `test-humidity-fan-controller.sh`, `-dewpoint.sh`, `-multisensor.sh`, `-slow.sh` | Mode 1 behavior tests, Humidity-Based Fan Controller |
+| `test-humidity-fan-controller-core.groovy` | Core unit tests of Humidity-Based Fan Controller, off the hub |
+| `test-mirror-switch.sh` | Mode 1 behavior test, Mirror Switch |
+| `test-switch-monitor.sh` | Mode 1 behavior test, Switch Monitor |
+| `test-architecture-claims.sh` | Re-checks the platform claims behind [`ARCHITECTURE.md`](../../ARCHITECTURE.md), with the Architecture Claims Probe app and driver |
+| `test-field-static-persistence.sh` | Checks that a code push resets `@Field static` values, with the Field Static Persistence Test app |
+| `test-singlethreaded.sh` | A measurement run of `singleThreaded` entry-point behavior, with the Single Threaded Probe apps and drivers (about 10 min) |
 
 ## Usage
 

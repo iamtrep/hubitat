@@ -25,3 +25,5 @@ Remaining before release:
 
 ## After validation
 - [x] Mirror-publish to the other hubs.
+
+Not reconciled as of 2026-11-13: this box is checked while "Report flood reduction" above, under a heading that says it blocks the publish, is not.

@@ -194,4 +194,6 @@ Run from the repository root. On-hub tests target the default hub in `.hubitat.j
 
 ## More
 
+- [Built-in Thermostat Scheduler storage](BUILTIN-STORAGE.md): where the built-in keeps its configuration, as the importer reads it
+- [Test plan](tests/TEST_PLAN.md)
 - [Apps](../README.md)

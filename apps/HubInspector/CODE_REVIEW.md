@@ -78,7 +78,7 @@ Reviewed full source at v5.27.0. Validated alignment with `ARCHITECTURE.md` plat
 
 ## Round 7 summary (Claude, 2026-05-10, hub→browser load-balancing audit)
 
-Architectural audit triggered by the user's intuition that too much CPU was being spent on the constrained 4-core ARM A53 hub for derivations the browser could do trivially. Audit verdict: confirmed. Plan recorded at `/Users/trep/.claude/plans/i-feel-the-balance-elegant-lighthouse.md`.
+Architectural audit triggered by the user's intuition that too much CPU was being spent on the constrained 4-core ARM A53 hub for derivations the browser could do trivially. Audit verdict: confirmed.
 
 **Shipped (this branch, `browser-hub-load-balancing`):**
 
@@ -855,7 +855,7 @@ Calls `getHubInfo`, `fetchSystemResources`, `fetchTemperature`, `fetchDatabaseSi
 
 **Fix sketch (two options):**
 
-- (a) Split into independent endpoints the SPA pulls in concurrent batches (mirroring the report-builder pattern from v5.32.0; reuse `BATCH=3` to stay under the connection pool — see `~/.claude/projects/-Users-trep-Documents-GitHub-iamtrep-hubitat/memory/project_hubdiag_spa_concurrency.md`).
+- (a) Split into independent endpoints the SPA pulls in concurrent batches (mirroring the report-builder pattern from v5.32.0; reuse `BATCH=3` to stay under the connection pool).
 - (b) Audit which fields the forum markdown actually uses; many of the deep-mode outputs probably aren't consumed. Stop calling deep variants when shallow data suffices.
 
 (b) is smaller and safer; (a) is more aligned with the rest of the work.

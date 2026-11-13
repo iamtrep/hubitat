@@ -14,6 +14,11 @@ Hubitat Elevation drivers for ThirdReality Zigbee devices.
 - `ThirdReality_Outlet_Component.groovy` — **Third Reality Outlet (Component)**: child device for one outlet of the 3RDP01072Z — switch plus per-outlet power, current, energy, and power factor
 - `ThirdReality_3RPL01084Z.groovy` — **ThirdReality Presence Sensor R3 (3RPL01084Z)**: 60 GHz mmWave presence sensor with RGB night-light, illuminance, and TVOC air quality (Zigbee 3.0)
 
+## Backlogs
+
+- [Presence Sensor R3 (3RPL01084Z)](TODO.md)
+- [Dual Smart Plug (3RDP01072Z)](TODO-3RDP01072Z.md)
+
 ## License
 
 MIT — see individual source files for the full license text.

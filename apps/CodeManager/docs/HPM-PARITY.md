@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT
 
 # HPM parity inventory
 
-Source analyzed: `apps/Package_Manager.groovy` in HubitatCommunity/hubitatpackagemanager, commit `c855314` (2026-05-05), version `v1.9.11` (`:63`), 4,830 lines; HubitatCommunity/hubitat-packagerepositories commit `2f15a89` (2026-08-18). Line references are `Package_Manager.groovy:LINE`. Live-instance facts come from an HPM 1.9.11 install on a C-8 Pro at firmware 2.5.1.147 with 15 managed packages, read through `GET /installedapp/statusJson/{id}`. The manifest schema itself is documented in the host repo's `docs/HPM-MANIFESTS.md` and is not repeated here.
+Source analyzed: `apps/Package_Manager.groovy` in HubitatCommunity/hubitatpackagemanager, commit `c855314` (2026-05-05), version `v1.9.11` (`:63`), 4,830 lines; HubitatCommunity/hubitat-packagerepositories commit `2f15a89` (2026-08-18). Line references are `Package_Manager.groovy:LINE`. Live-instance facts come from an HPM 1.9.11 install on a C-8 Pro at firmware 2.5.1.147 with 15 managed packages, read through `GET /installedapp/statusJson/{id}`. The manifest schema itself is not repeated here.
 
 Verdict column: **match** = Code Manager must do this equivalently; **improve** = must do it, and the HPM implementation has a defect or limitation worth fixing; **drop** = not carried, with the user cost stated.
 
