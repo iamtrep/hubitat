@@ -34,7 +34,7 @@ String fields = src.readLines().findAll { it.startsWith('@Field static final') &
 String code = 'import java.time.LocalDate\nimport groovy.transform.CompileStatic\nclass PeakTarget {\n' + fields + '\n' +
     ['static LocalDate easterSunday(int year) {', 'static Set<String> noPeakDays(LocalDate day) {', 'static Map peakTarget(',
      'static BigDecimal curtailedKWh(', 'static String windowPhase(', 'static List<Map> timelineWindows(',
-     'static BigDecimal anchorProjected(', 'static boolean anchorStopReached(']
+     'static BigDecimal anchorProjected(', 'static boolean anchorStopReached(', 'static List<Map> eveningNotices(']
         .collect { '@CompileStatic\n' + extract(src, it) }.join('\n') + '\n}\nPeakTarget'
 Class PT = new GroovyShell().evaluate(code)
 
@@ -168,6 +168,15 @@ check('projection: a clock behind the reading adds nothing', near(PT.anchorProje
 // Frozen at 02:00 with 12 kWh at 10 kW: projected 12 + 10t, stop when 12 + 10t + 3(2 - t) >= 30, t >= 12/7 h.
 check('frozen stream: no stop at 03:40', !PT.anchorStopReached(PT.anchorProjected(live, 2 * H + 100 * M), T, RES, 2 * H + 100 * M, 4 * H))
 check('frozen stream: stop at 03:43', PT.anchorStopReached(PT.anchorProjected(live, 2 * H + 103 * M), T, RES, 2 * H + 103 * M, 4 * H))
+
+// The evening notice: one message for each announced window of tomorrow.
+Map amN = [day: '2026-12-03', startHour: 6, message: 'AM plan'], pmN = [day: '2026-12-03', startHour: 16, message: 'PM plan']
+Map other = [day: '2026-12-04', startHour: 6, message: 'later']
+check('evening: a day with two events sends both, in order', PT.eveningNotices([pmN, amN, other], amN, '2026-12-03', true).collect { it.message } == ['AM plan', 'PM plan'])
+check('evening: one event sends one', PT.eveningNotices([pmN, other], pmN, '2026-12-03', true).collect { it.message } == ['PM plan'])
+check('evening: no window of tomorrow falls back to next', PT.eveningNotices([other], other, '2026-12-03', true).collect { it.message } == ['later'])
+check('evening: a winter evening without an event sends next', PT.eveningNotices([], amN, '2026-12-03', false).collect { it.message } == ['AM plan'])
+check('evening: nothing to say sends nothing', PT.eveningNotices([], null, '2026-12-03', false).isEmpty())
 
 println "\n=== ${pass}/${pass + fail} passed ==="
 System.exit(fail == 0 ? 0 : 1)

@@ -43,7 +43,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "0.2.0"
+@Field static final String CODE_VERSION = "0.2.1"
 
 @Field static final String AUTH_URL = "https://connexion.hiloenergie.com/HiloDirectoryB2C.onmicrosoft.com/B2C_1A_SIGN_IN/oauth2/v2.0/"
 @Field static final String CLIENT_ID = "1ca9f585-4a55-4085-8e30-9746a65fa561"
@@ -1561,7 +1561,8 @@ void peakRun() {
     List<Map> done = results.findAll { (it.end as long) <= t && usedOf(it) != null }
     Map last = done ? done.last() : null
     state.peakWindows = results.collect { Map r -> r.findAll { k, v -> !(k in ["rows", "refDays", "skipped", "missing", "anchorHours"]) } }
-    state.peakLast = [at: t, next: peakBrief(next)]
+    // The evening notice needs every announced window still to come, not only the next one.
+    state.peakLast = [at: t, next: peakBrief(next), events: results.findAll { it.event && (it.end as long) > t }.collect { peakBrief(it) }]
     peakChild()?.updatePeak(peakAttributes(next) + lastAttributes(last) + [summaryLog: peakBrief(next)?.message])
     writePeakFile(results, floorKWh, marginKWh)
 }
@@ -1719,8 +1720,17 @@ void peakEvening() {
     LocalDate tomorrow = LocalDate.now(location.timeZone.toZoneId()).plusDays(1)
     List<List> slots = peakEventSlots().findAll { it[0] == tomorrow.toString() }
     if (!slots && !(settings.wcNotifyDaily && inWinter(tomorrow))) return
-    Map next = (state.peakLast as Map)?.next as Map
-    if (next?.message) peakNotify(next)
+    Map last = state.peakLast as Map
+    eveningNotices((last?.events ?: []) as List<Map>, last?.next as Map, tomorrow.toString(), slots as boolean).each { Map b -> peakNotify(b) }
+}
+
+// What the evening notice sends: one message for each announced window of tomorrow (a day can
+// have a morning and an evening event), else the next window.
+@CompileStatic
+static List<Map> eveningNotices(List<Map> events, Map next, String tomorrow, boolean hasSlots) {
+    List<Map> mine = events.findAll { Map b -> b.day == tomorrow && b.message }.sort { Map b -> b.startHour as int }
+    if (hasSlots && mine) return mine
+    return next?.message ? [next] : new ArrayList<Map>()
 }
 
 // Logged in English; sent in the page's language (notice), or in English when computed before

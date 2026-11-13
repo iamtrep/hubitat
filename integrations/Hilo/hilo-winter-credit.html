@@ -807,13 +807,22 @@ function curtailed(target, capped, used) {
     return Math.max(c > WC_CAP && target > capped ? capped - used : c, 0);
 }
 
+// Day and start hour of an epoch second in the utility's zone, not the viewer's: the history files
+// and Hilo Manager's events are keyed in that zone, so a viewer elsewhere must still match them.
+const WC_TZ = 'America/Toronto';
+function slotOfEpoch(sec) {
+    const p = {};
+    new Intl.DateTimeFormat('en-CA', { timeZone: WC_TZ, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit' })
+        .formatToParts(new Date(sec * 1000)).forEach(x => { p[x.type] = x.value; });
+    return { day: `${p.year}-${p.month}-${p.day}`, start: +p.hour };
+}
+
 // Local day and start hour of every known event: the open data plus Hilo Manager's extra events.
 function wcSlots() {
     const out = new Map();
     (events || []).forEach(v => {
-        const t = new Date(v.s * 1000);
-        const day = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
-        out.set(`${day}|${t.getHours()}`, { day, start: t.getHours() });
+        const s = slotOfEpoch(v.s);
+        out.set(`${s.day}|${s.start}`, s);
     });
     ((wcFile && wcFile.events) || []).forEach(([day, start]) => out.set(`${day}|${start}`, { day, start }));
     return [...out.values()].sort((a, b) => (a.day + String(a.start).padStart(2, '0')).localeCompare(b.day + String(b.start).padStart(2, '0')));
