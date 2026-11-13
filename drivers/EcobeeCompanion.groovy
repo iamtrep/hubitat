@@ -102,7 +102,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.1.8"
+@Field static final String CODE_VERSION = "0.1.9"
 
 // Decrypted tokens, kept in memory only: decrypt() costs ~350 ms on a C-8 Pro, ~830 ms on a C-7.
 // Keyed by device id + token name; the stored ciphertext rides along so a refreshed token misses.
@@ -862,6 +862,11 @@ void setThermostatScheduleTime(String day, String comfortName, String currentTim
     }
 
     String previousClimate = (currentBlock > 0) ? scheduleBlocks[currentBlock - 1] : null
+    String moveError = scheduleMoveError(scheduleBlocks, currentBlock, newBlock, climateRef)
+    if (moveError) {
+        logError "Cannot move ${comfortName} on ${day} to ${newTime}: ${moveError}"
+        return
+    }
     List updatedBlocks = adjustScheduleBlocks(scheduleBlocks, currentBlock, newBlock, climateRef, previousClimate)
 
     if (updatedBlocks == null) return
@@ -1346,6 +1351,22 @@ private Map fetchThermostatData(String apiPath = "/1/thermostat", Map customSele
     Map data = callEcobeeApi("GET", apiPath, queryData, null, 0, err)
     if (data != null && !data.thermostatList && err != null) err.msg = "no thermostat in the response"
     return data?.thermostatList ? data.thermostatList[0] : null
+}
+
+// A move must stay inside the run being moved and the run before it. Past either end it would overwrite
+// a third comfort setting or remove one from the day. Returns an error text, or null when the move is safe.
+private static String scheduleMoveError(List blocks, int fromBlock, int toBlock, String climateRef) {
+    if (toBlock > fromBlock) {
+        int runEnd = fromBlock
+        while (runEnd < blocks.size() && blocks[runEnd] == climateRef) runEnd++
+        if (toBlock >= runEnd) return "it would pass the end of this comfort setting (${runEnd} blocks of 30 min into the day); change the later entry first"
+    } else if (toBlock < fromBlock && fromBlock > 0) {
+        String previous = blocks[fromBlock - 1] as String
+        int prevStart = fromBlock - 1
+        while (prevStart > 0 && blocks[prevStart - 1] == previous) prevStart--
+        if (toBlock <= prevStart) return "it would pass the start of the previous comfort setting; change the earlier entry first"
+    }
+    return null
 }
 
 private List adjustScheduleBlocks(List blocks, Integer fromBlock, Integer toBlock, String climateRef, String previousClimate) {

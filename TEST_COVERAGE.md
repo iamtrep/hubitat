@@ -85,7 +85,7 @@ Per [`TESTING.md`](TESTING.md) section 2.2, driver tests are not required by def
 |---|---|---|---|---|---|
 | [`drivers/AwairElement.groovy`](drivers/AwairElement.groovy) | Polling (local API) | — | N | — | Mock-service pattern would apply (parked). |
 | [`drivers/BTHomeV2-Motion.groovy`](drivers/BTHomeV2-Motion.groovy) | BLE advertisement | — | N | — | `parse()`-injection pattern would apply (parked). |
-| [`drivers/EcobeeCompanion.groovy`](drivers/EcobeeCompanion.groovy) | Cloud OAuth | — | N | — | Mock-service pattern would apply (parked). The OAuth state machine makes the mock non-trivial. |
+| [`drivers/EcobeeCompanion.groovy`](drivers/EcobeeCompanion.groovy) | Cloud OAuth | 4 | N | [`drivers/tests/test-ecobee-schedule-move.groovy`](drivers/tests/test-ecobee-schedule-move.groovy) | Mock-service pattern would apply (parked). The OAuth state machine makes the mock non-trivial. The schedule-move range check is unit-tested. |
 | [`drivers/EnvironmentCanada_AQHI.groovy`](drivers/EnvironmentCanada_AQHI.groovy) | HTTP polling (public XML) | — | N | — | Smallest-surface candidate for the parked mock-service pattern (no auth). |
 | [`drivers/IKEA-Blinds.groovy`](drivers/IKEA-Blinds.groovy) | Zigbee | — | N | — | `parse()`-injection pattern would apply (parked). |
 | [`drivers/IPReachabilitySensor.groovy`](drivers/IPReachabilitySensor.groovy) | HTTP polling | 4 | N | [`drivers/tests/test-ipreachability-retry-threshold.groovy`](drivers/tests/test-ipreachability-retry-threshold.groovy) | Mock-service pattern would apply (parked). The retry threshold from the preference, 0 included, is unit-tested. |
