@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
 <!-- AUTO:hubinspector-version -->
-**Current version:** 6.2.6
+**Current version:** 6.3.0
 <!-- /AUTO -->
 
 ---
@@ -104,7 +104,7 @@ Hub Inspector has run on a handful of hubs, so many setups have never been teste
 ### Tested on
 
 * Hubs: C-7 and C-8 Pro, firmware 2.5.2.
-* Troubleshooting Center card: one C-8 Pro on firmware 2.5.3.104 (beta) only.
+* Troubleshooting Center card: one C-8 Pro on firmware 2.5.3.123 only.
 * Z-Wave: the classic stack, on meshes of 3 to 10 devices.
 * Zigbee: 8 to 110 devices per hub.
 * Matter: 2 to 6 devices per hub.
