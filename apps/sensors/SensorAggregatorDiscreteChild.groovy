@@ -29,7 +29,7 @@ import com.hubitat.app.ChildDeviceWrapper
 //import com.hubitat.hub.domain.Capability // only available from 2.4.3.148 onward
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.4.1"
+@Field static final String CODE_VERSION = "0.4.2"
 @Field static final Integer QUIET_FLOOR_MIN = 30
 @Field static final Integer MIN_GAPS = 5
 @Field static final Integer KEEP_GAPS = 48
@@ -176,6 +176,7 @@ void initialize() {
     if (state.createChild == null) { state.createChild = false }
     if (state.stuckState == null) { state.stuckState = [:] }
     if (state.pendingSeq == null) { state.pendingSeq = [:] }
+    state.pendingCommits = [:]    // every seq advances below, so earlier commits no longer apply
     pruneActivity()
 
     if (!outputSensor && state.createChild) {
@@ -198,6 +199,7 @@ void initialize() {
             state.pendingSeq = advanceAllSeqs(state.pendingSeq as Map)
 
             subscribe(inputSensors, attributeName, sensorEventHandler)
+            subscribe(location, "systemStart", "systemStartHandler")
             logTrace "Subscribed to ${attributeName} events for ${inputSensors.collect { it.displayName}}."
         }
     }
@@ -213,7 +215,25 @@ void initialize() {
 void checkSensors() {
     checkVersion()
     logSched "check"
+    servicePendingCommits()
     publishAggregate(true)
+}
+
+void systemStartHandler(Event evt) {
+    checkVersion()
+    servicePendingCommits()
+}
+
+// A sticky-window timer that fell due while the hub was down is dropped. Each pending commit keeps
+// its due time, so a commit that is overdue is applied here instead of leaving the old value in place.
+private void servicePendingCommits() {
+    Map pendingCommits = (state.pendingCommits ?: [:]) as Map
+    if (!pendingCommits) return
+    List<Map> due = overdueCommits(pendingCommits, state.pendingSeq as Map, now())
+    due.each { Map c ->
+        logSched "Sticky commit overdue: sensor ${c.sensorId} -> ${c.value} (seq ${c.seq}) — applying"
+        commitStuckState(c)
+    }
 }
 
 private void checkVersion(boolean reinit = true) {
@@ -302,6 +322,7 @@ void sensorEventHandler(Event evt=null) {
     state.pendingSeq = pending
     runIn(seconds, "commitStuckState",
           [data: [sensorId: sid, seq: seq, value: newValue], overwrite: false])
+    state.pendingCommits = ((state.pendingCommits ?: [:]) as Map) + [(sid): [seq: seq, value: newValue, dueAt: now() + seconds * 1000L]]
     logSched "Sticky scheduled: ${evt.getDevice().getLabel()} -> ${newValue} in ${seconds}s (seq ${seq})"
 }
 
@@ -314,6 +335,9 @@ void commitStuckState(Map data) {
         logTrace "Stale sticky commit ignored: sensor ${sid} seq ${data.seq} (current ${(state.pendingSeq as Map)?.get(sid)})"
         return
     }
+    Map pendingCommits = new LinkedHashMap((state.pendingCommits ?: [:]) as Map)
+    pendingCommits.remove(sid)
+    state.pendingCommits = pendingCommits
     commitState(sid, data.value as String)
 }
 
@@ -632,6 +656,18 @@ Map advanceAllSeqs(Map pending) {
     Map m = [:]
     (pending ?: [:]).each { k, v -> m[k] = ((v ?: 0) as int) + 1 }
     return m
+}
+
+// Commits whose due time has passed (a few seconds' slack lets the real timer run first) and
+// that still apply: [sensorId, seq, value] each. pendingCommits maps sensor id to [seq, value, dueAt].
+List<Map> overdueCommits(Map pendingCommits, Map pendingSeq, long nowMs) {
+    List<Map> due = []
+    (pendingCommits ?: [:]).each { k, v ->
+        if (v?.dueAt != null && ((v.dueAt as long) + 5000L) <= nowMs && commitApplies(pendingSeq, k as String, v.seq)) {
+            due << [sensorId: k as String, seq: v.seq, value: v.value]
+        }
+    }
+    return due
 }
 
 // A per-sensor override wins, 0 included; otherwise the default.
