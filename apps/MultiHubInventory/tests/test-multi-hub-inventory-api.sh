@@ -276,20 +276,32 @@ if status == 400 and bad_hub.get("error") == "unknown hub":
 else:
     fail(f"/api/peer did not reject unknown hub index — got HTTP {status}: {bad_hub}")
 
-# ── Test 4: data passthrough — audit shape or clean error ────────────
+# ── Test 4: data passthrough — the self-peer must return real data ───
+# Peer 0 is this hub's own Hub Inspector. An error reply means the forwarder's
+# success path (base URL, Bearer header, index mapping) is broken, so it fails.
 section("/api/peer?hub=0&op=data")
 
-data_resp = api_get("peer?hub=0&op=data", timeout=120)
-if "_error" in data_resp:
-    fail(f"Request failed (HTTP/network): {data_resp['_error']}")
-else:
-    ok("/api/peer?hub=0&op=data responds")
+LEAK_MARKERS = ["access_token", "Bearer"]
 
+def check_no_leak(label, body):
+    blob = json.dumps(body)
+    hit = [m for m in LEAK_MARKERS if m in blob]
+    if hit:
+        fail(f"{label} body leaks {hit}: {blob[:200]}")
+    else:
+        ok(f"{label} body contains neither 'access_token' nor 'Bearer'")
+
+status, data_resp = api_get_status("peer?hub=0&op=data", timeout=120)
+if status != 200:
+    fail(f"/api/peer?hub=0&op=data answered HTTP {status}: {json.dumps(data_resp)[:200]} (self-peer must return data; run a scan first if the peer says 'no scan')")
+    check_no_leak("/api/peer?hub=0&op=data error", data_resp)
+elif "allDevices" in data_resp or "status" in data_resp:
+    ok("/api/peer?hub=0&op=data returns real data (HTTP 200)")
     if "allDevices" in data_resp:
-        ok("/api/peer data response contains 'allDevices' (audit shape)")
         all_devs = data_resp["allDevices"] or {}
         info(f"  allDevices count: {len(all_devs)}")
-        if all_devs:
+        if isinstance(all_devs, dict) and len(all_devs) > 0:
+            ok(f"allDevices is a non-empty map ({len(all_devs)} devices)")
             sample = next(iter(all_devs.values()))
             # Check raw fields the SPA's correlation functions depend on
             for field in ["appsUsingCount", "orphan", "dashboards", "lastActivityTimeMs"]:
@@ -297,16 +309,106 @@ else:
                     ok(f"  allDevices sample has '{field}'")
                 else:
                     warn(f"  allDevices sample missing '{field}' (SPA correlation may be incomplete)")
-    elif "error" in data_resp:
-        ok(f"/api/peer data response is a clean error (peer not yet scanned or unreachable): {data_resp['error']}")
-        warn("Hub 0 returned an error — run a scan first (Rescan fleet in the SPA) for a full passthrough test")
-    else:
-        # Neither allDevices nor error — unexpected shape but not a stack trace
-        body = json.dumps(data_resp)
-        if "Exception" in body or "Traceback" in body or "at line" in body:
-            fail(f"/api/peer data response looks like a stack trace — proxy error handling missing")
         else:
-            warn(f"/api/peer data returned an unexpected shape (neither allDevices nor error): {body[:200]}")
+            fail("allDevices present but empty or not a map")
+    check_no_leak("/api/peer?hub=0&op=data", data_resp)
+else:
+    fail(f"/api/peer?hub=0&op=data returned neither allDevices nor status: {json.dumps(data_resp)[:200]}")
+
+# ── Test 5: op=start / op=status shapes and scanId validation ────────
+# op=start begins (or joins, idempotently) a real scan on this hub's Hub Inspector.
+section("/api/peer?hub=0&op=start|status")
+
+def start_call():
+    url = f"{api_base}/api/peer?hub=0&op=start"
+    try:
+        resp = urllib.request.urlopen(urllib.request.Request(url, headers=AUTH()), timeout=60)
+        return resp.status, json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode())
+        except Exception:
+            return e.code, {}
+    except Exception as e:
+        return None, {"_error": str(e)}
+
+st_status, st = start_call()
+real_sid = None
+if st_status != 200 or "error" in st:
+    fail(f"op=start answered HTTP {st_status}: {json.dumps(st)[:200]}")
+    check_no_leak("op=start error", st)
+else:
+    real_sid = st.get("scanId")
+    if isinstance(real_sid, str) and re.fullmatch(r"[A-Za-z0-9_\-]+", real_sid):
+        ok(f"op=start returns a URL-safe scanId ({real_sid})")
+    else:
+        fail(f"op=start scanId missing or not URL-safe: {json.dumps(st)[:200]}")
+    if isinstance(st.get("total"), int) and st["total"] > 0:
+        ok(f"op=start total is a positive int ({st['total']})")
+    else:
+        fail(f"op=start total missing or not a positive int: {json.dumps(st)[:200]}")
+    if isinstance(st.get("alreadyRunning"), bool):
+        ok(f"op=start alreadyRunning is a bool ({st['alreadyRunning']})")
+    else:
+        fail(f"op=start alreadyRunning missing or not a bool: {json.dumps(st)[:200]}")
+    check_no_leak("op=start", st)
+
+# status without scanId: latest known status
+status, ss = api_get_status("peer?hub=0&op=status")
+if status == 200 and isinstance(ss.get("status"), str) and isinstance(ss.get("processed"), int) and isinstance(ss.get("total"), int):
+    ok(f"op=status shape ok (status={ss['status']}, {ss['processed']}/{ss['total']})")
+    if real_sid and ss.get("scanId") == real_sid:
+        ok("op=status (no scanId) reports the scan just started")
+    elif real_sid:
+        fail(f"op=status scanId {ss.get('scanId')} differs from the started scan {real_sid}")
+else:
+    fail(f"op=status shape wrong (HTTP {status}): {json.dumps(ss)[:200]}")
+check_no_leak("op=status", ss)
+
+# status with the real scanId
+if real_sid:
+    status, ss2 = api_get_status(f"peer?hub=0&op=status&scanId={real_sid}")
+    if status == 200 and ss2.get("scanId") == real_sid and ss2.get("status") != "unknown":
+        ok(f"op=status with the real scanId returns that scan (status={ss2.get('status')})")
+    else:
+        fail(f"op=status with the real scanId did not return the scan (HTTP {status}): {json.dumps(ss2)[:200]}")
+
+# a well-formed but unknown scanId is forwarded and answered 'unknown'
+status, ss3 = api_get_status("peer?hub=0&op=status&scanId=nosuchscan-123")
+if status == 200 and ss3.get("status") == "unknown" and ss3.get("scanId") == "nosuchscan-123":
+    ok("op=status with an unknown valid scanId is forwarded (status=unknown)")
+else:
+    fail(f"op=status with an unknown valid scanId not forwarded (HTTP {status}): {json.dumps(ss3)[:200]}")
+
+# an invalid scanId must be dropped, not forwarded: the reply is the latest status,
+# not an 'unknown' echo of the bad value.
+bad_sid = urllib.parse.quote("x y;z&evil=1", safe="")
+status, ss4 = api_get_status(f"peer?hub=0&op=status&scanId={bad_sid}")
+if status == 200 and ss4.get("status") != "unknown" and ss4.get("scanId") != "x y;z&evil=1":
+    ok(f"op=status ignores an invalid scanId (answers the latest status, status={ss4.get('status')})")
+else:
+    fail(f"op=status did not ignore an invalid scanId (HTTP {status}): {json.dumps(ss4)[:200]}")
+
+# ── Test 6: other peers — a reply is data or a clean error body ──────
+section("/api/peer — other peers (error body hygiene)")
+for p in peers[1:]:
+    idx = p.get("index")
+    for op in ["status", "data"]:
+        status, body = api_get_status(f"peer?hub={idx}&op={op}", timeout=120)
+        label = f"peer {idx} ({p.get('label')}) op={op} HTTP {status}"
+        blob = json.dumps(body)
+        if "Exception" in blob or "Traceback" in blob or "at line" in blob:
+            fail(f"{label} looks like a stack trace: {blob[:200]}")
+        elif status in (400, 404, 502):
+            if isinstance(body.get("error"), str):
+                ok(f"{label} is a clean error body ({body['error']})")
+            else:
+                fail(f"{label} error without an 'error' string: {blob[:200]}")
+        elif status == 200:
+            ok(f"{label} returned data")
+        else:
+            fail(f"{label} unexpected: {blob[:200]}")
+        check_no_leak(label, body)
 
 # ── Test: /api/version/check ─────────────────────────────────────────
 section("/api/version/check")
@@ -342,8 +444,10 @@ else:
         ok(f"ui/sync version present: {us['version']}")
     else:
         fail("ui/sync version missing")
-    if us["success"] is not True:
-        warn("ui/sync success=false — expected until the matching 0.8.0 UI is committed to GitHub main")
+    if us["success"] is True:
+        ok("ui/sync success=true")
+    else:
+        fail(f"ui/sync success=false: {json.dumps(us)[:200]}")
 
 # ── Summary ──────────────────────────────────────────────────────────
 total = passed + failed
