@@ -26,13 +26,18 @@ The flow meter sits *downstream* of the pressure tank, so it measures household 
 ### Emergency Shutoff
 - Automatically turns off the pump switch if it runs beyond a configurable timeout
 - Defense-in-depth: a scheduled callback at the timeout, a check every minute while the pump runs (so a callback the hub drops under load, as in the minutes after a restart, is retried), and a check when the pump stops
-- Activates an optional virtual leak sensor (for integration with other automations)
+- The off command goes out first; the notification and the leak sensor follow
+- After a shutoff, sends off again every minute until the pump reads below the off threshold (10 attempts), and notifies at the third
+- Activates an optional virtual leak sensor (for integration with other automations). A sensor without a `wet` command is skipped with a warning
 - Sends push notifications on shutoff
 
 ### Hub Reboot Recovery
 - Subscribes to `systemStart` so it re-evaluates pump state after a hub restart
 - Reschedules the emergency timer for the remaining time, or triggers immediate shutoff if the timeout already passed
 - Handles the case where the pump stopped while the hub was down
+- Starts monitoring a pump that is drawing power with no cycle open (a start the hub did not see)
+- Closes a water flow that ended while the hub was down, without recording an event
+- The same checks run when the settings are saved and after a code update
 
 ### Statistics & Aggregation
 - **All-time statistics** from running counters (O(1) computation):

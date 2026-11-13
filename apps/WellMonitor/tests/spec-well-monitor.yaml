@@ -190,6 +190,7 @@ cases:
   - name: emergency-shutoff-fires-after-max-runtime
     setup:
       - { device: test-wm-pump, command: setPower, args: [0] }
+      - { device: test-wm-pump, command: "on" }
       - { device: test-wm-leak, command: "dry" }
       - { device: test-wm-pump-active, command: "off" }
     setup_wait_seconds: 2
@@ -199,9 +200,13 @@ cases:
     # follow-up power=0 event from pump.off().
     wait_seconds: 14
     assert:
+      - { device: test-wm-pump,        attribute: switch, value: "off" }
       - { device: test-wm-leak,        attribute: water,  value: "wet" }
       - { device: test-wm-pump-active, attribute: switch, value: "off" }
     assert_events:
+      # The pump's own switch is checked above by attribute only: an event
+      # source matches by prefix, so "test-wm-pump" also matches
+      # "test-wm-pump-active", which the app turns off itself.
       - { attribute: "water",  value: "wet", source: "test-wm-leak" }
       - { attribute: "switch", value: "off", source: "test-wm-pump-active" }
     # Emergency notification is sent via sendNotification(), which logs a
@@ -212,6 +217,143 @@ cases:
       - "No notification device configured"
       - "EMERGENCY SHUTOFF"
 
-# Budget: cases 1-4 ~3s each + case 5 ~14s + per-case provisioning slack
-# = ~35s. Bump if Hubitat scheduling jitter pushes us past this.
-runtime_budget_seconds: 45
+  # ─── Case 6: a re-save while the pump reads between the thresholds ───
+  # A started pump that drops to 80 W is still running (the off threshold is
+  # 10 W). Saving the app's settings removes the timers; recovery must put the
+  # emergency timer back, so the shutoff still comes at 10 s.
+  - name: resave-in-running-band-keeps-emergency-timer
+    command_spacing_seconds: 1
+    setup:
+      - { device: test-wm-pump, command: setPower, args: [0] }
+      - { device: test-wm-pump, command: "on" }
+      - { device: test-wm-leak, command: "dry" }
+    setup_wait_seconds: 2
+    actions:
+      - { device: test-wm-pump, command: setPower, args: [200] }
+      - { device: test-wm-pump, command: setPower, args: [80] }
+      - { settings: { debugEnable: true } }
+    wait_seconds: 16
+    assert:
+      - { device: test-wm-pump, attribute: switch, value: "off" }
+    allow_log_patterns:
+      - "No notification device configured"
+      - "EMERGENCY SHUTOFF"
+      # A save re-syncs the dashboard file from GitHub and logs the outcome at warn.
+      - "Dashboard UI"
+      - "UI sync rejected"
+
+  # ─── Case 7: a pump start the app never saw ─────────────────────────
+  # With the on threshold raised to 5000 W the app takes 200 W for idle.
+  # Putting the threshold back runs recovery with the pump drawing 200 W and
+  # no cycle open: it must start monitoring.
+  - name: recovery-monitors-a-start-it-did-not-see
+    setup:
+      - { device: test-wm-pump, command: setPower, args: [0] }
+      - { device: test-wm-pump-active, command: "off" }
+      - { settings: { powerOnThreshold: 5000 } }
+      - { device: test-wm-pump, command: setPower, args: [200] }
+    setup_wait_seconds: 2
+    actions:
+      - { settings: { powerOnThreshold: 100 } }
+    wait_seconds: 3
+    assert:
+      - { device: test-wm-pump-active, attribute: switch, value: "on" }
+    assert_logs:
+      - { pattern: "Pump started", level: info }
+    allow_log_patterns:
+      - "its start was not seen"
+      # A save re-syncs the dashboard file from GitHub and logs the outcome at warn.
+      - "Dashboard UI"
+      - "UI sync rejected"
+
+  # ─── Case 8: a stop whose cycle record fails ────────────────────────
+  # A CSV name the hub rejects makes the file write throw. The stop must
+  # still be kept (case 9 checks what the next cycle does).
+  - name: stop-with-rejected-csv-name
+    command_spacing_seconds: 1
+    setup:
+      - { device: test-wm-pump, command: setPower, args: [0] }
+      - { device: test-wm-leak, command: "dry" }
+      - { settings: { enableCsvLogging: true } }
+      - { settings: { csvFileName: ".wm-test.csv" } }
+    setup_wait_seconds: 2
+    actions:
+      - { device: test-wm-pump, command: setPower, args: [200] }
+      - { device: test-wm-pump, command: setPower, args: [0] }
+    wait_seconds: 3
+    assert:
+      - { device: test-wm-pump-active, attribute: switch, value: "off" }
+    assert_logs:
+      - { pattern: "Pump stopped", level: info }
+    allow_warnings: true
+
+  # ─── Case 9: the cycle after it (depends on case 8) ─────────────────
+  # 12 s later, past the 10 s limit counted from case 8's start. A stop that
+  # was not kept would time this start from the old cycle and shut the pump off.
+  - name: next-cycle-is-not-timed-from-the-failed-stop
+    setup:
+      # One step, so the wait below applies.
+      - { device: test-wm-leak, command: "dry" }
+    setup_wait_seconds: 12
+    actions:
+      - { device: test-wm-pump, command: setPower, args: [200] }
+    wait_seconds: 3
+    assert:
+      - { device: test-wm-leak,        attribute: water,  value: "dry" }
+      - { device: test-wm-pump-active, attribute: switch, value: "on" }
+    assert_logs:
+      - { pattern: "Pump started", level: info }
+    assert_events:
+      - { attribute: "water", value: "wet", source: "test-wm-leak", negate: true }
+
+  # ─── Case 10: the pump ignores the off command ──────────────────────
+  # The fixture drops off() while stuck. The shutoff at 10 s has no effect;
+  # the app must send off again on its one-minute check.
+  - name: shutoff-is-sent-again-until-the-pump-is-off
+    command_spacing_seconds: 14
+    setup:
+      - { device: test-wm-pump, command: setPower, args: [0] }
+      - { settings: { enableCsvLogging: false } }
+      - { device: test-wm-leak, command: "dry" }
+      - { device: test-wm-pump, command: "on" }
+      - { device: test-wm-pump, command: setStuck, args: ["true"] }
+    setup_wait_seconds: 2
+    actions:
+      - { device: test-wm-pump, command: setPower, args: [200] }
+      - { device: test-wm-pump, command: setStuck, args: ["false"] }
+    wait_seconds: 65
+    assert:
+      - { device: test-wm-pump, attribute: switch, value: "off" }
+    allow_log_patterns:
+      - "No notification device configured"
+      - "EMERGENCY SHUTOFF"
+      - "Sending off again"
+
+  # ─── Case 11: a flow that ended while it was not watched ────────────
+  # With flow tracking off the app does not see the rate return to 0. The
+  # flow must be closed without an event, and the indicator turned off.
+  - name: unwatched-flow-end-clears-the-indicator
+    command_spacing_seconds: 1
+    setup:
+      - { device: test-wm-pump, command: setStuck, args: ["false"] }
+      - { device: test-wm-meter, command: setRate, args: [0] }
+      - { device: test-wm-flow-ind, command: "off" }
+    setup_wait_seconds: 2
+    actions:
+      - { device: test-wm-meter, command: setRate, args: [5] }
+      - { settings: { enableFlowTracking: false } }
+      - { device: test-wm-meter, command: setRate, args: [0] }
+      - { settings: { enableFlowTracking: true } }
+    wait_seconds: 3
+    assert:
+      - { device: test-wm-flow-ind, attribute: switch, value: "off" }
+    assert_logs:
+      - { pattern: "Water flow stopped", level: info, negate: true }
+    allow_log_patterns:
+      - "ended while it was not watched"
+      # A save re-syncs the dashboard file from GitHub and logs the outcome at warn.
+      - "Dashboard UI"
+      - "UI sync rejected"
+
+# Budget: cases 1-5 ~35 s, 6 ~22 s, 7 ~12 s, 8-9 ~25 s, 10 ~85 s, 11 ~12 s.
+runtime_budget_seconds: 260

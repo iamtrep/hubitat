@@ -14,6 +14,8 @@
  * Test commands:
  *   setPower(Number)  — drive the `power` attribute directly to simulate
  *                       a metered pump cycle. Does NOT modify `switch`.
+ *   setStuck("true")  — off() does nothing until setStuck("false"),
+ *                       to test the shutoff retry.
  *   on() / off()      — toggle the `switch` attribute. `off()` also
  *                       drives `power` to 0 so the app's powerHandler
  *                       sees a real transition (mirrors what a real
@@ -35,6 +37,7 @@ metadata {
         capability "PowerMeter"
 
         command "setPower", [[name: "watts", type: "NUMBER"]]
+        command "setStuck", [[name: "stuck", type: "ENUM", constraints: ["true", "false"]]]
     }
 }
 
@@ -52,7 +55,13 @@ void on() {
     )
 }
 
+// A stuck relay: off() is accepted and does nothing, as with a plug that is off the mesh.
+void setStuck(String stuck) {
+    state.stuck = (stuck == "true")
+}
+
 void off() {
+    if (state.stuck) return
     sendEvent(
         name: "switch",
         value: "off",

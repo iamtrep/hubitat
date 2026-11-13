@@ -19,7 +19,8 @@ import com.hubitat.hub.domain.Hub
 import java.nio.file.AccessDeniedException
 
 @Field static final String APP_NAME = "Well Monitor"
-@Field static final String CODE_VERSION = "0.11.8"
+@Field static final String CODE_VERSION = "0.11.9"
+@Field static final int SHUTOFF_MAX_ATTEMPTS = 10
 @Field static final String DASHBOARD_FILE = "wellmonitor-dashboard.html"
 @Field static final String CHARTJS_FILE = "wellpump-chart.min.js"
 
@@ -412,6 +413,7 @@ void initialize() {
     schedule("0 17 3 * * ?", "scheduledUISync")
 
     recoverPumpState()
+    recoverFlowState()
 
     logCfg("${APP_NAME} initialized. Pump running: ${state.pumpRunning}")
 }
@@ -427,41 +429,84 @@ void systemStartHandler(evt) {
     checkVersion()
     logInfo("Hub started — re-evaluating pump state")
     recoverPumpState()
+    recoverFlowState()
 }
 
-private void recoverPumpState() {
-    if (!state.pumpRunning) return
+private BigDecimal currentPumpPower() {
+    Object raw = pumpSwitch?.currentValue("power")
+    if (raw == null) return null
+    try {
+        return raw as BigDecimal
+    } catch (Exception e) {
+        return null
+    }
+}
 
-    Object rawPower = pumpSwitch?.currentValue("power")
-    if (rawPower == null) {
-        logWarn("Recovery: pump power unavailable — leaving state.pumpRunning as-is")
+// Re-derives the pump's state from its current power. Runs on Done, on a code push and on hub
+// start: the first two arrive after unschedule() has removed the emergency timers, and a start or
+// a stop may have happened while the hub was down.
+private void recoverPumpState() {
+    if (state.shutoffPending) {
+        runEvery1Minute("pumpWatchdog")
         return
     }
-    BigDecimal currentPower = rawPower as BigDecimal
-    int onThreshold = (powerOnThreshold ?: 100) as int
 
-    if (currentPower > onThreshold) {
-        // Pump still running — reschedule emergency timer for the remaining window.
-        if (enableEmergencyShutoff != false) {
-            long elapsed = now() - (state.pumpBegin as long)
-            int timeoutMs = ((emergencyTimeoutSeconds ?: 300) as int) * 1000
-            long remaining = timeoutMs - elapsed
-            if (remaining > 0) {
-                int remainingSeconds = Math.round(remaining / 1000.0) as int
-                runIn(remainingSeconds, "emergencyShutoff")
-                runEvery1Minute("pumpWatchdog")
-                logInfo("Recovered running pump state, emergency timer rescheduled (${remainingSeconds}s remaining)")
-            } else {
-                logWarn("Recovered running pump state but emergency timeout already exceeded - triggering shutoff")
-                emergencyShutoff()
-            }
+    BigDecimal currentPower = currentPumpPower()
+    int onThreshold = (powerOnThreshold ?: 100) as int
+    int offThreshold = (powerOffThreshold ?: 10) as int
+
+    if (!state.pumpRunning) {
+        if (currentPower != null && currentPower > onThreshold) {
+            logWarn("Pump draws ${currentPower}W but its start was not seen. Monitoring from now.")
+            handlePumpStarted(now())
         }
-    } else {
-        // Pump stopped while we weren't watching — we missed the stop event.
+        return
+    }
+
+    // Same rule as powerHandler: a started pump runs until it reads below the off threshold.
+    if (currentPower != null && currentPower < offThreshold) {
         logWarn("Pump was running before restart but is now off (${currentPower}W). Cycle data lost.")
         state.pumpRunning = false
         if (pumpActiveSwitch) pumpActiveSwitch.off()
+        return
     }
+
+    if (currentPower == null) logWarn("Recovery: pump power unavailable, keeping the emergency timer")
+    armEmergencyTimers()
+}
+
+// Schedules the emergency shutoff for what is left of the time limit, counted from state.pumpBegin.
+private void armEmergencyTimers() {
+    if (enableEmergencyShutoff == false) return
+    long elapsed = now() - (state.pumpBegin as long)
+    long remaining = ((emergencyTimeoutSeconds ?: 300) as int) * 1000L - elapsed
+    if (remaining > 0) {
+        int remainingSeconds = Math.max(1, Math.round(remaining / 1000.0) as int)
+        runIn(remainingSeconds, "emergencyShutoff")
+        runEvery1Minute("pumpWatchdog")
+        logInfo("Recovered running pump state, emergency timer rescheduled (${remainingSeconds}s remaining)")
+    } else {
+        logWarn("Recovered running pump state but emergency timeout already exceeded - triggering shutoff")
+        emergencyShutoff()
+    }
+}
+
+// A flow that ended while nobody watched (hub down, flow tracking off) leaves flowActive set. The
+// next flow would then be merged with it, so the flag is cleared and no event is recorded.
+private void recoverFlowState() {
+    if (!state.flowActive) return
+    if (waterMeter && enableFlowTracking != false) {
+        Object rawRate = waterMeter.currentValue("rate")
+        if (rawRate == null) return
+        try {
+            if ((rawRate as BigDecimal) > 0) return
+        } catch (Exception e) {
+            return
+        }
+    }
+    logWarn("Water flow ended while it was not watched. The event is not recorded.")
+    state.flowActive = false
+    if (flowIndicatorSwitch) flowIndicatorSwitch.off()
 }
 
 // ==================== Event Handler ====================
@@ -484,6 +529,13 @@ void powerHandler(Event evt) {
     int onThreshold = (powerOnThreshold ?: 100) as int
 
     logEvt("Power event: ${currentPower}W (previous: ${prevPower}W)")
+
+    // After an emergency shutoff the pump is not a new cycle until it has been seen off.
+    if (state.shutoffPending) {
+        if (currentPower < offThreshold) confirmShutoff(currentPower)
+        state.previousPower = currentPower
+        return
+    }
 
     // Hysteresis on the pump's state, not on the previous reading: a ramp reading between
     // the thresholds (93 W just before 2099 W) must not hide a start or a stop.
@@ -541,6 +593,16 @@ private void handlePumpStopped(long currentTime) {
 
     if (pumpActiveSwitch) pumpActiveSwitch.off()
 
+    // A throw past this point would drop the pumpRunning write above while the timers are already
+    // gone, and the next cycle would then be timed from this one's start.
+    try {
+        recordCycle(currentTime)
+    } catch (Exception e) {
+        logError("Pump stopped, but recording the cycle failed: ${e.message}")
+    }
+}
+
+private void recordCycle(long currentTime) {
     // Calculate cycle metrics
     long pumpBegin = (state.pumpBegin ?: currentTime) as long
     long durationMs = currentTime - pumpBegin
@@ -637,29 +699,88 @@ void emergencyShutoff() {
 private void performEmergencyShutoff(BigDecimal durationSeconds) {
     int timeout = (emergencyTimeoutSeconds ?: 300) as int
 
+    // The pump goes off before anything else: a notification or leak sensor step that fails must
+    // not stand between the limit and the off command.
+    sendPumpOff()
+    state.pumpRunning = false
+    state.shutoffPending = [at: now(), attempts: 1]
+    unschedule("emergencyShutoff")
+    runEvery1Minute("pumpWatchdog")
+
     logError("EMERGENCY SHUTOFF: Pump has run for ${fmtDec(durationSeconds)}s (limit: ${timeout}s)")
-
-    String msg = "EMERGENCY STOP: Well pump has run for ${fmtDec(durationSeconds)}s, exceeding ${timeout}s limit"
-    sendNotification(msg)
-
-    if (emergencyLeakSensor) {
-        emergencyLeakSensor.wet()
-        logInfo("Emergency leak sensor activated")
-    }
-
-    pumpSwitch.off()
     if (pumpActiveSwitch) pumpActiveSwitch.off()
 
-    state.pumpRunning = false
-    unschedule("emergencyShutoff")
+    try {
+        sendNotification("EMERGENCY STOP: Well pump has run for ${fmtDec(durationSeconds)}s, exceeding ${timeout}s limit")
+    } catch (Exception e) {
+        logError("Emergency notification failed: ${e.message}")
+    }
+
+    if (emergencyLeakSensor) {
+        // Calling a command the device lacks throws; only virtual water sensors have wet().
+        if (emergencyLeakSensor.hasCommand("wet")) {
+            emergencyLeakSensor.wet()
+            logInfo("Emergency leak sensor activated")
+        } else {
+            logWarn("${emergencyLeakSensor.displayName} has no wet command, so it was not set. Select a virtual water sensor.")
+        }
+    }
+}
+
+private void sendPumpOff() {
+    try {
+        pumpSwitch.off()
+    } catch (Exception e) {
+        logError("Could not turn the pump off: ${e.message}")
+    }
+}
+
+private void confirmShutoff(BigDecimal power) {
+    state.remove("shutoffPending")
     unschedule("pumpWatchdog")
+    logInfo("Emergency shutoff confirmed: pump at ${power}W")
+}
+
+// After an emergency shutoff, sends off again every minute until the pump reads below the off
+// threshold, for SHUTOFF_MAX_ATTEMPTS attempts.
+private void retryShutoff() {
+    Map pending = state.shutoffPending as Map
+    BigDecimal power = currentPumpPower()
+    if (power != null && power < ((powerOffThreshold ?: 10) as int)) {
+        confirmShutoff(power)
+        return
+    }
+    String reading = power == null ? "has no power reading" : "still draws ${power}W"
+    int attempts = ((pending.attempts ?: 1) as int) + 1
+    if (attempts > SHUTOFF_MAX_ATTEMPTS) {
+        state.remove("shutoffPending")
+        unschedule("pumpWatchdog")
+        logError("Pump ${reading} after ${SHUTOFF_MAX_ATTEMPTS} off commands. Giving up.")
+        return
+    }
+    logWarn("Pump ${reading} after the emergency shutoff. Sending off again (attempt ${attempts} of ${SHUTOFF_MAX_ATTEMPTS}).")
+    sendPumpOff()
+    pending.attempts = attempts
+    state.shutoffPending = pending
+    if (attempts == 3) {
+        try {
+            sendNotification("Well pump ${reading} after the emergency shutoff. Check the pump switch.")
+        } catch (Exception e) {
+            logError("Notification failed: ${e.message}")
+        }
+    }
 }
 
 // Checks the time limit every minute while the pump runs. The one-shot emergencyShutoff job is
 // dropped when this singleThreaded app is held up for more than 120 s (as in a hub's startup
 // rush, systemStart recovery included); the watchdog then shuts off at most a minute late.
+// After a shutoff it keeps running until the pump is seen off.
 void pumpWatchdog() {
     checkVersion()
+    if (state.shutoffPending) {
+        retryShutoff()
+        return
+    }
     if (!state.pumpRunning || enableEmergencyShutoff == false) {
         unschedule("pumpWatchdog")
         return
@@ -1579,6 +1700,10 @@ private void safeUploadHubFile(String fileName, byte[] bytes) {
         } catch (AccessDeniedException ex) {
             logWarn("Failed to upload ${fileName}: ${ex.message}. Retrying (${i} / 3) ...")
             pauseExecution(500)
+        } catch (Exception ex) {
+            // A rejected file name and other permanent failures: a retry would not help.
+            logError("Failed to upload ${fileName}: ${ex.message}")
+            return
         }
     }
     logError("Failed to upload ${fileName} after 3 attempts - possible data loss")
@@ -1597,6 +1722,8 @@ private String getStatusText() {
             status.append(" (${fmtDec(elapsed)}s)")
         }
         status.append("<br/>")
+    } else if (state.shutoffPending) {
+        status.append("<b style='color:var(--hubitat-validation-color, #d32f2f)'>EMERGENCY SHUTOFF SENT, PUMP NOT SEEN OFF YET</b><br/>")
     } else {
         status.append("<b style='color:var(--hubitat-success-color, #356700)'>PUMP IDLE</b><br/>")
     }
