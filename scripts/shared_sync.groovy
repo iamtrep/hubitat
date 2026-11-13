@@ -280,11 +280,12 @@ List<String> driftedNames(String before, String after, String label, List<Map> b
 int cmdNames(File root, List<String> files) {
     Map manifest = loadManifest(root)
     if (!files) { say 'usage: --names <files…>'; return 2 }
-    Map<String, String> owner = [:]   // item name -> block
+    // item name -> every block that defines it (the app and driver variants share names)
+    Map<String, List<String>> owner = [:]
     File dir = new File(root, 'shared')
     (dir.listFiles() ?: []).findAll { it.name.endsWith('.groovy') }.each { File bf ->
         String bn = bf.name - '.groovy'
-        try { loadBlock(root, bn).items.each { owner[it.name] = bn } } catch (Exception e) { say "ERROR shared/${bf.name}: ${firstLine(e)}" }
+        try { loadBlock(root, bn).items.each { owner.get(it.name.toString(), []) << bn } } catch (Exception e) { say "ERROR shared/${bf.name}: ${firstLine(e)}" }
     }
     int warned = 0
     files.each { String p ->
@@ -295,8 +296,9 @@ int cmdNames(File root, List<String> files) {
         List<Map> have
         try { have = itemsOf(f.text, t) } catch (Exception e) { return }   // the parse-check reports syntax errors
         Set<String> listed = ((manifest[t] as Map)?.keySet() ?: []) as Set
-        have.findAll { owner.containsKey(it.name) && !(owner[it.name] in listed) }.each {
-            say "WARN ${t}: ${it.name} is in shared block ${owner[it.name]}; add \"${owner[it.name]}\" for this file to shared/manifest.json and run sync, or rename it if it is not the same helper"
+        have.findAll { owner.containsKey(it.name) && !owner[it.name].any { b -> b in listed } }.each {
+            String blocks = owner[it.name].join('" or "')
+            say "WARN ${t}: ${it.name} is in shared block ${owner[it.name].join(', ')}; add \"${blocks}\" for this file to shared/manifest.json and run sync, or rename it if it is not the same helper"
             warned++
         }
     }

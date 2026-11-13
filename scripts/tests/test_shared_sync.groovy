@@ -242,6 +242,18 @@ check('names on listed file says DRIFT', res.out.contains('DRIFT apps/A.groovy')
 res = tool(toolFile, r, ['--names', new File(r, 'shared/q.groovy').path])
 check('names ignores the shared source', res.code, 0)
 
+// ── --names: a name defined by two blocks is not drift when the file lists either one ──
+// Either block may be the one listed, whatever order the directory returns them in.
+['q', 'q2'].each { String listedBlock ->
+    String man = '{"apps/D.groovy": {"' + listedBlock + '": {"version": 1, "items": ["FLOOR", "twice", "quiet"]}}}'
+    r = fork(['shared/q.groovy': BLOCK, 'shared/q2.groovy': BLOCK, 'shared/manifest.json': man, 'apps/D.groovy': synced])
+    res = tool(toolFile, r, ['--names', new File(r, 'apps/D.groovy').path])
+    check("names: file listing ${listedBlock} of two blocks defining one name gets no warning", res.out.contains('is in shared block'), false)
+}
+r = fork(['shared/q.groovy': BLOCK, 'shared/q2.groovy': BLOCK, 'shared/manifest.json': '{}', 'apps/E.groovy': 'Long twice(Long x) { x }\n'])
+res = tool(toolFile, r, ['--names', new File(r, 'apps/E.groovy').path])
+check('names: unlisted file still warns and names both blocks', (res.out =~ /twice is in shared block (q, q2|q2, q);/).find(), true)
+
 // ── unlisted files are left alone by sync ──
 r = fork(['shared/q.groovy': BLOCK, 'shared/manifest.json': MANIFEST, 'apps/A.groovy': synced,
           'apps/B.groovy': 'Long twice(Long x) { x }\n'])
