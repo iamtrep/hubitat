@@ -41,6 +41,7 @@ preferences {
 @Field static final ConcurrentHashMap<String, Object> SHARED = new ConcurrentHashMap<String, Object>()
 @Field static final ConcurrentHashMap<String, ConcurrentHashMap> FAN_IN = new ConcurrentHashMap<String, ConcurrentHashMap>()
 @Field static final ConcurrentHashMap<String, AtomicInteger> FAN_IN_DONE = new ConcurrentHashMap<String, AtomicInteger>()
+@Field static final ConcurrentHashMap<String, ConcurrentHashMap> TIMEOUT_RES = new ConcurrentHashMap<String, ConcurrentHashMap>()
 @Field static final AtomicInteger SLEEP_IN_FLIGHT = new AtomicInteger(0)
 @Field static final AtomicInteger SLEEP_MAX_IN_FLIGHT = new AtomicInteger(0)
 String TOP_LEVEL_NOT_FIELD = "top"
@@ -65,6 +66,14 @@ mappings {
     path("/rebootRead")    { action: [GET: "apiRebootRead"] }
     path("/httpProbes")    { action: [GET: "apiHttpProbes"] }
     path("/mkp")           { action: [GET: "apiMkp"] }
+    path("/inPlaceSetup")  { action: [GET: "apiInPlaceSetup"] }
+    path("/inPlaceMutate") { action: [GET: "apiInPlaceMutate"] }
+    path("/inPlaceRead")   { action: [GET: "apiInPlaceRead"] }
+    path("/numKeysWrite")  { action: [GET: "apiNumKeysWrite"] }
+    path("/numKeysRead")   { action: [GET: "apiNumKeysRead"] }
+    path("/schedOverwrite") { action: [GET: "apiSchedOverwrite"] }
+    path("/timeoutFire")   { action: [GET: "apiTimeoutFire"] }
+    path("/timeoutRead")   { action: [GET: "apiTimeoutRead"] }
 }
 
 void installed() {
@@ -229,6 +238,103 @@ Map apiRunIn() {
 
 void noopDefault() { }
 void noopNoOverwrite() { }
+
+// Same-handler overwrite default for runInMillis, runOnce and schedule (runIn is in apiRunIn)
+Map apiSchedOverwrite() {
+    unschedule()
+    Date later = new Date(now() + 3600000L)
+    2.times { runInMillis(3600000L, "noopMillis") }
+    2.times { runInMillis(3600000L, "noopMillisKeep", [overwrite: false]) }
+    2.times { runOnce(later, "noopOnce") }
+    2.times { runOnce(later, "noopOnceKeep", [overwrite: false]) }
+    2.times { schedule("0 0 3 * * ?", "noopCron") }
+    2.times { schedule("0 0 3 * * ?", "noopCronKeep", [overwrite: false]) }
+    return renderJson([scheduled: true])
+}
+
+void noopMillis() { }
+void noopMillisKeep() { }
+void noopOnce() { }
+void noopOnceKeep() { }
+void noopCron() { }
+void noopCronKeep() { }
+
+// ── in-place changes to state vs atomicState collections ─────────────
+// Set up in one call, change in place in another (endpoint, scheduled handler,
+// async callback), read in a third.
+
+private Map ipFresh() { return [m: [k: 0], l: [0], a: [k: 0]] }
+
+Map apiInPlaceSetup() {
+    state.ipPlain = ipFresh()
+    atomicState.ipAtomic = ipFresh()
+    state.remove("ipEntry")
+    return renderJson([set: true])
+}
+
+private void inPlaceMutate(String entry) {
+    atomicState.ipAtomic.m.k = 1
+    atomicState.ipAtomic.l << 1
+    def aliasA = atomicState.ipAtomic.a
+    aliasA.k = 1
+    state.ipPlain.m.k = 1
+    state.ipPlain.l << 1
+    def aliasP = state.ipPlain.a
+    aliasP.k = 1
+    state.ipEntry = entry
+}
+
+Map apiInPlaceMutate() {
+    String entry = params.entry as String
+    if (entry == "endpoint") inPlaceMutate("endpoint")
+    if (entry == "scheduled") runInMillis(100, "inPlaceScheduled")
+    if (entry == "callback") asynchttpGet("inPlaceCallback", [uri: "http://127.0.0.1:8080/hub2/hubData", timeout: 15])
+    return renderJson([entry: entry])
+}
+
+void inPlaceScheduled() { inPlaceMutate("scheduled") }
+void inPlaceCallback(resp, data) { inPlaceMutate("callback") }
+
+Map apiInPlaceRead() {
+    return renderJson([plain: state.ipPlain, atomic: atomicState.ipAtomic, entry: state.ipEntry])
+}
+
+// ── numeric state map keys ───────────────────────────────────────────
+
+Map apiNumKeysWrite() {
+    state.numKeys = [(1): "int", (2L): "long"]
+    return renderJson([set: true])
+}
+
+Map apiNumKeysRead() {
+    Map m = state.numKeys as Map
+    return renderJson([keyClasses: m.keySet().collect { getObjectClassName(it) }.sort(),
+                       byInt: m[1], byLong: m[2L], byString1: m["1"], byString2: m["2"]])
+}
+
+// ── async timeout vs queue wait ──────────────────────────────────────
+
+Map apiTimeoutFire() {
+    int n = (params.n ?: "20") as int
+    int timeoutSecs = (params.timeoutSecs ?: "5") as int
+    List<String> hosts = ((params.hosts ?: "127.0.0.1") as String).tokenize(",")
+    TIMEOUT_RES.put(instanceKey(), new ConcurrentHashMap())
+    for (int i = 0; i < n; i++) {
+        String host = hosts[i % hosts.size()]
+        asynchttpGet("timeoutHandler", [uri: "http://${host}:8080${params.targetPath}&tag=t${i}", timeout: timeoutSecs], [i: i, sent: now()])
+    }
+    return renderJson([fired: n])
+}
+
+void timeoutHandler(resp, data) {
+    String status = resp.hasError() ? "error: " + resp.getErrorMessage() : resp.getStatus().toString()
+    TIMEOUT_RES.get(instanceKey())?.put("k${data.i}".toString(), [sent: data.sent, cb: now(), status: status])
+}
+
+Map apiTimeoutRead() {
+    Map res = TIMEOUT_RES.get(instanceKey()) ?: [:]
+    return renderJson([count: res.size(), spans: res.values().collect { Map v -> [v.sent, v.cb, v.status] }])
+}
 
 // ── sendEvent dedup vs subscriber filtering ──────────────────────────
 

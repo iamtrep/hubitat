@@ -22,6 +22,12 @@ metadata {
         command "probeLimits", [[name: "tag", type: "STRING"]]
         command "clearLifecycle"
         command "probeZigbee", [[name: "tag", type: "STRING"]]
+        command "ipSetup"
+        command "ipMutate", [[name: "entry", type: "STRING"]]
+        command "ipRead", [[name: "tag", type: "STRING"]]
+        command "atomicAfterState", [[name: "token", type: "STRING"]]
+        command "atomicBeforeState", [[name: "token", type: "STRING"]]
+        command "atomicRead", [[name: "tag", type: "STRING"]]
     }
     preferences {
         input name: "probeDevices", type: "capability.actuator", title: "Devices", multiple: true, required: false
@@ -70,6 +76,59 @@ void probeZigbee(String tag) {
     Map desc = zigbee.parseDescriptionAsMap("read attr - raw: 0B6301000608000010010000, dni: 0B63, endpoint: 01, cluster: 0006, size: 08, attrId: 0000, encoding: 10, command: 01, value: 01")
     r.descKeys = (desc?.keySet() ?: []).collect { it.toString() }.sort()
     device.updateDataValue("probeZigbee", JsonOutput.toJson(r))
+}
+
+// In-place changes to atomicState vs state collections. atomicState is touched
+// before state in every method, so the exit write-back can't interfere.
+private Map ipFresh() { return [m: [k: 0], l: [0], a: [k: 0]] }
+
+void ipSetup() {
+    atomicState.ipAtomic = ipFresh()
+    state.ipPlain = ipFresh()
+    state.remove("ipEntry")
+}
+
+private void inPlaceMutate(String entry) {
+    atomicState.ipAtomic.m.k = 1
+    atomicState.ipAtomic.l << 1
+    def aliasA = atomicState.ipAtomic.a
+    aliasA.k = 1
+    state.ipPlain.m.k = 1
+    state.ipPlain.l << 1
+    def aliasP = state.ipPlain.a
+    aliasP.k = 1
+    state.ipEntry = entry
+}
+
+void ipMutate(String entry) {
+    if (entry == "command") inPlaceMutate("command")
+    if (entry == "scheduled") runInMillis(100, "ipScheduled")
+}
+
+void ipScheduled() { inPlaceMutate("scheduled") }
+
+void ipRead(String tag) {
+    def atomicCopy = atomicState.ipAtomic
+    Map r = [tag: tag, atomic: atomicCopy, plain: state.ipPlain, entry: state.ipEntry]
+    device.updateDataValue("probeInPlace", JsonOutput.toJson(r))
+}
+
+// An atomicState write after the method's first state access vs one before it
+void atomicAfterState(String token) {
+    state.aasPlain = token
+    atomicState.aasAtomic = token
+}
+
+void atomicBeforeState(String token) {
+    atomicState.absAtomic = token
+    state.absPlain = token
+}
+
+void atomicRead(String tag) {
+    def aas = atomicState.aasAtomic
+    def abs = atomicState.absAtomic
+    Map r = [tag: tag, aasAtomic: aas, absAtomic: abs, aasPlain: state.aasPlain, absPlain: state.absPlain]
+    device.updateDataValue("probeAtomic", JsonOutput.toJson(r))
 }
 
 void deviceTypeUpdated() {

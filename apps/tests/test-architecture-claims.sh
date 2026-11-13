@@ -467,6 +467,45 @@ check(jobs.count("noopDefault") == 1 and jobs.count("noopNoOverwrite") == 2,
       "runIn overwrites a same-name job by default; [overwrite:false] keeps both",
       f"scheduled jobs: {jobs}")
 
+# runInMillis, runOnce and schedule overwrite a same-name job by default, like runIn
+api(iid_mt, "schedOverwrite")
+jobs = job_names(iid_mt)
+for kind, dflt, keep in (("runInMillis", "noopMillis", "noopMillisKeep"), ("runOnce", "noopOnce", "noopOnceKeep"),
+                         ("schedule", "noopCron", "noopCronKeep")):
+    check(jobs.count(dflt) == 1 and jobs.count(keep) == 2,
+          f"{kind} overwrites a same-name job by default; [overwrite:false] keeps both",
+          f"{kind}: default-handler jobs {jobs.count(dflt)} (expected 1), overwrite:false jobs {jobs.count(keep)} (expected 2); jobs {jobs}")
+api(iid_mt, "runIn")   # leave only the harmless runIn jobs
+
+# ── In-place collection changes ───────────────────────────────────────
+section("In-place changes to state and atomicState collections (app)")
+
+IP_FRESH = {"m": {"k": 0}, "l": [0], "a": {"k": 0}}
+IP_PLAIN_CHANGED = {"m": {"k": 1}, "l": [0, 1], "a": {"k": 1}}
+for entry in ("endpoint", "scheduled", "callback"):
+    api(iid_mt, "inPlaceSetup")
+    api(iid_mt, "inPlaceMutate", entry=entry)
+    for _ in range(10):
+        time.sleep(0.5)
+        ip = api(iid_mt, "inPlaceRead")[1]
+        if ip.get("entry") == entry: break
+    if ip.get("entry") != entry:
+        fail(f"in-place changes from a {entry}: the mutation did not complete ({ip})")
+        continue
+    check(ip["plain"] == IP_PLAIN_CHANGED, f"in-place changes to a state collection persist ({entry}: map key, <<, alias)",
+          f"state collection after in-place changes from a {entry}: {ip['plain']}, expected {IP_PLAIN_CHANGED}")
+    check(ip["atomic"] == IP_FRESH, f"in-place changes to an atomicState collection are lost ({entry}: map key, <<, alias)",
+          f"atomicState collection after in-place changes from a {entry}: {ip['atomic']}, expected the unchanged {IP_FRESH}")
+
+section("Numeric state map keys (app)")
+
+api(iid_mt, "numKeysWrite")
+_, nk = api(iid_mt, "numKeysRead")
+check(nk["keyClasses"] == ["java.lang.String", "java.lang.String"] and nk["byInt"] is None and nk["byLong"] is None
+      and nk["byString1"] == "int" and nk["byString2"] == "long",
+      "numeric state map keys come back as Strings: lookup by the number misses, by its string hits",
+      f"numeric state keys on the next call: {nk}")
+
 # ── Instance never saved with Done ────────────────────────────────────
 section("An instance never saved with Done")
 
@@ -558,6 +597,41 @@ back = device_full()
 check(not back.get("deviceState"), "state stays cleared after switching back to the original driver",
       f"state after switching back: {back.get('deviceState')}")
 
+# ── Driver: in-place collection changes and atomicState write order ───
+section("Driver: in-place changes and the state write-back")
+
+def drv_data(key, tag):
+    return json.loads((device_full()["device"].get("data") or {}).get(key) or "{}")
+
+def drv_cmd(cmd, value=None, wait=0.7):
+    run_command(device_id, cmd, value); time.sleep(wait)
+
+for entry in ("command", "scheduled"):
+    drv_cmd("ipSetup"); drv_cmd("ipMutate", entry, wait=1.5)
+    tag = f"ip{entry}{int(time.time())}"
+    drv_cmd("ipRead", tag)
+    ipd = drv_data("probeInPlace", tag)
+    if ipd.get("tag") != tag or ipd.get("entry") != entry:
+        fail(f"driver in-place changes from a {entry}: the probe did not complete ({ipd})")
+        continue
+    check(ipd["plain"] == IP_PLAIN_CHANGED, f"driver: in-place changes to a state collection persist ({entry}: map key, <<, alias)",
+          f"driver state collection after in-place changes from a {entry}: {ipd['plain']}, expected {IP_PLAIN_CHANGED}")
+    check(ipd["atomic"] == IP_FRESH, f"driver: in-place changes to an atomicState collection are lost ({entry}: map key, <<, alias)",
+          f"driver atomicState collection after in-place changes from a {entry}: {ipd['atomic']}, expected the unchanged {IP_FRESH}")
+
+tok = f"w{int(time.time())}"
+drv_cmd("atomicAfterState", tok); drv_cmd("atomicBeforeState", tok)
+tag = f"at{int(time.time())}"
+drv_cmd("atomicRead", tag)
+at = drv_data("probeAtomic", tag)
+if at.get("tag") != tag or at.get("aasPlain") != tok or at.get("absPlain") != tok:
+    fail(f"driver atomicState probe did not complete: {at}")
+else:
+    check(at.get("absAtomic") == tok, "driver: an atomicState write made before the method's first state access persists",
+          f"driver atomicState written before state access reads {at.get('absAtomic')!r}, expected {tok!r}")
+    check(at.get("aasAtomic") != tok, "driver: an atomicState write made after the method's first state access is overwritten by the exit write-back",
+          f"driver atomicState written after state access survived: {at.get('aasAtomic')!r} (ARCHITECTURE.md says it is overwritten)")
+
 # ── Driver limits ─────────────────────────────────────────────────────
 section("What only an app can do")
 
@@ -614,6 +688,26 @@ check(hp.get("formClass") == "java.util.LinkedHashMap" and hp.get("formKeyCount"
       "a form-encoded contentType parses a JSON reply into a one-key map whose fields read null",
       f"form contentType on JSON: {hp}")
 check(str(hp.get("textClass")).endswith("TextResponseReader"), "contentType text/plain leaves the reply unparsed", f"text/plain: {hp.get('textClass')}")
+
+# ── Async timeout vs queue wait ───────────────────────────────────────
+section("Async HTTP timeout does not run while a call waits for one of the app's 8 slots")
+
+TIMEOUT_S = 5
+# 20 calls of 3 s over 4 destinations: the app pool of 8 holds the last ones back past the 5 s timeout
+api(iid_mt, "timeoutFire", n=20, timeoutSecs=TIMEOUT_S, targetPath=sleep_path, hosts=FOUR_HOSTS)
+for _ in range(20):
+    time.sleep(1)
+    tr = api(iid_mt, "timeoutRead")[1]
+    if tr["count"] >= 20: break
+lat = sorted(cb - sent for sent, cb, _ in tr["spans"])
+timed_out = sum(1 for _, _, st in tr["spans"] if st != "200")
+info(f"dispatch-to-callback ms: {lat}; non-200 callbacks: {timed_out}")
+if tr["count"] < 20:
+    fail(f"async timeout probe: only {tr['count']}/20 callbacks arrived")
+else:
+    check(timed_out == 0 and lat[-1] > TIMEOUT_S * 1000,
+          f"a call that waited for a slot still got its full {TIMEOUT_S} s: none timed out and the slowest callback came {lat[-1]} ms after dispatch",
+          f"ARCHITECTURE.md says the wait for one of the app's 8 slots is not timed, but {timed_out} call(s) timed out, slowest {lat[-1]} ms ({lat})")
 
 # ── CORS ──────────────────────────────────────────────────────────────
 section("CORS on the local OAuth API")
