@@ -39,7 +39,7 @@ definition(
 
 // --- Constants ---
 
-@Field static final String CODE_VERSION = "1.1.8"
+@Field static final String CODE_VERSION = "1.1.9"
 
 @Field static final String OAUTH_BASE_URL = "https://api.oauth.blink.com"
 @Field static final String CLIENT_ID = "ios"
@@ -67,6 +67,12 @@ definition(
 @Field static final long OUTAGE_REMINDER_MS = 3_600_000L
 // Longest Retry-After honored, so a bad header can't stop polling for good.
 @Field static final long RETRY_AFTER_MAX_MS = 3_600_000L
+// A homescreen call sent less than this long after the last one is deferred, so a child refresh()
+// or a command confirmation cannot multiply the polling rate. Below the 60 s poll interval, so a
+// cron tick that fires a little early is never deferred.
+@Field static final long HOMESCREEN_MIN_GAP_MS = 30_000L
+// Token refreshes spent on homescreen 401s before the refreshed token itself counts as rejected.
+@Field static final int HOMESCREEN_401_REFRESH_LIMIT = 1
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 
 // Decrypted tokens, kept in memory only: decrypt() costs ~350 ms on a C-8 Pro, ~830 ms on a C-7.
@@ -243,6 +249,7 @@ Map loginPage() {
                 paragraph "A verification PIN has been sent to your device. Enter it below."
                 input "blinkPin", "text", title: "Verification PIN", required: true, submitOnChange: true
                 input "btnVerifyPin", "button", title: "Verify PIN"
+                input "btnStartOver", "button", title: "Start over"
             }
         } else {
             section("Credentials") {
@@ -354,7 +361,8 @@ void appButtonHandler(String btn) {
     switch (btn) {
         case "btnLogin":          startOAuthFlow(); break
         case "btnVerifyPin":      verifyPin(); break
-        case "btnRefreshNow":            pollHomescreen(); break
+        case "btnStartOver":      cleanupEphemeralState(); break
+        case "btnRefreshNow":            pollHomescreenNow(); break
         case "btnFetchTier":             fetchTierInfo(); break
         case "btnDisconnect":            logout(); break
         case "btnRemoveOrphans":         removeOrphans(); break
@@ -480,7 +488,13 @@ void verifyPin() {
         return
     }
 
-    String csrfToken = loginSession().csrfToken ?: ""
+    // A hub reboot or code push drops the login session; no PIN can pass without it, so go back to the credentials form.
+    if (!loginSession().csrfToken) {
+        state.authError = "The login session was lost. Enter your credentials again."
+        cleanupEphemeralState()
+        return
+    }
+    String csrfToken = loginSession().csrfToken
     String postBody = toQueryString([
         "2fa_code"   : blinkPin,
         "csrf-token" : csrfToken,
@@ -634,12 +648,12 @@ void exchangeCodeForTokens(String code) {
 // Sync, inside the execution that needs the token. Refresh tokens rotate: the request spends the old one, and under
 // singleThreaded an async callback that waits more than 120 s (a hub restart's startup rush) is dropped, which would
 // lose the new one and the sign-in with it. The flag also keeps two refreshes from running at once.
-void refreshAccessToken() {
+boolean refreshAccessToken() {
     checkVersion()
     logNet "refreshing access token"
     if (!hasToken("refreshToken")) {
         logError "no refresh token available"
-        return
+        return false
     }
 
     String postBody = toQueryString([
@@ -671,7 +685,7 @@ void refreshAccessToken() {
         if (isTransientStatus(status)) {
             noteRetryAfterSeconds(e.response?.getFirstHeader("Retry-After")?.getValue() as String)
             noteCloudFailure("token refresh failed: HTTP ${status} ${e.message}")
-            return
+            return false
         }
         logError "token refresh failed: HTTP ${status} ${e.message}${describeHttpBody(e.response)}"
         if (status == 401 || status == 400) {
@@ -679,13 +693,13 @@ void refreshAccessToken() {
             clearTokensOnly()
             markChildrenOffline("signed out of Blink")
         }
-        return
+        return false
     } catch (Exception e) {
         // No answer (timeout, unreachable): transient, the token is unchanged.
         noteCloudFailure("token refresh failed: ${e.message}")
-        return
+        return false
     }
-    if (json == null) return
+    if (json == null) return false
     try {
         storeToken("accessToken", json.access_token as String)
         if (json.refresh_token) storeToken("refreshToken", json.refresh_token as String)
@@ -693,8 +707,10 @@ void refreshAccessToken() {
         state.tokenExpiry = now() + (expiresIn * 1000L)
         logInfo "token refreshed, expires in ${expiresIn}s"
         scheduleTokenRefresh()
+        return true
     } catch (Exception e) {
         logError "token refresh failed: ${e.message}"
+        return false
     }
 }
 
@@ -789,7 +805,20 @@ void tierInfoResponse(resp, data) {
 
 // --- Polling & Discovery ---
 
+// Entry for the schedule, child refresh() and command confirmations: a call inside the minimum gap
+// is deferred to the end of it, and calls made meanwhile share that one pending run.
 void pollHomescreen() {
+    checkVersion()
+    long wait = ((state.lastHomescreenPollAt ?: 0L) as long) + HOMESCREEN_MIN_GAP_MS - now()
+    if (wait > 0L) {
+        logSched "pollHomescreen: last poll ${wait} ms inside the minimum gap, deferred"
+        runInMillis(wait + 250L, "pollHomescreen", [overwrite: true])
+        return
+    }
+    pollHomescreenNow()
+}
+
+void pollHomescreenNow() {
     checkVersion()
     if (!isAuthenticated()) {
         logSched "pollHomescreen: not authenticated"
@@ -808,6 +837,7 @@ void pollHomescreen() {
 
     String url = "https://rest-${state.tier}.immedia-semi.com/api/v3/accounts/${state.accountId}/homescreen"
     logTrace "polling: ${url}"
+    state.lastHomescreenPollAt = now()
     asynchttpGet("handleHomescreenResponse", [
         uri     : url,
         headers : bearerHeaders(),
@@ -821,9 +851,21 @@ void handleHomescreenResponse(resp, data) {
     try {
         int status = resp.getStatus()
         if (status == 401) {
+            int spent = (state.homescreen401Refreshes ?: 0) as int
+            if (spent >= HOMESCREEN_401_REFRESH_LIMIT) {
+                // The token just refreshed was refused too: more refreshes only spend the rotating refresh token.
+                logError "homescreen 401 again after a token refresh; signing out, log in to Blink again"
+                state.remove("homescreen401Refreshes")
+                clearTokensOnly()
+                markChildrenOffline("signed out of Blink")
+                return
+            }
             logWarn "homescreen 401, refreshing token and retrying"
-            refreshAccessToken()
-            runIn(3, "pollHomescreen")
+            // A failed refresh is left to the next scheduled poll instead of a 3 s retry loop.
+            if (refreshAccessToken()) {
+                state.homescreen401Refreshes = spent + 1
+                runIn(3, "pollHomescreenNow")
+            }
             return
         }
         if (resp.hasError() || status != 200) {
@@ -838,6 +880,7 @@ void handleHomescreenResponse(resp, data) {
             return
         }
         String recovery = clearCloudFailures()
+        state.remove("homescreen401Refreshes")
         int nNet = (json.networks ?: []).size()
         Map acc = (json.accessories ?: [:]) as Map
         int nCam = (json.cameras ?: []).size() + (json.owls ?: []).size() + (json.doorbells ?: []).size() + (json.superiors ?: []).size() + (acc.storm ?: []).size()
@@ -1375,12 +1418,22 @@ private void fetchRecentClips() {
         headers    : bearerHeaders(),
         contentType: "application/json",
         timeout    : HTTP_TIMEOUT
-    ])
+    ], [sentAt: now().intdiv(1000L)])
+}
+
+// Where the next /media/changed window starts. A transient failure keeps the old cursor so the
+// clips of that window are asked for again, bounded to maxLookbackSec so a long outage does not
+// grow the window without limit.
+private static long nextClipCursor(long oldCursor, long sentAt, boolean transientError, long maxLookbackSec) {
+    if (!transientError) return sentAt
+    return Math.max(oldCursor, sentAt - maxLookbackSec)
 }
 
 void recentClipsResponse(resp, data) {
     checkVersion()
-    long fetchedAt = now().intdiv(1000L)
+    // The window ends when the request was sent: a clip recorded while it was in flight stays in the next window.
+    long fetchedAt = ((data?.sentAt ?: now().intdiv(1000L)) as Number).longValue()
+    boolean transientError = false
     List<Map> media = []
     Map<String, Map> latestByName = [:]
     String errorMsg = null
@@ -1388,10 +1441,12 @@ void recentClipsResponse(resp, data) {
     try {
         if (resp.hasError()) {
             errorMsg = "error: ${resp.getErrorMessage()}${describeHttpBody(resp)}"
+            transientError = isTransientStatus(resp.getStatus())
         } else {
             int status = resp.getStatus()
             if (status != 200) {
                 errorMsg = "HTTP ${status}${describeHttpBody(resp)}"
+                transientError = isTransientStatus(status)
             } else {
                 Map json = resp.json as Map
                 media = (json?.media ?: []) as List<Map>
@@ -1414,17 +1469,18 @@ void recentClipsResponse(resp, data) {
         }
     } catch (Exception e) {
         errorMsg = "parse: ${e.message}"
+        transientError = true
     }
 
-    // Always dispatch motion (and lastClipUrl/lastClipTime when applicable) to every
-    // Blink Camera child — including motion=inactive when nothing arrived. Hubitat's
-    // sendEvent will dedup the inactive case after the first fire, so this is cheap.
-    // Skipping this loop (the previous behaviour) meant the motion attribute never
-    // settled to a value and motion=active alone couldn't be diagnosed.
+    // Dispatch motion (and lastClipUrl/lastClipTime when applicable) to every Blink Camera
+    // child, including motion=inactive when nothing arrived. Hubitat's sendEvent dedups the
+    // inactive case after the first fire, so this is cheap. An error response says nothing
+    // about motion, so nothing is sent for it.
     String base = "https://rest-${state.tier}.immedia-semi.com"
     int active = 0, inactive = 0, missingName = 0
     Set<String> activeNames = [] as Set<String>
     getChildDevices().each { ChildDeviceWrapper child ->
+        if (errorMsg) return
         if (!child.deviceNetworkId?.startsWith(DNI_PREFIX_CAMERA)) return
         String blinkName = child.getDataValue("blinkName")
         if (!blinkName) { missingName++; return }
@@ -1461,8 +1517,8 @@ void recentClipsResponse(resp, data) {
         logInfo "clips fetch (since=${sinceIsoForLog}): ${media.size()} entries, ${active} active, ${inactive} inactive${missingSuffix}${activeSuffix}"
     }
 
-    // Cursor advances even on error to avoid getting permanently stuck on a bad window.
-    atomicState.lastClipFetchTime = fetchedAt
+    // A refused request (4xx) moves the cursor on so a bad window cannot block it for good.
+    atomicState.lastClipFetchTime = nextClipCursor(sinceUnix, fetchedAt, transientError, CLIP_INITIAL_WINDOW_SEC)
 }
 
 // --- Notification flags (M1) ---

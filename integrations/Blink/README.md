@@ -133,7 +133,7 @@ Houses the rare or destructive actions. The link on the main page opens a sub-pa
 
 ## Polling
 
-Default poll interval is 60 s. Configurable to 60 / 120 / 300 s from the manager app's settings page. The integration calls `/api/v3/accounts/{accountId}/homescreen` once per cycle (cheap), reads everything from a single response, and dispatches to children.
+Default poll interval is 60 s. Configurable to 60 / 120 / 300 s from the manager app's settings page. The integration calls `/api/v3/accounts/{accountId}/homescreen` once per cycle (cheap), reads everything from a single response, and dispatches to children. A child `refresh()` or a command confirmation never polls the homescreen more than once every 30 s; a call inside that gap runs at its end.
 
 Because Blink does not push events, every observable state change (motion, arm/disarm result, new clip) becomes visible to Hubitat only on the next poll. Polling more often shortens reaction latency, but **60 s is the minimum recommended by [blinkpy's maintainer](https://github.com/fronzbot/blinkpy/blob/dev/README.rst)** ("API calls faster than 60 seconds is not recommended as it can overwhelm Blink's servers"). Intervals below that risk `Endpoint possibly down or throttled` errors from Blink — observed in the wild on the [Home Assistant community](https://community.home-assistant.io/t/blink-integration-seems-to-be-inconsistent-and-giving-possibly-down-or-throttled-error/231015) — and are no longer exposed as a setting option.
 
