@@ -13,7 +13,7 @@ import groovy.transform.Field
 import java.util.concurrent.ConcurrentHashMap
 
 @Field static final String APP_NAME = "Zigbee Workbench"
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
 @Field static final String RADIO_DNI = "zbworkbench-radio"
@@ -1949,7 +1949,8 @@ static String renderMd(Map data, Map opts, int level) {
         if (!useAliases || n == 'Hub') return n.toString()
         return aliasMap[n.toString()] ?: 'unlisted device'
     }
-    List ieees = [data.device?.ieee] + ((List) (data.mesh?.neighbors ?: [])).collect { it.ieee } + ((List) (data.bindings ?: [])).collect { it.dstIeee }
+    // The hub's own address is masked too: an IAS device's CIE Address attribute holds it.
+    List ieees = [data.device?.ieee, opts?.hubIeee] + ((List) (data.mesh?.neighbors ?: [])).collect { it.ieee } + ((List) (data.bindings ?: [])).collect { it.dstIeee }
     Closure ie = { Object v -> maskIeee(v) }
     Closure mx = { Object v -> v == null ? null : maskHex(v.toString(), ieees.findAll { it }, (List) (opts?.extPans ?: [])) }
     Map d = (Map) data.device ?: [:]
@@ -2008,6 +2009,9 @@ static String renderMd(Map data, Map opts, int level) {
             L << '|---|---|---|---|'
             ((List) c.attrs).each { Map a ->
                 String v = a.status ? a.status : a.value
+                // Any EUI-64 shaped value (type 0xF0) is masked, not only the known addresses.
+                if (v != null && v ==~ /(?i)[0-9a-f]{16}/) v = maskIeee(v)
+                else v = mx(v)
                 String r = a.min != null ? "${a.min} s / ${a.max} s / ${a.change ?: '–'}" : null
                 L << "| 0x${a.id}${a.name ? ' ' + a.name : ''} | ${a.type} | ${mdCell(v)} | ${mdCell(r)} |".toString()
             }
@@ -2912,7 +2916,7 @@ void reportBuild(Map data) {
         ((List) (rd.mesh.routes ?: [])).collect { [it.dest, it.nextHop] }.flatten() + ((List) (rd.bindings ?: [])).collect { it.dstName } + [rd.mesh.parent]
     Map aliasMap = all.subMap(shown.findAll { it != null }.collect { it.toString() }.unique().findAll { all.containsKey(it) })
     boolean useAliases = settings.reportAliases != false
-    Map opts = [aliases: useAliases, aliasMap: aliasMap, extPans: extPans]
+    Map opts = [aliases: useAliases, aliasMap: aliasMap, extPans: extPans, hubIeee: hubIeee()]
     Map save = saveReport(rd.device.model?.toString(), renderFull(rd, opts))
     Map entry = [time: now(), status: 'ok', data: [report: rd, aliasMap: aliasMap, extPans: extPans, aliases: useAliases, file: save.file, fileError: save.error]]
     if (data.error) entry.error = "The run stopped early: ${data.error}".toString()
@@ -3138,7 +3142,7 @@ Map devicePage(Map params = null) {
             if (rp?.status == 'running') {
                 paragraph "<i>Step ${((rp.data?.done ?: 0) as int) + 1} of ${rp.data?.total ?: '?'} (more as the device answers)…</i>"
             } else if (rp?.status == 'ok' && rp.data?.report) {
-                Map opts = [aliases: settings.reportAliases != false, aliasMap: rp.data.aliasMap, extPans: rp.data.extPans]
+                Map opts = [aliases: settings.reportAliases != false, aliasMap: rp.data.aliasMap, extPans: rp.data.extPans, hubIeee: hubIeee()]
                 String forum = renderForum((Map) rp.data.report, opts)
                 StringBuilder sb = new StringBuilder("<div class='mb-3'><b>Report</b> <small class='text-color-secondary'>${fmtTime(rp.time as Long)} · ${forum.length()} characters</small>")
                 if (rp.error) sb.append("<div class='p-message p-message-warn p-2'>${esc(rp.error)}</div>".toString())

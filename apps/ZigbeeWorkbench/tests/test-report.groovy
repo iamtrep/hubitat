@@ -111,6 +111,24 @@ check('a name missing from the alias list is never shown') {
     String f = app.renderForum(rd2, on)
     !f.contains('Not Registered') && f.contains('unlisted device')
 }
+// An IAS device's CIE Address attribute (0x0500 / 0x0010, type 0xF0) holds the hub's own EUI-64.
+String HUB_IEEE = '00124B00AABBCCDD'
+Map ivIas = iv + [disc: iv.disc + ['01:0500': [[id: 0x0010, type: 0xF0]]],
+                  vals: iv.vals + ['01:0500': ['0010': [status: 0, value: HUB_IEEE]]]]
+Map rdIas = app.reportData(inp + [iv: ivIas])
+Map onHub = on + [hubIeee: HUB_IEEE]
+check('masking: the hub IEEE in an IAS CIE Address attribute is masked') {
+    String f = app.renderForum(rdIas, onHub)
+    !f.contains(HUB_IEEE) && f.contains('00124BXXXXXXXXXX')
+}
+check('masking: an EUI-64 attribute value is masked even when the hub IEEE is not given') {
+    !app.renderForum(rdIas, on).contains(HUB_IEEE)
+}
+check('masking: the hub IEEE in a failed request frame is masked') {
+    Map r2 = results + [bindings: results.bindings + [frame: 'he raw 0x58D3 0 0 0x0021 {00 ' + le(HUB_IEEE).join(' ') + '}']]
+    !app.renderForum(app.reportData(inp + [results: r2]), onHub).contains(le(HUB_IEEE).join(' '))
+}
+
 check('frame text keeps its case while masking') {
     app.maskHex('he raw 0x58D3 0 0 0x0034 {00 00 ' + le(IEEE).join(' ') + ' 00}', [IEEE], []) ==
         'he raw 0x58D3 0 0 0x0034 {00 00 XX XX XX XX XX 4B 12 00 00}'
