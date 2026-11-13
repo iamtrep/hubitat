@@ -213,7 +213,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "6.2.4";
+const CODE_VERSION = "6.2.5";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -245,6 +245,7 @@ const DIAG_TOOL_URL=HUB_ORIGIN?'http://'+new URL(HUB_ORIGIN).hostname+':8081/':'
 let curTab = localStorage.getItem('hub_diag_tab') || 'dashboard';
 let activePerfComp = null;
 let liveIntervalSec = ${live_refresh_sec} || 30;
+let liveTimer = null; // declared here: the Settings save handler runs outside the startup block
 
 // ===== API =====
 const CACHE_TTL_MS=120000;
@@ -411,7 +412,16 @@ function diffStats(base, comp) {
   }
   return res;
 }
-function h(s){const d=document.createElement('div');d.textContent=s??'';return d.innerHTML}
+// Embeds the report data as a JSON block before </head>. Every "<" in the JSON is written as
+// \u003c so no value can close the script tag or open a comment, whatever its case. The
+// replacement is a function because a string would expand $&, $` and $' inside the data.
+function embedReportData(html,reportData){
+  const dataJson=JSON.stringify(reportData).replace(/</g,'\\u003c');
+  const tag='<script type="application/json" id="report-data">'+dataJson+'<\/script>\n<script>window.REPORT_DATA=JSON.parse(document.getElementById(\'report-data\').textContent);document.documentElement.classList.add(\'report-mode\')<\/script>\n';
+  return html.replace('</head>',()=>tag+'</head>');
+}
+// Escapes quotes too: output is used inside attribute values (data-v, title, href).
+function h(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
 // ===== Name obfuscation (UI + forum export) =====
 // Deterministic adjective-noun aliaser. Each distinct real name maps to a stable,
 // unique codename (e.g. "amber-otter"). Dependency-free so it's unit-testable via
@@ -2510,10 +2520,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
       const pad=n=>String(n).padStart(2,'0');
       const generated=ts.getFullYear()+'-'+pad(ts.getMonth()+1)+'-'+pad(ts.getDate())+' '+pad(ts.getHours())+':'+pad(ts.getMinutes())+':'+pad(ts.getSeconds());
       const reportData={_generated:generated,dashboard,devices,apps,code,network,health,'health/history':healthHistory,performance,snapshots,reports:{lastReport:null,reports:[]}};
-      // Script-close sequences below are written with an escaped slash. The HTML parser ends
-      // a script tag at the first such sequence it sees, even inside JS strings or comments.
-      const dataJson=JSON.stringify(reportData).replace(/<\/script>/g,'<\\/script>');
-      html=html.replace('</head>','<script type="application/json" id="report-data">'+dataJson+'<\/script>\n<script>window.REPORT_DATA=JSON.parse(document.getElementById(\'report-data\').textContent);document.documentElement.classList.add(\'report-mode\')<\/script>\n</head>');
+      html=embedReportData(html,reportData);
       // Strip the hub's runtime placeholders. The placeholder strings are assembled at
       // runtime so the hub's own serve-time substitution does not rewrite them in this source.
       const PH_TOK='$'+'{access_token}', PH_BASE='$'+'{api_base}', PH_REFRESH='$'+'{live_refresh_sec}';
@@ -6527,7 +6534,7 @@ const _inAuditMode = new URLSearchParams(window.location.search).has('audit');
 if (_inAuditMode) {
   renderAuditPage();
 } else {
-  let liveTimer=setInterval(refreshLive,liveIntervalSec*1000);
+  liveTimer=setInterval(refreshLive,liveIntervalSec*1000);
   document.addEventListener('visibilitychange',()=>{
     clearInterval(liveTimer);
     if(!document.hidden)liveTimer=setInterval(refreshLive,liveIntervalSec*1000)
