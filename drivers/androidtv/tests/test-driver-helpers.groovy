@@ -133,5 +133,54 @@ check 'digit names are strings', keyMap['0'] == 7 && keyMap['9'] == 16
 check 'old table unchanged', [HOME: 3, BACK: 4, POWER: 26, MEDIA_PLAY: 126, VOLUME_MUTE: 164, TV_INPUT: 178, WAKEUP: 224].every { k, v -> keyMap[k] == v }
 check 'requested keys', keyMap.LAST_CHANNEL == 229 && keyMap.TV_INPUT_HDMI_1 == 243
 
+println 'pairing cut short / TV volume state (extracted with stubbed platform calls)'
+List<String> cutSigs = ['String pairingAfterCut(String pairing, boolean paired) {', 'void disconnect() {', 'void socketDropped() {',
+                        'private void clearVolumeState() {']
+Map env = [:]
+Binding bind = new Binding()
+def reset = { String pairing, boolean paired, String droppedMode ->
+    env.events = []; env.unscheduled = []; env.ended = 0; env.rt = [mode: 'pair', droppedMode: droppedMode]
+    env.pairing = pairing
+    bind.setVariable('state', [paired: paired, volumeTrusted: true, volumeMax: 15L, volumeLevel: 7L, tvId: 'AA'])
+}
+bind.setVariable('device', [currentValue: { String attr -> attr == 'pairing' ? env.pairing : 'online' }])
+bind.setVariable('sendEvent', { Map ev -> env.events << ev })
+bind.setVariable('unschedule', { String fn -> env.unscheduled << fn })
+bind.setVariable('closeSocket', { -> })
+bind.setVariable('rt', { -> env.rt })
+bind.setVariable('interfaces', [rawSocket: [close: { -> }]])
+bind.setVariable('endPairing', { -> env.ended++ })
+bind.setVariable('offByDrop', { Long p, long q, long r -> false })
+bind.setVariable('scheduleReconnect', { -> })
+bind.setVariable('now', { -> 0L })
+bind.setVariable('POWER_DROP_MS', 10000L)
+def c = new GroovyShell(bind).parse(cutSigs.collect { extract(text, it) }.join("\n") + "\nreturn this\n").run()
+
+check 'cut: awaiting code, unpaired', c.pairingAfterCut('awaiting code', false) == 'unpaired'
+check 'cut: pairing, paired device', c.pairingAfterCut('pairing', true) == 'paired'
+check 'cut: idle values untouched', c.pairingAfterCut('paired', true) == null && c.pairingAfterCut('unpaired', false) == null && c.pairingAfterCut(null, false) == null
+
+reset('awaiting code', true, null)
+c.disconnect()
+check 'disconnect while awaiting code restores the attribute', env.events.any { it.name == 'pairing' && it.value == 'paired' }
+check 'disconnect cancels both pairing timers', env.unscheduled.containsAll(['pairingTimeout', 'codeTimeout'])
+reset('paired', true, null)
+c.disconnect()
+check 'disconnect with no pairing open: no pairing event', !env.events.any { it.name == 'pairing' }
+
+reset(null, false, 'hello'); env.pairing = 'pairing'
+c.socketDropped()
+check 'a dropped hello socket ends the pairing', env.ended == 1
+reset('pairing', false, 'pair')
+c.socketDropped()
+check 'a dropped pair socket ends the pairing', env.ended == 1
+
+reset(null, true, null)
+c.clearVolumeState()
+Map st = bind.getVariable('state') as Map
+check 'volume trust, range and level cleared, tvId kept', !st.containsKey('volumeTrusted') && !st.containsKey('volumeMax') && !st.containsKey('volumeLevel') && st.tvId == 'AA'
+// The callers: each place the device leaves a TV must clear the volume state.
+check 'forgetPairing, takeTv and a typed new address clear it', ['void forgetPairing() {', 'private void takeTv(Map e, String address, boolean pair) {', 'private void applyTvSettings() {'].every { extract(text, it).contains('clearVolumeState()') }
+
 println "\n${pass} passed, ${fail} failed"
 System.exit(fail ? 1 : 0)

@@ -1277,12 +1277,26 @@ String maskLine(String s) {
     return out
 }
 
+// The driver's trace shows typed text (tx 21, rx 21, rx 22, "Text field:", and the field part of rx 20),
+// which can be a password. Its quoted strings are replaced; the structure stays for diagnosis.
+String maskTyped(String msg) {
+    if (msg == null) return null
+    if (msg.startsWith("Text field: ")) return 'Text field: "<text>"'
+    if (msg ==~ /(?s)^(tx|rx) (21|22):.*/) return msg.replaceAll(/(?s)".*"/, '"<text>"')
+    if (msg.startsWith("rx 20:")) {
+        // \x7D 2:\x7B is "} 2:{", the status field after the app field (written so the test's brace matcher is not thrown)
+        java.util.regex.Matcher m = msg =~ /\x7D 2:\x7B/
+        if (m.find()) return msg.substring(0, m.start()) + msg.substring(m.start()).replaceAll(/(?s)".*"/, '"<text>"')
+    }
+    return msg
+}
+
 List<String> traceLines(List<Map> lines) {
     List<String> out = []
     for (Map l : lines) {
         String msg = l.msg as String
         if (msg.startsWith("chunk ")) continue
-        out << "${(l.ts as String).substring(11)} ${maskLine(msg)}".toString()
+        out << "${(l.ts as String).substring(11)} ${maskLine(maskTyped(msg))}".toString()
         if (out.size() >= 40) break
     }
     return out
@@ -1407,7 +1421,7 @@ Map evalText(List<Map> lines) {
     for (Map l : lines) {
         String msg = l.msg as String
         if (msg == "Key 84") searched = true
-        else if (msg.startsWith("Text ")) sent = true
+        else if (msg ==~ /^Text \(\d+ characters\)/) sent = true
         if (searched && !sent && searchApp == null) {
             def m = msg =~ /^rx 20:\x7B1:\x7B12:"([^"]+)"/
             if (m.find()) searchApp = m.group(1)

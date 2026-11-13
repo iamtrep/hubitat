@@ -29,6 +29,7 @@ List<String> SIGNATURES = [
     'List<Map> deviceLines(List raw, Long devId, String label, String since) {',
     'Long tsMs(String ts, TimeZone tz) {',
     'String maskLine(String s) {',
+    'String maskTyped(String msg) {',
     'List<String> traceLines(List<Map> lines) {',
     'String otherMessages(List<Map> lines) {',
     'Map evalSessionStart(List<Map> lines, Map steps) {',
@@ -150,6 +151,15 @@ List<Map> tl = [[ts: '2026-10-15 11:41:26.093', msg: 'ping #1 val1=1 gap=0 ms 8:
 List<String> out = h.traceLines(tl)
 check 'chunks left out, pings kept', out.size() == 2 && out[0].startsWith('11:41:26.093 ping #1 ')
 check 'time and masked text', out[1] == '11:44:55.588 Connecting to <ip>:6466'
+check 'typed text masked in tx 21 / rx 21 / rx 22 / Text field lines',
+    h.traceLines([[ts: '2026-10-15 11:44:55.588', msg: 'tx 21:{1:0 2:0 3:{1:1 2:{1:10 2:10 3:"hunter2pass"}}}'],
+                  [ts: '2026-10-15 11:44:55.600', msg: 'rx 22:{1:1 2:{1:137 2:"hunter2pass" 3:7 4:7 5:1}}'],
+                  [ts: '2026-10-15 11:44:55.700', msg: 'rx 21:{1:2 2:"hunter2pass"}'],
+                  [ts: '2026-10-15 11:44:55.800', msg: 'Text field: "hunter2pass"']]).every { !it.contains('hunter2pass') } &&
+    h.traceLines([[ts: '2026-10-15 11:44:55.588', msg: 'tx 21:{1:0 2:0 3:{1:1 2:{1:10 2:10 3:"hunter2pass"}}}']])[0].contains('tx 21:{1:0 2:0')
+check 'rx 20 field value masked, app name kept',
+    h.traceLines([[ts: '2026-10-15 11:44:55.588', msg: 'rx 20:{1:{12:"com.example.search"} 2:{1:2 2:"hunter2pass" 6:"Search"}}']])[0] ==
+        '11:44:55.588 rx 20:{1:{12:"com.example.search"} 2:{1:2 2:"<text>"}}'
 check 'capped at 40', h.traceLines((1..60).collect { [ts: '2026-10-15 11:44:55.588', msg: "rx 20:${it}"] }).size() == 40
 
 def ln = { String t, String m -> [ts: "2026-10-15 ${t}".toString(), level: 'trace', msg: m] }
@@ -244,19 +254,23 @@ println 'evalText'
 // From a box that reported no text field: the search key opened the Assistant, the text drew nothing.
 Map t1 = h.evalText([ln('11:00:00.000', 'Key 3'), ln('11:00:00.400', 'rx 20:{1:{12:"com.google.android.tvlauncher"}}'),
                      ln('11:00:03.000', 'Key 84'), ln('11:00:03.300', 'rx 20:{1:{12:"com.google.android.katniss"}}'),
-                     ln('11:00:07.000', 'Text hubitat'), ln('11:00:07.010', 'tx 21:{1:0 2:0 3:{1:1 2:{1:6 2:6 3:"hubitat"}}}'),
+                     ln('11:00:07.000', 'Text (7 characters)'), ln('11:00:07.010', 'tx 21:{1:0 2:0 3:{1:1 2:{1:6 2:6 3:"hubitat"}}}'),
                      ln('11:00:15.000', 'Key 4'), ln('11:00:15.200', 'rx 20:{1:{12:"com.google.android.tvlauncher"}}')])
 check 'search app, nothing reported', t1 == [searchApp: 'com.google.android.katniss', fieldReported: false, editReported: false,
                                              editAfterText: false, textSent: true, accepted: true, textEchoed: false, errorCode: null]
 Map t2 = h.evalText([ln('11:00:03.000', 'Key 84'), ln('11:00:03.300', 'rx 20:{1:{12:"com.example.search"} 2:{1:2 2:"" 6:"Search"}}'),
-                     ln('11:00:03.400', 'rx 21:{1:5 2:2}'), ln('11:00:07.000', 'Text hubitat'), ln('11:00:07.200', 'rx 21:{1:6 2:2}')])
+                     ln('11:00:03.400', 'rx 21:{1:5 2:2}'), ln('11:00:07.000', 'Text (7 characters)'), ln('11:00:07.200', 'rx 21:{1:6 2:2}')])
 check 'field and edits reported', t2.fieldReported && t2.editReported && t2.editAfterText && t2.searchApp == 'com.example.search'
 // From the EBOX with its text field open: the box echoes the field after the text.
 Map t4 = h.evalText([ln('11:00:03.000', 'Key 84'), ln('11:00:05.000', 'rx 20:{1:{1:1 2:1 12:"com.google.android.katniss"} 2:{1:134 5:1}}'),
-                     ln('11:00:05.030', 'rx 21:{1:1 2:1}'), ln('11:00:07.000', 'Text hubitat'), ln('11:00:07.040', 'rx 22:{1:1 2:{1:137 2:"hubitat" 3:7 4:7 5:1}}')])
+                     ln('11:00:05.030', 'rx 21:{1:1 2:1}'), ln('11:00:07.000', 'Text (7 characters)'), ln('11:00:07.040', 'rx 22:{1:1 2:{1:137 2:"hubitat" 3:7 4:7 5:1}}')])
 check 'text echoed', t4.textEchoed && t4.fieldReported && !t4.editAfterText
-Map t3 = h.evalText([ln('11:00:07.000', 'Text hubitat'), ln('11:00:07.050', 'TV rejected 21:{1:0} (error 2); reconnecting')])
+Map t3 = h.evalText([ln('11:00:07.000', 'Text (7 characters)'), ln('11:00:07.050', 'TV rejected 21:{1:0} (error 2); reconnecting')])
 check 'text refused', t3.accepted == false && t3.errorCode == '2' && t3.searchApp == null
+// A box that reports a focused text field before any send: the driver's "Text field:" trace line is not a send.
+Map t5 = h.evalText([ln('11:00:03.000', 'Key 84'), ln('11:00:05.000', 'rx 20:{1:{12:"com.google.android.katniss"} 2:{1:134 5:1}}'),
+                     ln('11:00:05.010', 'Text field: ""'), ln('11:00:05.030', 'rx 21:{1:1 2:1}')])
+check 'Text field line is not text sent', t5.textSent == false && t5.editAfterText == false && t5.searchApp == 'com.google.android.katniss'
 check 'driver without sendText', h.evalText([ln('11:00:03.000', 'Key 84')]).textSent == false
 check 'message 21 is handled, not other', h.otherMessages([ln('11:00:00.000', 'rx 21:{1:5 2:2}')]) == null
 check 'messages 22 and 23 are handled', h.otherMessages([ln('11:00:00.000', 'rx 22:{2:{1:5}}'), ln('11:00:01.000', 'rx 23:{2:4 3:4}')]) == null

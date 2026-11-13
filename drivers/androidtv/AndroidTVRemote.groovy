@@ -64,7 +64,7 @@ import java.security.Signature
 import java.security.cert.CertificateFactory
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.6.0"
+@Field static final String CODE_VERSION = "0.6.1"
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int PAIRING_PORT = 6467
 @Field static final String MDNS_SERVICE = "_androidtvremote2._tcp"
@@ -208,6 +208,7 @@ private void applyTvSettings() {
         if (tvIP != state.lastTvIP) {
             state.remove("tvId")
             state.remove("tvName")
+            clearVolumeState()
             state.lastTvIP = tvIP
         }
     } else {
@@ -218,7 +219,9 @@ private void applyTvSettings() {
 // Points the device at this TV. A paired device that switches to another TV forgets the pairing.
 // connect reads tvIP in its own execution, after the setting written here is saved.
 private void takeTv(Map e, String address, boolean pair) {
-    if (state.paired && differentTv(e, state.tvId as String, tvIP as String)) {
+    boolean other = differentTv(e, state.tvId as String, tvIP as String)
+    if (other) clearVolumeState()
+    if (state.paired && other) {
         forgetPairing()
         logInfo "This is a different TV; pair it with Start Pairing"
     }
@@ -336,6 +339,13 @@ private void applyTv(Map e, String address) {
     state.lastTvIP = address
     state.tvId = e.id
     state.tvName = e.name
+}
+
+// Volume trust and level belong to one TV: a box that passes volume over HDMI-CEC must not inherit them.
+private void clearVolumeState() {
+    state.remove("volumeTrusted")
+    state.remove("volumeMax")
+    state.remove("volumeLevel")
 }
 
 private void clearFoundTvs() {
@@ -510,6 +520,7 @@ void forgetPairing() {
     disconnect()
     state.remove("paired")
     state.remove("tvCert")
+    clearVolumeState()
     sendEvent(name: "pairing", value: "unpaired")
     logCfg "Pairing forgotten; the client certificate is kept"
 }
@@ -591,10 +602,21 @@ void connect() {
     runIn(WATCHDOG_SECONDS, "watchdog")
 }
 
+// What `pairing` becomes when a pairing is cut short, or null when none is open.
+String pairingAfterCut(String pairing, boolean paired) {
+    return pairing in ["pairing", "awaiting code"] ? (paired ? "paired" : "unpaired") : null
+}
+
 void disconnect() {
     unschedule("watchdog")
     unschedule("connect")
     unschedule("repairSearch")
+    // Both pairing timers need mode "pair" or "hello", which is cleared below: without this the attribute stays at
+    // "awaiting code". Not endPairing(): it schedules a connect, and callers decide what comes next.
+    unschedule("pairingTimeout")
+    unschedule("codeTimeout")
+    String cut = pairingAfterCut(device.currentValue("pairing") as String, state.paired as boolean)
+    if (cut) sendEvent(name: "pairing", value: cut)
     closeSocket()
     rt().mode = null
     if (device.currentValue("networkStatus") != "offline") sendEvent(name: "networkStatus", value: "offline")
@@ -946,7 +968,7 @@ void socketDropped() {
         r.powerOffAt = null
         scheduleReconnect()
     }
-    else if (r.droppedMode == "pair") endPairing()
+    else if (r.droppedMode in ["hello", "pair"]) endPairing()   // "hello": a TV that closes the plain socket before sending its certificate
     r.droppedMode = null
 }
 
