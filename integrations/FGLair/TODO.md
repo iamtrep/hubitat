@@ -9,6 +9,8 @@ Items deferred from MVP/Tier 2 work. Captured so future sessions can pick them u
 
 ## To verify after the 2026-09-30 changes
 
+Not re-checked since v0.3.0: the manager and driver are at 0.4.0 as of 2026-11-13, and this list has no entry for that version.
+
 Manager v0.2.0 / driver v0.2.0 shipped behavior that was only partly exercised live:
 
 - **Write-queue safety of the new wake paths.** Only the 15-min scheduled wake has months of runtime. The 10-min option and the device `refresh()` wake (rate-limited to one per minute per unit) are untested against the queue jam. Signature: setpoint writes stop landing from every source, including the FGLair app over cloud (see the `fglair_cloud_write_quirks` memory).

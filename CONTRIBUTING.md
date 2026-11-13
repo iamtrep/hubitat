@@ -32,10 +32,16 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full set, including platform se
 apps/             Automation and dashboard apps          (see apps/README.md)
 drivers/          Zigbee / BLE / cloud device drivers    (see drivers/README.md)
 integrations/     Parent-app + child-driver vendor integrations (see integrations/README.md)
-scripts/          Off-hub scripts: browser userscripts, Google Apps Script, test helpers
+scripts/          Off-hub scripts: browser userscripts, Google Apps Script, test helpers,
+                  the shared-block sync tool and the docs evidence check
+shared/           One source for helpers copied into apps and drivers (see shared/README.md)
+docs/             Platform reference docs               (see docs/README.md)
+tests/            Cross-project tests and their snapshots
 ARCHITECTURE.md   Coding conventions & platform semantics (authoritative)
 README.md         As per usual convention
 TESTING.md        Testing methodology & the closed-loop contract
+TEST_COVERAGE.md  Every app, driver and integration with its tests
+TODO.md           Work that spans several apps; links to per-project backlogs
 ```
 
 ## Marking work-in-progress
@@ -77,7 +83,7 @@ Some apps in this repo aren't automations — they're **dashboards**: a Groovy a
 ## Submitting changes
 
 - New source files must carry an `SPDX-License-Identifier: MIT` header.
-- A few files under `drivers/` are derived from upstream community work and remain under
+- A few files, most under `drivers/`, are derived from upstream community work and remain under
   **Apache-2.0** — preserve each such file's existing upstream attribution header; don't
   relicense it.
 - Keep commits focused; let the diff and the docs explain the change rather than the

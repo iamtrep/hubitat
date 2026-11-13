@@ -51,7 +51,7 @@ A test is "agent-runnable" — usable in a write/push/test/parse/fix loop withou
 
 - **Bounded wall-clock.** Every test states an upper-bound runtime in its header comment. The `RUN_SLOW_TESTS=1` environment variable gates anything over ~30s.
 
-The contract applies to Modes 1–4 (see §2.1). Mode 5 (in-hub stress apps) is the documented exception: hub-log output and a manual button press to start. Two of the named gaps in §2.4 — a log-assertion helper and a button-press helper — would together bring Mode 5 into the loop. Log-assertion is the larger lever, because it lets *any* test assert on log content, which is the main observability surface Hubitat exposes.
+The contract applies to Modes 1–4 (see §2.1). Mode 5 (in-hub stress apps) is the documented exception: hub-log output and a manual button press to start. The log-assertion helper and the button press that bring Mode 5 into the loop both exist (§2.4); no stress app has a wrapper script using them yet (§2.1, Mode 5). Log assertion is the larger lever, because it lets *any* test assert on log content, which is the main observability surface Hubitat exposes.
 
 ### 1.2 Snapshot-diff regression
 
@@ -129,7 +129,7 @@ The spec maps directly onto the procedure below — for [`apps/sensors/SensorAgg
 
 **Purpose:** cover the pure rendering/parsing/formatting helpers in SPA `.html` files (HubInspector's `hub_inspector_ui.html`), which have no test coverage by default.
 
-**Pattern:** copy the helpers out of the HTML into a standalone `.js` file with a header comment pointing at the source line range, write a tiny `ok`/`fail`/`section` harness, run with `node`. A browser-runnable variant (open `tests/spa/index.html` in any browser) is sketched in HubInspector's `TEST_PLAN.md` Phase D.
+**Pattern:** copy the helpers out of the HTML into a standalone `.js` file with a header comment pointing at the source line range, write a tiny `ok`/`fail`/`section` harness, run with `node`. A browser-runnable variant is sketched in HubInspector's `TEST_PLAN.md` Phase D; it was not built.
 
 **Canonical example:** [`apps/HubInspector/tests/test-diffStats.js`](apps/HubInspector/tests/test-diffStats.js).
 
@@ -174,15 +174,15 @@ Pre-existing artifacts are not required to retroactively meet this bar.
 | Driver | None required; Mode 1 with a paired test driver when behavior is non-trivial |
 | Stress / diagnostic app | Exempt — the app itself is the test |
 
-A single app may need multiple modes. HubInspector has Mode 2 and would benefit from Mode 3 and Mode 4; that's tracked in its own `TEST_PLAN.md`.
+A single app may need multiple modes. HubInspector has Modes 2, 3 and 4; what is still planned is tracked in its own `TEST_PLAN.md`.
 
 ### 2.3 Per-project `TEST_PLAN.md` convention
 
 When a project has phased coverage targets — multiple test modes in flight, gaps to close on a schedule — it gets a `TEST_PLAN.md` next to its tests. The plan tracks phases with a status column (`Done` / `In-progress` / `Planned`) and references the modes by their numbers from this guide.
 
-Canonical example: [`apps/HubInspector/tests/TEST_PLAN.md`](apps/HubInspector/tests/TEST_PLAN.md) — Phase A (Mode 2, shipped), Phase B (Mode 2 audit-HTML, planned), Phase C (Mode 2 snapshot-diff, planned), Phase D (Mode 3 SPA unit tests, planned).
+Canonical example: [`apps/HubInspector/tests/TEST_PLAN.md`](apps/HubInspector/tests/TEST_PLAN.md) — Phase A (Mode 2, shipped), Phase B (audit report structure, not built), Phase C (snapshot capture and diff, not built), Phase D (Mode 3 SPA unit tests, partly shipped).
 
-### 2.4 Named gaps
+### 2.4 Log capture and button press
 
 The log and event capture helpers live in `scripts/lib/` (`LogCapture`, `EventCapture`). A button press is a single `POST /installedapp/btn` call with the button name; see `docs/hubitat-internal-apis.md`.
 
@@ -231,7 +231,9 @@ The tiered bar in §2.2 leaves drivers explicitly unrequired. The bar can tighte
 
 Per-project test plans inherit from this guide. Existing plans:
 
-- [`apps/HubInspector/tests/TEST_PLAN.md`](apps/HubInspector/tests/TEST_PLAN.md) — phased coverage for HubInspector: Mode 2 (done), Mode 2 audit-HTML (planned), Mode 2 snapshot-diff (planned), Mode 3 SPA helpers (planned).
+- [`apps/HubInspector/tests/TEST_PLAN.md`](apps/HubInspector/tests/TEST_PLAN.md) — phased coverage for HubInspector: Mode 2 (done), audit report structure and snapshot diff (not built), Mode 3 SPA helpers (partly done).
+- [`apps/HvacScheduler/tests/TEST_PLAN.md`](apps/HvacScheduler/tests/TEST_PLAN.md) — HVAC Scheduler, phases A to H: core, behavior, write check, HTTP API, parity with the built-in scheduler, importer, HVAC Interlock, occupancy.
+- [`apps/SwitchedHeaterThermostat/tests/TEST_PLAN.md`](apps/SwitchedHeaterThermostat/tests/TEST_PLAN.md) — Switched Heater Thermostat, phases A to C: core, control behavior, fault behavior.
 
 This section grows as more projects gain plans. The convention is one `TEST_PLAN.md` per project with phased coverage targets — see §2.3.
 

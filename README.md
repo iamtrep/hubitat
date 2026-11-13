@@ -35,7 +35,7 @@ Platform findings, for what the hub does where Hubitat's documentation is silent
 
 Released under the **MIT License** — see [LICENSE](LICENSE). Individual source files carry an `SPDX-License-Identifier: MIT` header.
 
-A small number of files under `drivers/` are derived from upstream community work and remain under their original license (each file's own header is authoritative).
+A small number of files, most of them under `drivers/`, are derived from upstream community work and remain under their original license (each file's own header is authoritative).
 
 **Apache License 2.0:**
 
@@ -46,6 +46,7 @@ A small number of files under `drivers/` are derived from upstream community wor
 - `drivers/sinope/Sinope_VA422xZB.groovy` (sacua, kkossev, thebearmay)
 - `drivers/stelpro/StelproKi.groovy` (Philippe Charette, Stelpro)
 - `drivers/stelpro/StelproAllia.groovy` (Maxime Boissonneault, Philippe Charette, Stelpro)
+- `apps/tests/PushoverNotificationTester.groovy` (Dan Ogorchock)
 
 **GPL-3.0-only:**
 

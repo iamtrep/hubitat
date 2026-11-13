@@ -24,6 +24,13 @@ Virtual drivers, sandbox introspection tools, and companion test apps that exerc
 - `DeviceInspector.groovy` — dumps `DeviceWrapper` properties to the logs (one-shot diagnostic)
 - `GenericWebsocket.groovy` — development scaffold for testing arbitrary WebSocket connections
 
+## Platform probe drivers
+
+Installed by the platform tests in [`apps/tests/`](../../apps/tests/README.md), beside the probe apps there. Test use only.
+
+- `ArchitectureClaimsProbeDriver.groovy` — driver for `test-architecture-claims.sh`
+- `SingleThreadedProbeDriver.groovy`, `SingleThreadedProbeChild.groovy` — drivers for `test-singlethreaded.sh`
+
 ## Companion apps
 
 - `XfinityContactSensorMonitor.groovy` — **app** (lives here next to the drivers it watches): logs `battery`, `batteryVoltage`, `lowBattery`, and `batteryDefect` events for Xfinity contact sensors and optionally notifies

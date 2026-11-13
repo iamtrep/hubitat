@@ -5,20 +5,26 @@ SPDX-License-Identifier: MIT
 
 # HubInspector — Test Coverage Plan
 
-Status as of 2026-05-08:
+Status as of 2026-11-13, from the files in this folder (no test was run for this update):
 
 | Phase | Title | Status |
 |---|---|---|
-| A | Refresh existing API test | ✅ shipped (`2b40427`) |
-| B | Audit-HTML structure validator | ⏳ planned |
-| C | Snapshot capture + diff validator | ⏳ planned |
-| D | SPA pure-JS unit tests | ⏳ planned |
+| A | Refresh existing API test | ✅ shipped (`2b40427`): `test-hub-inspector-api.sh` |
+| B | Audit-HTML structure validator | ⏳ not built, and to re-scope: the report is now rendered in the SPA (see the note under Phase B) |
+| C | Snapshot capture + diff validator | ⏳ not built, and to re-scope: the diff is now computed in the SPA (see the note under Phase C) |
+| D | SPA pure-JS unit tests | 🔶 partly shipped as Node tests: 12 `test-*.js` files run functions extracted from `hub_inspector_ui.html`. The browser page (`tests/spa/`) was not built, and the renderer targets (charts, tab routing, snapshot-diff renderer) are outstanding |
+
+Beyond the phases, the folder holds 6 `test-*.groovy` extraction tests and `test_classification.py`; see [Running the tests](#running-the-tests).
+
+The phase descriptions below were written on 2026-05-08 and are kept as written, apart from the dated notes.
 
 ---
 
 ## Phase B — Audit-HTML structure validator
 
 **Goal:** End-to-end verification that the device usage audit produces a well-formed HTML report with every expected section present and structurally correct.
+
+> **Note, 2026-11-13.** This phase was written when the hub rendered the audit report. The app has no `renderAuditHtml` now; the SPA builds the report (`buildAuditHtml` in `hub_inspector_ui.html`) from `/api/audit/data`. A test of the report's structure would have to run that function on audit data, the Phase D way, not fetch HTML from File Manager. `tests/test-audit-html.sh` was never written.
 
 **Effort:** S-M (~1-2 hours)
 
@@ -55,6 +61,8 @@ Status as of 2026-05-08:
 ## Phase C — Snapshot capture + diff validator
 
 **Goal:** Verify the snapshot capture writes all expected fields and that `apiSnapshotDiff` correctly surfaces real changes while suppressing noise from old-schema snapshots.
+
+> **Note, 2026-11-13.** `apiSnapshotDiff` and the `/api/snapshot/diff` route are gone; the SPA computes the diff (`computeSnapshotDiff(older, newer)` in `hub_inspector_ui.html`). Targets 1, 2 and 6 (capture and retention, through `/api/snapshot/create` and `/api/snapshot/view`) still apply to the API. Targets 3 to 5 and the manual scenarios describe diff output and would have to run `computeSnapshotDiff` on two snapshots. `tests/test-snapshot-diff.sh` was never written.
 
 **Effort:** M (~2 hours)
 
@@ -162,15 +170,6 @@ bash tests/test-hub-inspector-api.sh @hubname
 # Same, with the slow Zigbee channel scan included (~30s extra)
 RUN_SLOW_TESTS=1 bash tests/test-hub-inspector-api.sh @hubname
 
-# Audit-HTML validator (Phase B, when shipped)
-bash tests/test-audit-html.sh @hubname
-
-# Snapshot diff validator (Phase C, when shipped)
-bash tests/test-snapshot-diff.sh @hubname
-
-# SPA unit tests (Phase D, when shipped) — open in any browser
-open tests/spa/index.html
-
 # Pure-JS derivation tests (extraction pattern — bound to the shipped SPA functions)
 node tests/test-diffStats.js            # diffStats + zeroBaseline (startup-baseline synthesis)
 node tests/test-radio-derivations.js    # topRadioTalkers (Performance top-N ranking)
@@ -180,6 +179,10 @@ node tests/test-forum-render.js         # full forum-export render (buildForumMa
 node tests/test-temp-scale.js           # temperature-scale helpers
 node tests/test-zwave-render.js         # routeChangesCell (Route Changes null -> em-dash), splitGhostNodes
 node tests/test-zwave-topology.js       # Z-Wave Topology card: route parser, matrix + route model, flags, RSSI text
+node tests/test-audit-rooms.js          # Devices-by-room derivation (Audit tab)
+node tests/test-matter-derivations.js   # Matter sub-tab helpers: name tables, CHIP line parser, grouping, dedup-append
+node tests/test-obfuscator.js           # makeObf(), the UI-wide name aliaser
+node tests/test-zcl-decode.js           # Zigbee live-tail frame decoder (Radio Capture tab), ZDO routing
 
 # Extraction-based Groovy tests (TESTING.md Mode 4 variant — bound to shipped Groovy)
 groovy tests/test-zwave-mesh-quality.groovy  # route-change normalization: no-data -> null, excluded from total
@@ -187,6 +190,10 @@ groovy tests/test-zwave-topology.groovy     # /hub/zwaveTopology table -> ids + 
 groovy tests/test-zwave-ghost-nodes.groovy   # ghost vs failed vs Long Range (LR devices absent from nodes[])
 groovy tests/test-zwave-battery.groovy       # non-listening Z-Wave nodes count as battery devices (both stacks)
 groovy tests/test-audit-dispatch.groovy      # audit fan-out: throw rollback, missing-callback reaper, claim ownership
+groovy tests/test-security-info.groovy       # fetchSecurityInfo's parsing of the hub's text replies
+
+# Python mirror (TESTING.md Mode 4)
+python3 tests/test_classification.py         # device classification
 ```
 
 > **Audit fan-out coverage (v5.83.5):** `test-audit-dispatch.groovy` brace-extracts the six

@@ -11,7 +11,7 @@ definition(
     namespace: "iamtrep",
     author: "pj",
     singleInstance: true,
-    description: "TBD",
+    description: "Holds Location Event Mapper instances, which set virtual contact sensors from location events",
     menu: "Automations", // new in platform 2.5.0
     category: "Convenience",
     importUrl: "",

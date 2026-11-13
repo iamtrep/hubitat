@@ -30,7 +30,7 @@ Generates an HTML report showing which installed apps reference each device.
 
 ### Device Swap Helper (`DeviceSwapHelper.groovy`)
 
-Helps replace one device with another across every installed app — auto-swapping where it can, and producing a deeplinked punch list for everything else.
+Helps replace one device with another across every installed app — auto-swapping where it can, and producing a deeplinked punch list for everything else. More in [DeviceSwapHelper.md](DeviceSwapHelper.md).
 
 It installs once per hub: adding it again opens the existing instance.
 

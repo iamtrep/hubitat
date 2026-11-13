@@ -23,6 +23,8 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 | **Switch Monitor** | Monitors switches that must remain on or off, organized in groups with independent timing, notifications, and load monitoring. |
 <!-- /AUTO -->
 
+More on some of these: [Humidity-Based Fan Controller](HumidityFanController.md), [Mirror Switch](MirrorSwitch.md), [Startup and Shutdown Monitor](StartupShutdownMonitor.md), [Switch Monitor](SwitchMonitor.md).
+
 ## Subfolders
 
 <!-- AUTO:apps-subfolders -->
@@ -36,7 +38,7 @@ Hubitat Elevation apps for home automation, monitoring, and hub administration.
 | [HvacSeasonManager/](./HvacSeasonManager/) | Publishes the heating and cooling season on a device, from dates and the outdoor temperature |
 | [HydroPeakEvents/](./HydroPeakEvents/) | Publishes Hydro-Québec peak events and their phases on a device |
 | [IndoorAirQualityController/](./IndoorAirQualityController/) | Runs ventilation in stages from indoor CO2 and warns when a window should be opened or the air is too dry |
-| [LocationEventMapper/](./LocationEventMapper/) | TBD |
+| [LocationEventMapper/](./LocationEventMapper/) | Holds Location Event Mapper instances, which set virtual contact sensors from location events |
 | [LogMonitor/](./LogMonitor/) | Monitor hub logs with multiple filters and output actions |
 | [MultiHubInventory/](./MultiHubInventory/) | Read-only cross-hub device inventory, aggregated from each hub's Hub Inspector audit API |
 | [PowerStateMonitor/](./PowerStateMonitor/) | Publishes a load's operating state, read from its power meter with surges filtered out |

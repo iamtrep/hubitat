@@ -211,7 +211,7 @@ timestamp,bridge,type,level,"name","msg"
 
 ## Performance
 
-Each bridge passes every log line of its hub to the app, which checks it against each filter. Lines from different bridges are checked at the same time; the outputs of matching lines (notifications, file rows, POSTs) run one line at a time, and rows for the same file are written together, so a burst of matches costs one file rewrite instead of one per row. Watching `debug` or `trace` levels, or a remote hub that logs heavily, adds the most load. Masking runs only on lines a filter sends, after the rate limit. With *Hide private details*, the app keeps the names it has seen (up to 2000) in its state.
+Each bridge reads every log line of its hub and keeps only those whose type and level some filter watches; the rest are discarded on arrival. The kept lines wait in a queue of at most 2000, and once a second the bridge passes up to 200 of them to the app, which checks each against every filter. A line that arrives while the queue is full is dropped and counted; if the queue stays full for 30 s, the bridge logs a warning with the count and reconnects. Lines from different bridges are checked at the same time; the outputs of matching lines (notifications, file rows, POSTs) run one line at a time, and rows for the same file are written together, so a burst of matches costs one file rewrite instead of one per row. Watching `debug` or `trace` levels, or a remote hub that logs heavily, adds the most load. Masking runs only on lines a filter sends, after the rate limit. With *Hide private details*, the app keeps the names it has seen (up to 2000) in its state.
 
 ## File Structure
 

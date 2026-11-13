@@ -5,7 +5,7 @@ SPDX-License-Identifier: MIT
 
 # Cross-app TODO
 
-Work that spans several apps. Per-project backlogs live next to their code (e.g. `integrations/FGLair/TODO.md`).
+Work that spans several apps. Per-project backlogs live next to their code: [`apps/MultiHubInventory/TODO.md`](apps/MultiHubInventory/TODO.md), [`drivers/thirdreality/TODO.md`](drivers/thirdreality/TODO.md), [`drivers/thirdreality/TODO-3RDP01072Z.md`](drivers/thirdreality/TODO-3RDP01072Z.md) and `integrations/FGLair/TODO.md`.
 
 ## App page UI patterns
 

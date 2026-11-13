@@ -23,6 +23,8 @@ Hubitat Elevation device drivers for Zigbee devices, BLE sensors, and cloud APIs
 | **Virtual Switch + PowerSource** | Virtual device with synced Switch and PowerSource capabilities for testing power outage detection |
 <!-- /AUTO -->
 
+More on some of these: [IKEA Window Blinds](IKEA-Blinds.md), [Xfinity Contact Sensor](XfinityContactSensor.md).
+
 ## Subfolders
 
 Vendor and utility driver groups. Each subfolder's own README lists its drivers.

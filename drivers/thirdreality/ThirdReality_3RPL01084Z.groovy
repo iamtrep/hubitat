@@ -25,7 +25,7 @@ import groovy.transform.CompileStatic
 // Manufacturer-specific attribute IDs on CLUSTER_RADAR
 @Field static final int ATTR_TVOC               = 0x0000  // IEEE 754 single, ppb
 @Field static final int ATTR_TVOC_CALIBRATE     = 0xF001  // uint8 write-1 to recalibrate baseline
-@Field static final int ATTR_DETECT_DISTANCE    = 0xF002  // uint8 1..6 (meters)
+@Field static final int ATTR_DETECT_DISTANCE    = 0xF002  // uint8 1..6 (level)
 @Field static final int ATTR_TVOC_THRESHOLD     = 0xF003  // uint16 3000..50000 ppb
 @Field static final int ATTR_MOTION_SENS        = 0xF004  // uint8 0..20
 @Field static final int ATTR_PRESENCE_SENS      = 0xF005  // uint8 0..20
