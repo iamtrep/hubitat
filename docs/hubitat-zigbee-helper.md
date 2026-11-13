@@ -15,6 +15,22 @@ Every fact carries an evidence mark ([EVIDENCE.md](EVIDENCE.md)); the sources be
 - Code examples (still live): the various `zigbee-*-handler.src/*.groovy` under [SmartThingsCommunity/SmartThingsPublic](https://github.com/SmartThingsCommunity/SmartThingsPublic/tree/master/devicetypes/smartthings)
 
 
+**Sections**
+
+- [How to inspect it yourself](#how-to-inspect-it-yourself)
+- [What the `zigbee` object actually is](#what-the-zigbee-object-actually-is)
+- [Methods (curated, with semantics)](#methods-curated-with-semantics)
+- [Strings the helpers build](#strings-the-helpers-build)
+- [Cluster ID constants](#cluster-id-constants)
+- [`ZigbeeCluster` (the class the docs reference)](#zigbeecluster-the-class-the-docs-reference)
+- [`ZoneStatus` (IAS Zone status bitfield)](#zonestatus-ias-zone-status-bitfield)
+- [ZDO responses](#zdo-responses)
+- [`DataType`](#datatype)
+- [Conceptual notes worth keeping (from the ST primer)](#conceptual-notes-worth-keeping-from-the-st-primer)
+- [What Hubitat added beyond SmartThings](#what-hubitat-added-beyond-smartthings)
+- [What ST had that Hubitat dropped (or hid)](#what-st-had-that-hubitat-dropped-or-hid)
+- [Related classes](#related-classes)
+
 ## How to inspect it yourself
 
 [Object introspection](hubitat-platform-notes.md#object-introspection) in the platform notes covers the techniques and their sandbox limits. `zigbee.properties` has only 6 entries (`class`, `cluster`, `device`, `deviceNetworkId`, `endpointId`, `zigbeeId`), because most `zigbee.*` members take arguments and aren't bean properties *(regression 2.5.2.135–2.5.3.102, apps/tests/test-architecture-claims.sh; probed 2.5.0.148, reflection dump)*. The full method and field lists came from Class reflection, which 2.5.2.135 refuses (`getMethods()` and `getFields()` on any receiver), so the 2.5.0.148 results are the record *(false 2.5.0.148; probed 2.5.2.135)*.

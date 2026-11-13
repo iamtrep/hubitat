@@ -11,7 +11,7 @@ Every fact in the platform reference set (`docs/hubitat-*.md`) says how it was e
 `GET /hub/zigbee/healthStatus` returns the text `true` or `false` *(probed 2.5.0.143)*.
 ```
 
-`scripts/check-doc-evidence.py` checks the marks and runs before each commit. Add a mark with every new fact, and change it whenever the fact's evidence changes.
+`scripts/check-doc-evidence.py` checks the marks. Run `python3 scripts/check-doc-evidence.py` from the repository root before each commit; the repository ships no hook that does it for you. Add a mark with every new fact, and change it whenever the fact's evidence changes.
 
 ## Where a fact goes
 
@@ -20,7 +20,7 @@ Every fact in the platform reference set (`docs/hubitat-*.md`) says how it was e
 | [`hubitat-internal-apis.md`](hubitat-internal-apis.md) | The hub as a client off the hub sees it: admin HTTP endpoints, websockets, port 8081, payloads, authentication, status codes |
 | [`hubitat-platform-notes.md`](hubitat-platform-notes.md) | What Groovy code on the hub can do and see: sandbox, `state`, events, scheduling, outbound HTTP, app pages, platform objects |
 | [`hubitat-zigbee-helper.md`](hubitat-zigbee-helper.md) | The `zigbee` object injected into drivers, and ZDO |
-| [`hubitat-device-reference.md`](hubitat-device-reference.md) | Per-device and per-vendor protocol facts: cluster maps, encodings, quirks |
+| [`hubitat-device-reference.md`](hubitat-device-reference.md) | Per-device and per-vendor protocol facts: cluster maps, encodings, quirks; and the hub models' hardware |
 
 A fact that spans two files goes where its subject is and links from the other: an endpoint an app calls over loopback is described in internal APIs, and what the app sees in platform notes. State a fact once.
 
@@ -40,7 +40,7 @@ Ordered from strongest to weakest. When two sources disagree, the higher rung wi
 | `community` | A community statement or code we have not tested: forum posts, community drivers, Zigbee2MQTT or ZHA converters | link |
 | `inferred` | Our reasoning from other facts, not observed | what it rests on |
 
-Two kinds sit outside the ladder:
+Three kinds sit outside the ladder:
 
 | Kind | Meaning | Required detail |
 |---|---|---|
