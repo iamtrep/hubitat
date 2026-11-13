@@ -94,7 +94,7 @@ import groovy.transform.Field
 import com.hubitat.app.DeviceWrapper
 
 @Field static final String APP_NAME = "Humidity-Based Fan Controller"
-@Field static final String CODE_VERSION = "0.11.1"
+@Field static final String CODE_VERSION = "0.11.2"
 
 // Humidity state machine states
 @Field static final String HUMIDITY_NORMAL = "NORMAL"
@@ -383,7 +383,7 @@ void bathroomHumidityHandler(evt) {
     recordBathroomSample(median != null ? median : evt.value as BigDecimal)
 
     // Reset max fan run timer on every humidity event if fan is running
-    if (state.fanTurnedOnByApp) {
+    if (restartsMaxRunWindow(state.fanTurnedOnByApp as boolean, isHumidityHigh() as boolean)) {
         resetMaxFanRunTimer()
     }
 
@@ -515,6 +515,14 @@ static BigDecimal excessiveRise(List samples, BigDecimal threshold) {
     BigDecimal prev = (BigDecimal) ((Number) ((List) samples[samples.size() - 2])[1])
     BigDecimal rise = last - prev
     return rise >= threshold ? rise : null
+}
+
+// Whether a bathroom humidity event restarts the max fan run window. Only while the app's fan
+// is meant to run: after a failed off the state is NORMAL with the fan still app-owned, and a
+// restart there would keep postponing the safety off for as long as the sensors report.
+@CompileStatic
+static boolean restartsMaxRunWindow(boolean appFan, boolean high) {
+    return appFan && high
 }
 
 // ── End core ──────────────────────────────────────────────────────────
@@ -1046,6 +1054,8 @@ void verifyFanOff() {
         logError("Fan failed to turn off after ${switchVerificationTimeout} seconds (no event received)")
         sendNotification("ERROR: ${fanSwitch.displayName} failed to turn off!")
         state.pendingCommand = null
+        // turnOffFan() cleared the max-run window; arm it again so the safety off still comes.
+        scheduleMaxFanRunTimer()
     }
 }
 

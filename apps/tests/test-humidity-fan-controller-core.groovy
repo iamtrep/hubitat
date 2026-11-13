@@ -43,5 +43,10 @@ check('one sample: null', core.excessiveRise([[0L, 45.0G]], 1.0G), null)
 check('no samples: null', core.excessiveRise([], 1.0G), null)
 check('integer readings', core.excessiveRise([[0L, 40], [1000L, 65]], 25.0G), 25.0G)
 
+// restartsMaxRunWindow(appFan, high): a failed off leaves the app's fan with humidity NORMAL
+check('app fan, humidity high: window restarts', core.restartsMaxRunWindow(true, true), true)
+check('app fan, humidity normal (failed off): window is not restarted', core.restartsMaxRunWindow(true, false), false)
+check('not the app fan: no restart', core.restartsMaxRunWindow(false, true), false)
+
 println "\n${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)
