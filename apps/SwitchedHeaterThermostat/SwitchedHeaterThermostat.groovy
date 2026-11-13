@@ -15,7 +15,7 @@ import com.hubitat.app.DeviceWrapper
 import groovy.json.JsonOutput
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.4"
+@Field static final String CODE_VERSION = "0.1.5"
 
 definition(
     name: "Switched Heater Thermostat",
@@ -276,6 +276,8 @@ void checkVersion(boolean reinit = true) {
 void startHandler(evt) {
     checkVersion()
     logInfo "hub started"
+    // A keep-alive runIn that fell due while the hub was down is gone and nothing else re-arms it.
+    scheduleKeepAlive()
     checkAll()
 }
 
