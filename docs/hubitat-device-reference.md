@@ -17,6 +17,7 @@ Every fact carries an evidence mark ([EVIDENCE.md](EVIDENCE.md)).
 - [Xiaomi / Aqara (lumi FF01)](#xiaomi--aqara-lumi-ff01)
 - [Sinopé](#sinopé)
 - [Stelpro Allia (HT402)](#stelpro-allia-ht402)
+- [Stelpro Orléans (ST218)](#stelpro-orléans-st218)
 - [IKEA window blinds](#ikea-window-blinds)
 - [Fujitsu / Ayla (FGLair)](#fujitsu--ayla-fglair)
 - [Philips Hue](#philips-hue)
@@ -25,6 +26,7 @@ Every fact carries an evidence mark ([EVIDENCE.md](EVIDENCE.md)).
 - [ThirdReality vibration sensor](#thirdreality-vibration-sensor)
 - [Linptech / Moes ES1 (Tuya TS0225 presence sensor)](#linptech--moes-es1-tuya-ts0225-presence-sensor)
 - [Universal Electronics / Visonic URC4460BC0 (Xfinity contact sensor)](#universal-electronics--visonic-urc4460bc0-xfinity-contact-sensor)
+- [Matter](#matter)
 - [Android TV / Google TV (Remote protocol v2)](#android-tv--google-tv-remote-protocol-v2)
 - [Samsung Tizen TVs](#samsung-tizen-tvs)
 - [Hubitat hubs](#hubitat-hubs)
@@ -65,7 +67,7 @@ Keep the parser prefix-skipping and normalize the stripped path instead *(inferr
 | Button / reset press | `0x0005` + `0xFF01` | Press event; discriminator = `additionalAttrs` contain `FF01` |
 | Join announce | `0x0005` + `0x0001` (ApplicationVersion) | Rejoin; update model/appVersion, emit **no** button event |
 
-The shapes are those seen from MCCGQ11LM: a short press sends the press shape, a long press the join shape *(probed firmware not recorded, C-7, MCCGQ11LM captures, July 2026)*.
+The shapes are those seen from MCCGQ11LM: a short press sends the press shape, a long press the join shape *(probed firmware not recorded, C-7, MCCGQ11LM captures, July 2026)*. On the MCCGQ11LM a single reset-button press (`0x0005` + `0xFF01`) is the "Effective Range Test" maintenance signal, so do not automate on it; a 3 s press rejoins (`0x0005` + `0x0001`) and sends no button event *(probed firmware not recorded, C-7, one MCCGQ11LM)*.
 
 **Per-model tag table — tag IDs are reused with different meanings per model; do NOT copy a
 decoder across models.** Authoritative cross-check: Zigbee2MQTT `zigbee-herdsman-converters`
@@ -97,6 +99,12 @@ strongest at that moment, or go **offline**. Retention is network-layer child-ag
 tolerance; there is no driver lever for parenting *(inferred: research summary of the Aqara manual and FAQ, deCONZ REST docs, zigbee-herdsman-converters and Silicon Labs material, no capture)*.
 A short press of the reset button was seen to move one MCCGQ11LM to another parent without a re-pair, by a mechanism not identified *(probed firmware not recorded, C-7, `/zigbeeLogsocket` capture, July 2026)*.
 
+**Routers differ in whether they keep a sleepy MCCGQ11LM as a child.** A ThirdReality 3RDP01072Z plug held one for over 8 h at LQI 255 with a flat check-in cadence. A Sinopé DM2500ZB dimmer aged one out after a single check-in, also at LQI 255, so the loss was not a weak link. An IKEA TRETAKT plug held none (0 children) although it was among the routers closest to the sensor, and a Stelpro HT402 held one only briefly (LQI 165) *(probed firmware not recorded, C-7, `/zigbeeLogsocket` captures and the coordinator's child and neighbor tables)*. Identify a router's make from its device data, not from the label it was given.
+
+The MCCGQ11LM reads no Time cluster (`0x000A`) and sends no unanswered reads, so a driver has no application-layer lever for its retention *(probed firmware not recorded, C-7, captured traffic of two sensors)*.
+
+Pinning a sensor to the coordinator takes a full hold-to-reset (LED triple blink) with the sensor next to the hub, so the coordinator is the only or strongest parent it hears; a short press is a check-in, not a join, so it cannot steer parenting. The coordinator's child table lists the sensor only when it is a direct child. One sensor pinned this way stayed on the coordinator through a night of 50-minute check-ins *(probed firmware not recorded, C-7, one MCCGQ11LM)*.
+
 **`lumi.weather` truncates pressure MeasuredValue to whole hPa; ScaledValue carries 0.1 hPa.** One cluster
 `0x0403` report carries MeasuredValue (`0x0000`, INT16), Scale (`0x0014`, INT8) and ScaledValue (`0x0010`, INT16).
 Raw `…0403 1C 0000 29 D103 1400 28 FF 1000 29 3326` gives MeasuredValue 977 (hPa), Scale `FF` (−1) and ScaledValue
@@ -106,6 +114,8 @@ A driver that reads MeasuredValue alone reports 97.8 kPa from the check-in, then
 hPa = ScaledValue / 10^Scale / 100 for this model, which gives the same value at Scale −1
 *(community: [zigbee-herdsman-converters `fz.pressure`](https://github.com/Koenkk/zigbee-herdsman-converters/blob/master/src/converters/fromZigbee.ts))*.
 Scale is two hex characters, not four, so it can't go through a 4-character byte flip *(inferred: from the INT8 encoding above)*.
+
+**WS-USC01 (`lumi.switch.b1laus01`, no neutral; EU WS-EUK01 is `lumi.switch.l1aeu1`) reports no on/off over standard ZCL until event mode is written.** The relay actuates but the switch never reports its state on cluster `0x0006`, so on the stock Generic Zigbee Switch driver the command-retry watchdog sees no confirmation and warns `command "on()" failed after 5 retries`. Writing `0xFCC0`/`0x0009` = 1 (manufacturer code `0x115F`) at configure makes it report; a read of `0x0006`/`0x0000` after each command gives a no-op command a confirmation *(probed firmware not recorded, C-7, one no-neutral switch; community: [zigbee-herdsman-converters `lumi.ts`](https://github.com/Koenkk/zigbee-herdsman-converters/blob/master/src/lib/lumi.ts) for the attribute id)*. The heartbeat is attribute `0xFCC0`/`0x00F7`, an octet string of `[tag][type][little-endian value]` records. Tag `0x05` is a reboot count: each increment coincided with a Device Announce (a rejoin) in a capture, so it counts restarts. Tag `0x0A` is the parent's network address, which matched the parent's neighbor-table entry for the switch *(probed firmware not recorded, C-7, one switch against a capture)*. Zigbee2MQTT maps tag `0x05` as a power-outage count and leaves `0x0A` unmapped *(community: [zigbee-herdsman-converters `lumi.ts`](https://github.com/Koenkk/zigbee-herdsman-converters/blob/master/src/lib/lumi.ts))*. The no-neutral switch is a sleepy end device (receiver off when idle) *(probed firmware not recorded, C-7, one switch)*. The with-neutral sibling `lumi.switch.b1naus01` is a mains-powered router that reports `0x0702` and `0x0B04` metering every 10 s, which the no-neutral model does not have *(probed firmware not recorded, one with-neutral switch)*.
 
 ## Sinopé
 
@@ -229,6 +239,10 @@ Practical note: G2-specific backlight logic is dead code on TH1300/TH1320/TH1400
 - A TH1123ZB-G2 with seven entries configured answered `0x89` (INSUFFICIENT_SPACE) to an eighth *(probed 2.5.2.139, C-7, `/zigbeeLogsocket`)*. Z2M notes the G2 holds at most 8 reporting entries *(community: [zigbee-herdsman-converters `sinope.ts`](https://github.com/Koenkk/zigbee-herdsman-converters/blob/72398c3/src/devices/sinope.ts), TH1123ZB-G2 `configure`)*. That device also sent active-power reports that none of the drivers it ran configure, so entries set earlier stay on the device and count against the limit *(inferred: from the unsolicited `0x050B` reports)*.
 - A TH1123ZB-G2 answers `0x86` (UNSUPPORTED_ATTRIBUTE) to a read of ConnectedLoad `0xFF01`/`0x0119`; a TH1124ZB returns it. *(probed 2.5.2.139, C-7, `/zigbeeLogsocket`)*
 
+**After a hub radio outage a Sinopé device can keep reporting yet ignore every hub command until power-cycled.** After a Zigbee radio outage of about 47 h, ended by a hub reboot, one Sinopé dimmer kept sending reports of physical use but ignored every ZCL command and ZDO Mgmt_Lqi_req from the hub, with no error logged and the command call returning success. The mesh was fine: the coordinator listed it as a neighbor at LQI 254, five routers had active routes to it, and a same-model dimmer answered at once. Cutting its power for about 10 s fixed it immediately *(probed 2.5.2.135, C-7, one device, one occurrence)*.
+
+**DM2500ZB and SW2500ZB report `data.manufacturer` and `data.model` padded with NUL characters.** `.strip()` does not remove them; strip `\x00` explicitly before comparing or displaying, or equality matches miss these devices *(probed firmware not recorded, DM2500ZB and SW2500ZB device data)*.
+
 ## Stelpro Allia (HT402)
 
 The Allia (model `HT402`, manufacturer string `Stello`) keeps its outdoor temperature, power and
@@ -239,6 +253,10 @@ bit) with status 0x00 and the types above, and a 0x4001 value the hub wrote read
 so the driver's reads, writes and reporting setup need no manufacturer code. Whether
 `configureReporting` on 0x4008/0x4009 is accepted was not checked; the device reported 0 W at the
 time, so no report was expected *(probed 2.5.2.134, one HT402, frames from `/zigbeeLogsocket` during `refresh()`)*.
+
+## Stelpro Orléans (ST218)
+
+A Stelpro Orléans convector (model `ST218`) in off mode reports `heatingSetpoint` 5.0 °C *(probed firmware not recorded, ST218 units, device attribute values)*. It reads as a freeze-protection floor, not a lost or wrong setpoint, so check `thermostatMode` before treating 5 °C as a fault. The [installation manual](https://www.stelpro.com/wp-content/uploads/produits/documents/INS/INS_SOR_EN.pdf) does not mention it *(inferred from the value appearing only in off mode)*.
 
 ## IKEA window blinds
 
@@ -271,6 +289,13 @@ empirical scaling below beats the vendor library's:
 Home Assistant's `fujitsu_fglair` integration (via `ayla-iot-unofficial`) instead maps sensor raw `[4000, 9500]` linearly to `[-10, +45] °C` *(community: [ayla-iot-unofficial `fujitsu_consts.py`](https://github.com/rewardone/ayla-iot-unofficial/blob/main/src/ayla_iot_unofficial/fujitsu_consts.py))*. On the observed unit that gives values ~8 °C off (raw `5500` → 5 °C by the map, but the actual temperature was ~13 °C, matching the hundredths-of-°F reading); the library's constants are evidently for a different model or firmware *(reported: raw cloud values against the actual temperature, one unit, 2026-05-18)*.
 
 A sensor raw value outside roughly 3200–11200 (-18 °C to +49 °C) would suggest a different unit or firmware *(inferred: plausible indoor and outdoor temperatures in hundredths of °F)*.
+
+Write quirks of the cloud path, seen on an ASUG15LZTD with an AP-WF1E module *(probed firmware not recorded, one unit, vendor cloud API)*:
+
+- **Setpoints must be multiples of 0.5 °C.** `adjust_temperature` is in tenths of °C (`220`, `225`, `230`). A finer value, such as `228` from a converted 73 °F, is accepted by the cloud with `200 OK` and queued, the unit rejects it, and the unit's cloud queue then ignores later setpoint writes from every source, including the vendor app's cloud path. Snap to 0.5 °C before scaling *(probed firmware not recorded, one ASUG15LZTD, vendor cloud API)*.
+- **Never write a wake or refresh property (`refresh`, `get_prop`) before a full properties GET.** A write before every poll fed the same queue and eventually jammed setpoint writes. A plain GET of the properties needs no wake, and mode, setpoint and fan changes reach the cloud within seconds without one *(probed firmware not recorded, one ASUG15LZTD, vendor cloud API)*.
+- **Sensed temperatures go stale without a wake.** Without one, `display_temperature` and `outdoor_temperature` refresh in the cloud about once a day. A `refresh` = 1 write every 15 minutes, independent of the poll rate, caused no jam; shorter cadences were not proven *(probed firmware not recorded, one ASUG15LZTD, vendor cloud API)*.
+- **A jammed unit presents as** `adjust_temperature` stuck and ignoring fresh writes while `display_temperature` keeps updating; the vendor app also cannot change the setpoint over the cloud, though it still works on the LAN, which bypasses the cloud; the IR remote always works. Stopping writes for a few minutes drains the queue without re-registering the unit *(probed firmware not recorded, one ASUG15LZTD, vendor cloud API)*.
 
 ## Philips Hue
 
@@ -310,12 +335,36 @@ ThirdReality Presence Sensor R3 / Multi-Function Night Light. Confirmed protocol
   CurrentHue (`0x0000`); `Move to Saturation` (command `0x03`) sets CurrentSaturation
   (`0x0001`); CT (`0x0007`) reads back fine *(probed firmware not recorded, C-7, one 3RPL01084Z captures, July 2026)*. The device is also enhanced-hue capable (EnhancedCurrentHue `0x4000`) *(community: [zigbee-herdsman-converters `third_reality.ts`](https://github.com/Koenkk/zigbee-herdsman-converters/blob/master/src/devices/third_reality.ts))*, but legacy 8-bit hue is adequate for Hubitat's
   0–100 hue range *(inferred: Hubitat's 0–100 hue scale needs less than 8 bits)*.
+- **After a device firmware update (to `1407-D3C3-00000028`, softwareBuild `0x28`) it reports the manufacturer-specific attributes continuously.** F001–F007 and TVOC arrive in manufacturer-`0x1407` Report Attributes at about 4–16 per minute; in a 6.4 h capture 110 of 271 active minutes carried 3 or more, and the rest were gaps of 1–5 minutes. Before the update it reported TVOC on change over the standard path, about once per 42 s *(probed firmware not recorded, one 3RPL01084Z, `/zigbeeLogsocket` captures, device firmware `1407-D3C3-00000028`)*.
+- **Configure Reporting on that cluster gets no response, and neither it nor an unbind gave durable silence.** No Configure Reporting Response arrived in 6.4 h. In a 90 min solo capture in 30 min segments, the untouched baseline averaged 11.6 F00x reports per minute with a natural gap of about 11 minutes, 4.2 per minute after a Configure Reporting without a manufacturer code, and 3.6 per minute after an unbind of the cluster, all still in bursts of 10 or more per minute; TVOC stayed near 2 per minute throughout. The baseline varies too much for the decline to be credited to the commands, and short capture windows can land in a gap and look silent *(probed firmware not recorded, one 3RPL01084Z, `/zigbeeLogsocket` captures)*.
+- **ThirdReality support said the firmware update did change some reporting mechanisms, but not to this frequency** *(reported: ThirdReality support email)*.
+- **Identify cluster `0x0003` accepts writes silently, and IdentifyTime cannot be read**, so a flash cannot be built on Identify *(probed firmware not recorded, one 3RPL01084Z)*.
 
 ## ThirdReality 3RSP plugs
 
 Read Reporting Configuration of OnOff (0x0006:0x0000) returned a record of type 0x10 with minimum interval 0 s on both plugs. The maximum interval was 60 s on a 3RSP019BZ and 600 s on a 3RSP02064Z *(probed 2.5.2.139, C-7, one plug of each model)*.
 
 Cluster 0xFF03 takes manufacturer code `0x1233` on Gen2 models (`3RSP02028BZ`, `3RSPE01044BZ`) and `0x1407` on Gen3. A write with the wrong code is refused with Unsupported Attribute *(probed firmware not recorded, driver on a plug of each generation; community: [zigbee-herdsman-converters `third_reality.ts`](https://github.com/Koenkk/zigbee-herdsman-converters/blob/master/src/devices/third_reality.ts))*.
+
+Plug firmware history for the Gen1 `3RSP019BZ`, Gen2 `3RSP02028BZ` and E2 `3RSPE01044BZ`, as the vendor's firmware-history page lists it:
+
+| Version | Change |
+|---|---|
+| 1.01.01 | Cumulative energy no longer corrupted by extreme power values; Hue gateway compatibility |
+| 1.00.98 | `StartupOnOff` default changed to `PreviousValue` (`0xFF`); energy reporting threshold 0.001 kWh |
+| 1.00.92 | OTA termination fix; private-attribute power-metering clear fix; full-channel join detection |
+| 1.00.88 | `AC_PowerFactor` (`0x0510`) reporting added; `clear total power metering` and `countdown` private attributes (`0xFF03`) added; power reports trigger on more than 1 % and more than 1 W |
+| 1.00.74 | LED status fix; Zigbee distance optimisation |
+| 1.00.71 | Power-restore multi-toggle fix |
+| 1.00.65 | Power-factor report fix |
+| 1.00.59 | LED status fix |
+| 1.00.53 | Startup on/off fix |
+
+*(reported: vendor firmware-history page, link not kept)*
+
+From that page: the device sends power only when it changes by more than 1 % and more than 1 W, so sub-1 W changes are filtered on the device whatever Configure Reporting says, and at 100 W and above the 1 % binds (1000 W needs a change of 10 W). `0x0510` needs firmware 1.00.88 or later, and plugs on 1.00.74 or older never send it. The `0xFF03` private writes (countdowns, clear energy) need 1.00.88 or later *(reported: vendor firmware-history page, link not kept)*. An older plug is expected to refuse them with an error status in the Write Attributes Response *(inferred: the version that added them)*. The `StartupOnOff` factory default is `PreviousValue` from 1.00.98 *(reported: vendor firmware-history page, link not kept)*.
+
+Seen in a capture: `AC_PowerFactor` is not subject to the power floor and floods at idle, an idle plug sending one report every 10–20 s that alternates between about 0.16 and 0.26 on the factory reporting setup *(probed firmware not recorded, one 3RSP plug, `/zigbeeLogsocket`)*. A Configure Reporting of `0x0510` (INT8, reportable change 25, that is 0.25) is honored: in a 120 s capture afterwards the idle power-factor frames stopped *(probed firmware not recorded, one 3RSP plug, `/zigbeeLogsocket`)*. Power factor is undefined near 0 W, so clamp it to 0 on the hub when power is under 1 W *(inferred: the idle stream above)*.
 
 On a 3RSP02064Z with plug firmware 1.00.47, writes to `powerRiseThreshold` (0x0040), `powerDropThreshold` (0x0041) and `meteringOnlyMode` (0x0050) return Success and are discarded: read-back stays 3200 W, 3200 W and 0. Both thresholds ship at 3200 W, so on-change power reporting is off and power follows the maximum interval *(probed firmware not recorded, plug firmware 1.00.47)*.
 
@@ -351,6 +400,10 @@ Zigbee IAS contact sensor, model `URC4460BC0-X-R`, firmware `10EF-0001-20160921`
 - **The sensor reports low battery itself**, in IAS Zone Status (`0x0500:0x0002`) bit 3 (`0x0008`), which ZCL defines as the battery-low bit *(spec: ZCL, IAS Zone cluster, ZoneStatus attribute)*.
 - On 11 of 22 sensors the bit set while battery voltage (`0x0001:0x0020`, 100 mV steps) read 2.5 or 2.6 V, 1 to 21 days after the voltage last changed to that value. None set it while the voltage read 2.7 V or more *(probed firmware not recorded, C-7, 22 sensors, attribute log June to October 2026)*.
 - After a battery change the bit cleared within 30 s of the first 3.0 V reading, on 8 sensors over 9 changes. One replacement cell read 3.0 V, then 2.6 V an hour later, and the bit set again with that reading *(probed firmware not recorded, C-7, 22 sensors, attribute log June to October 2026)*.
+
+## Matter
+
+The built-in generic Matter temperature/humidity driver reads endpoint 1 only. An IKEA TIMMERFLOTTE exposes temperature on endpoint 1 and humidity on endpoint 2 (cluster `0x0307`), so with the built-in driver humidity never arrives. Switching the device to the community driver "IKEA TIMMERFLOTTE Matter Temp+Hum+Bat", which reads both endpoints, made humidity arrive at once *(probed firmware not recorded, one TIMMERFLOTTE, device state and attribute events)*.
 
 ## Android TV / Google TV (Remote protocol v2)
 

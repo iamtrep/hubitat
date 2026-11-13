@@ -129,9 +129,8 @@ Cloud-integration regression coverage. Original FGLair spec flagged this as a "c
 
 Until then, a manual smoke test on the dev hub is the test suite.
 
-## Memory references
+## References
 
-- `feedback_har_files.md` — preferred workflow for capturing API payloads when in doubt.
-- `fglair_cloud_write_quirks.md` — the per-DSN write-queue jam, 0.5°C setpoint snapping, and why sensor wakes must stay sparse.
-- `fglair_temperature_scaling.md` — sensor scale (hundredths of °F, empirical) and setpoint scale (tenths of °C) facts; warns against the ayla-iot-unofficial range-map formula for this unit.
-- `hubitat_supported_thermostat_modes.md` — the `setSupported*()` workaround used here (sendEvent the attribute with pre-quoted string values).
+- [`docs/hubitat-device-reference.md`](../../docs/hubitat-device-reference.md), "Fujitsu / Ayla (FGLair)": the sensor scale (hundredths of °F, empirical) and setpoint scale (tenths of °C), why the ayla-iot-unofficial range-map formula is wrong for this unit, the per-DSN write-queue jam, 0.5 °C setpoint snapping, and why sensor wakes must stay sparse.
+- [`docs/hubitat-platform-notes.md`](../../docs/hubitat-platform-notes.md), "Thermostat driver modes": the `setSupported*()` workaround used here (`sendEvent` the attribute with pre-quoted string values).
+- When an API payload is in doubt, capture it (a HAR or proxy capture) before coding against it.
