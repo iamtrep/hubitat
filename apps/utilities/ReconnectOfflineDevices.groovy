@@ -18,7 +18,7 @@
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Reconnect Offline Devices"
-@Field static final String CODE_VERSION = "0.2.1"   // 0.2.0 re-subscribes under the new handler name
+@Field static final String CODE_VERSION = "0.2.2"   // 0.2.0 re-subscribes under the new handler name; 0.2.2 re-arms the check at hub start
 @Field static final int LOG_MAX_BYTES = 262144   // past this, the oldest half of the file is dropped
 
 definition(
@@ -242,6 +242,7 @@ void initialize() {
     }
     state.offline = kept
     if (settings.devices && match != null) subscribe(settings.devices, attr, "watchHandler")
+    subscribe(location, "systemStart", "systemStartHandler")
     logCfg "watching ${settings.devices?.size() ?: 0} device(s) for ${attr} ${match}, ${kept.size()} at it now"
     String when = retryEnabled() ? "every ${settings.offlineMinutes ?: 30} min" : "once, after ${settings.offlineMinutes ?: 30} min"
     List<String> lines = ["config | watching ${settings.devices?.size() ?: 0} device(s), ${reviveCommand()}() ${when} at ${attr} ${match}"]
@@ -263,6 +264,14 @@ void checkVersion(boolean reinit = true) {
 // Subscriptions made before 0.2.0 call this name; its version check re-subscribes them.
 void networkStatusHandler(evt) {
     watchHandler(evt)
+}
+
+// A one-shot runIn that fell due while the hub was down is dropped, and a quiet device list sends
+// no event to arm it again, so re-derive the check from the persisted offline times.
+void systemStartHandler(evt) {
+    checkVersion()
+    logSched "hub started; re-arming the check"
+    scheduleCheck()
 }
 
 void watchHandler(evt) {
