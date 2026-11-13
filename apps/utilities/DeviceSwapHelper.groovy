@@ -4,7 +4,7 @@
 import com.hubitat.app.DeviceWrapper
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.5.8"
+@Field static final String CODE_VERSION = "0.5.9"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
 // File Manager file with one line per input each swap or undo changed.
 @Field static final String AUDIT_FILE = "device_swap_audit.txt"
@@ -761,28 +761,37 @@ private void executeSwap() {
     int sourceId = sourceDevice.id as int
     int targetId = targetDevice.id as int
     logCmd "Swapping ${sourceId} → ${targetId} in ${pending.size()} input(s)"
-    List<Map> results = pending.collect { Map entry -> swapInput(entry, sourceId, targetId) }
+    String devices = "${sourceDevice.displayName} (${sourceId}) -> ${targetDevice.displayName} (${targetId})"
+    List<Map> results = []
+    List<Map> done = []
+    String auditError = null
+    // Each input's audit line and undo row are written as soon as that input is swapped, so a render
+    // cut short after k inputs still leaves a record of those k (the audit file survives it).
+    pending.each { Map entry ->
+        Map r = swapInput(entry, sourceId, targetId)
+        results << r
+        String err = appendAudit([auditLine("swap", devices, r)])
+        if (err) auditError = err
+        if (r.success) {
+            done << r
+            state.lastSwap = [
+                sourceId: sourceId,
+                targetId: targetId,
+                sourceLabel: sourceDevice.displayName,
+                targetLabel: targetDevice.displayName,
+                results: done
+            ]
+            state.remove("lastUndo")
+        }
+    }
+    state.auditError = auditError
     state.remove("scanCache")
-    // The writes are done. An exception from here on would drop this render's state, so the undo
-    // record and audit lines go first and the checks below cannot throw.
+    // The writes are done. An exception from here on would drop this render's state, so the checks
+    // below cannot throw.
     try {
         checkApps(pending, results, targetId, sourceDevice.displayName as String)
     } catch (Exception e) {
         logWarn "Post-swap checks failed: ${e}"
-    }
-    String devices = "${sourceDevice.displayName} (${sourceId}) -> ${targetDevice.displayName} (${targetId})"
-    state.auditError = appendAudit(results.collect { Map r -> auditLine("swap", devices, r) })
-
-    List<Map> done = results.findAll { it.success }
-    if (done) {
-        state.lastSwap = [
-            sourceId: sourceId,
-            targetId: targetId,
-            sourceLabel: sourceDevice.displayName,
-            targetLabel: targetDevice.displayName,
-            results: done
-        ]
-        state.remove("lastUndo")
     }
     state.remove("pendingScan")
     state.swapResults = results
@@ -925,7 +934,14 @@ private Map swapInput(Map entry, int sourceId, int targetId) {
             result.message = err
             return result
         }
-        Map check = checkWrite(appId, inputName, after, cfg.settings as Map)
+        Map check
+        try {
+            check = checkWrite(appId, inputName, after, cfg.settings as Map)
+        } catch (Exception e) {
+            // The write has landed: report it as saved so the undo record keeps it, rather than as an error.
+            logWarn "Could not verify ${entry.appLabel}/${inputName} after the save: ${e.message}"
+            check = [notes: ["Saved; could not verify: ${e.message}"], problems: []]
+        }
         if (check.problems) {
             // Put the input back. Settings the app changed on its own are reported, not rewritten:
             // re-sending them is what corrupts settings.
