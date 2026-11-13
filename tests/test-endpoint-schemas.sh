@@ -21,7 +21,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-CONFIG_FILE="$PROJECT_ROOT/.hubitat.json"
+# HUBITAT_CONFIG (absolute path) points the test at a different hub config file.
+CONFIG_FILE="${HUBITAT_CONFIG:-$PROJECT_ROOT/.hubitat.json}"
 # Unique per run/hub/test so concurrent runs (e.g. parallel agents, pytest -n)
 # don't clobber each other's session state. Cleaned up on exit.
 COOKIE_JAR="$(mktemp -u "${TMPDIR:-/tmp}/hubitat-test-cookies.XXXXXX")"
@@ -173,7 +174,7 @@ def check_snapshot(name, live_data):
         ok(f"Schema unchanged vs snapshot ({name}.json)")
     else:
         for key in sorted(removed):
-            warn(f"Schema key REMOVED: {key}  [{name}.json]")
+            fail(f"Schema key REMOVED: {key}  [{name}.json]")
         for key in sorted(added):
             warn(f"Schema key ADDED:   {key}  [{name}.json]")
 
@@ -266,7 +267,7 @@ else:
     if test_rule:
         info(f"Test subject: '{test_rule['name']}' (id={test_rule['id']})")
     else:
-        warn("No RM/BC rule found — statusJson and configure/json tests will be skipped")
+        fail("No RM/BC rule found — statusJson and configure/json cannot be checked on this hub")
 
 # ── Endpoint 2: GET /installedapp/statusJson/{ruleId} ─────────────────────────
 if test_rule:
@@ -392,7 +393,7 @@ if test_rule:
 
 # ── Endpoint 4: POST /installedapp/update/json ───────────────────────────────
 section("POST /installedapp/update/json (precondition check — no POST issued)")
-ok("POST not issued — live rule settings will not be modified")
+info("POST not issued — live rule settings will not be modified")
 info("configure/json structural checks above validate all POST preconditions")
 info("POST response contract: JSON object with status == \"success\"")
 
