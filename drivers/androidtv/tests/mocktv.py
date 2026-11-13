@@ -2,7 +2,14 @@
 # Encodes/decodes with androidtvremote2's compiled protobuf modules. Ports: pairing 6467, remote 6466.
 # usage: [MOCKTV_PROFILE=<profile.json>] [MOCKTV_MDNS_NAME=<name> [MOCKTV_BT=<mac>]] mocktv.py <cert.pem> <key.pem> <workdir>
 # A profile describes a box with the tester report's field names; mock-profiles/default.json fills what it leaves out.
-import hashlib, json, os, random, signal, socket, struct, sys, threading, time
+# A plain-HTTP side port (MOCKTV_HTTP_PORT, default 6480) answers GET /mock/state with what the mock last saw:
+# {power: "on"|"off", asleep, app, lastText, keys: [[atMs, code], ...] (last 50), launches: [[atMs, link], ...] (last 20),
+#  pairingCode (the code last shown on pairing, null before), field: {open, value} (the text field in front),
+#  playing: "playing"|"paused"|"stopped"|null}. lastText is the last text taken from a message 21.
+# GET /mock/field?open=1|0 gives or takes away focus of a text field in the app in front, as a person opening a search box
+# does; GET /mock/play?app=<package> puts that app (default YouTube) in front, playing. Both act on the live session and
+# answer {ok: false} without one. While playing is set, keys 127, 126 and 86 make it paused, playing, stopped; HOME clears it.
+import hashlib, http.server, json, os, random, signal, socket, struct, sys, threading, time, urllib.parse
 from OpenSSL import SSL, crypto
 from google.protobuf.internal.decoder import _DecodeVarint
 from google.protobuf.internal.encoder import _VarintBytes
@@ -26,6 +33,15 @@ ENCODINGS = {"unknown": 0, "alphanumeric": 1, "numeric": 2, "hexadecimal": 3, "q
 ROLES = {"input": 1, "output": 2}
 assert ORDER[:2] == [1, 2] and set(ORDER[2:]) <= {20, 40, 50}, "firstMessages must start 1,2 then use 20, 40, 50"
 ASLEEP = threading.Event()  # a box with sessionKept false, turned off: it answers no connection until woken
+
+HTTP_PORT = int(os.environ.get("MOCKTV_HTTP_PORT", "6480"))
+MS = {"power": "on", "app": None, "lastText": None, "keys": [], "launches": [], "pairingCode": None,
+      "field": {"open": False, "value": ""}, "playing": None}   # under lock
+SESSION = {}            # the live remote session's actions, for the HTTP side port; empty without one
+
+def note(kind, item, cap):
+    with lock:
+        MS[kind].append([int(time.time() * 1000), item]); del MS[kind][:-cap]
 
 def log(*a):
     print(time.strftime("%H:%M:%S"), *a, flush=True)
@@ -102,6 +118,8 @@ def handle_pairing(conn):
             expected = h.digest()
             code = f"{expected[0]:02X}{suffix}"
             open(os.path.join(WORK, "code.txt"), "w").write(code)
+            with lock:
+                MS["pairingCode"] = code
             log("pair: CODE ON SCREEN:", code)
             r.configuration_ack.SetInParent()
         elif msg.HasField("secret"):
@@ -128,6 +146,11 @@ def handle_remote(conn):
     log("remote: TLS", conn.get_protocol_version_name(), "profile", P["vendor"], P["model"])
     st = {"on": True, "level": P["volumeLevel"], "max": P["volumeRange"], "muted": False, "ping": 0, "pong": 0, "alive": True,
           "app": None, "field": None}
+    with lock:
+        # A box keeps its app across sessions: a new session reports the app in front, the profile's
+        # startApp only on the first one.
+        front = MS["app"]
+        MS["power"] = "on"
 
     def power():
         m = RemoteMessage(); m.remote_start.started = st["on"]; send(conn, m)
@@ -140,6 +163,8 @@ def handle_remote(conn):
 
     def app(package):
         st["app"] = package; st["field"] = None
+        with lock:
+            MS["app"] = package; MS["field"] = {"open": False, "value": ""}
         a = RemoteMessage(); a.remote_ime_key_inject.app_info.app_package = package; send(conn, a)
 
     def field_status(status):
@@ -153,6 +178,10 @@ def handle_remote(conn):
     # A text field on the search screen, as the EBOX has it: CENTER opens it with the keyboard up, BACK closes the
     # keyboard. Edits apply with counters 0/0, or with a field counter at most 10 behind the box's; others are dropped.
     def text_edit(edit):
+        # edit_info is a repeated field in the reference proto; the driver sends one entry
+        text = "".join(e.text_field_status.value for e in edit.edit_info)
+        with lock:
+            MS["lastText"] = text
         f = st["field"]
         if not f:
             return
@@ -160,9 +189,34 @@ def handle_remote(conn):
         if not ((ime, counter) == (0, 0) or f["counter"] - 10 <= counter <= f["counter"]):
             log(f"remote: edit dropped, counters {ime}/{counter}, field at {f['counter']}")
             return
-        f["value"] += edit.edit_info.text_field_status.value
-        f["counter"] += len(edit.edit_info.text_field_status.value)
+        f["value"] += text
+        f["counter"] += len(text)
+        with lock:
+            MS["field"]["value"] = f["value"]
         m = RemoteMessage(); field_status(m.remote_ime_show_request.remote_text_field_status); send(conn, m)
+
+    def open_field(up):
+        """A person opening (or leaving) a text field in the app in front: send what a box sends."""
+        if up:
+            if not st["app"]:
+                app(front or P["startApp"])
+            counter = P.get("textFieldCounter")
+            st["field"] = {"counter": 1 if counter is None else counter, "value": ""}
+            with lock:
+                MS["field"] = {"open": True, "value": ""}
+            a = RemoteMessage(); a.remote_ime_key_inject.app_info.app_package = st["app"]
+            field_status(a.remote_ime_key_inject.text_field_status); send(conn, a)
+            keyboard(True)
+        elif st["field"]:
+            keyboard(False)
+            st["field"] = None
+            with lock:
+                MS["field"] = {"open": False, "value": ""}
+
+    def play(package):
+        app(package)
+        with lock:
+            MS["playing"] = "playing"
 
     def pinger():
         while st["alive"]:
@@ -185,6 +239,7 @@ def handle_remote(conn):
     if P.get("deviceInfo3") is not None: di.unknown1 = P["deviceInfo3"]
     send(conn, m)
     threading.Thread(target=pinger, daemon=True).start()
+    SESSION.clear(); SESSION.update(field=open_field, play=play, owner=st)
     for raw in frames(conn):
         msg = RemoteMessage(); msg.ParseFromString(raw)
         if msg.HasField("remote_ping_response"):
@@ -198,13 +253,16 @@ def handle_remote(conn):
             for t in ORDER[2:]:
                 if t == 40: power()
                 elif t == 50: volume()
-                elif t == 20: app(P["startApp"])
+                elif t == 20: app(front or P["startApp"])
             for t in P["extraMessages"]:
                 x = RemoteMessage(); getattr(x, RemoteMessage.DESCRIPTOR.fields_by_number[t].name).SetInParent(); send(conn, x)
         elif msg.HasField("remote_key_inject"):
             k = msg.remote_key_inject.key_code
+            note("keys", k, 50)
             if k == 26:
                 st["on"] = not st["on"]
+                with lock:
+                    MS["power"] = "on" if st["on"] else "off"
                 if not st["on"] and not P["sessionKept"]:
                     # As the TCL TV: no off report, the volume message, then a reset, and nothing answers until woken
                     if P["volumeDuringChange"]: volume()
@@ -223,19 +281,27 @@ def handle_remote(conn):
                 if P["volumeReported"]: volume()
             elif k == 3:
                 app(P["homeApp"])
+                with lock:
+                    MS["playing"] = None
             elif k == 84:
                 app(P["searchApp"])
             elif k == 23 and P.get("textFieldCounter") is not None and st["app"] == P["searchApp"] and not st["field"]:
                 st["field"] = {"counter": P["textFieldCounter"], "value": ""}
+                with lock:
+                    MS["field"] = {"open": True, "value": ""}
                 a = RemoteMessage(); a.remote_ime_key_inject.app_info.app_package = st["app"]
                 field_status(a.remote_ime_key_inject.text_field_status); send(conn, a)
                 keyboard(True)
+            elif k in (127, 126, 86) and MS["playing"] is not None:
+                with lock:
+                    MS["playing"] = {127: "paused", 126: "playing", 86: "stopped"}[k]
             elif k == 4 and st["field"] and st["field"].get("keyboard"):
                 keyboard(False)
         elif msg.HasField("remote_ime_batch_edit"):
             text_edit(msg.remote_ime_batch_edit)
         elif msg.HasField("remote_app_link_launch_request"):
             link = msg.remote_app_link_launch_request.app_link
+            note("launches", link, 20)
             schemes = P["linkSchemes"]
             if schemes is not None and link.split(":", 1)[0].lower() not in schemes:
                 # remote_error: field 1 is a code on real boxes (7 on the EBOX), declared bool in the reference proto.
@@ -247,6 +313,8 @@ def handle_remote(conn):
                 continue
             app("com.google.android.youtube.tv" if "youtube" in link else "launched:" + link)
     st["alive"] = False
+    if SESSION.get("owner") is st:
+        SESSION.clear()
     log("remote: connection closed")
 
 def reset(conn):
@@ -322,6 +390,34 @@ if os.environ.get("MOCKTV_MDNS_NAME"):
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *a: os._exit(0) if MDNS is None else (MDNS[0].unregister_service(MDNS[1]), MDNS[0].close(), os._exit(0)))
 
+class StateHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        url = urllib.parse.urlparse(self.path)
+        q = urllib.parse.parse_qs(url.query)
+        if url.path == "/mock/state":
+            with lock:
+                body = json.dumps(dict(MS, asleep=ASLEEP.is_set())).encode()
+        elif url.path in ("/mock/field", "/mock/play"):
+            try:
+                if not SESSION:
+                    result = {"ok": False, "error": "no session"}
+                elif url.path == "/mock/field":
+                    SESSION["field"](q.get("open", ["1"])[0] not in ("0", "false")); result = {"ok": True}
+                else:
+                    SESSION["play"](q.get("app", ["com.google.android.youtube.tv"])[0]); result = {"ok": True}
+            except Exception as e:
+                result = {"ok": False, "error": f"{type(e).__name__} {e}"}
+            body = json.dumps(result).encode()
+        else:
+            self.send_error(404); return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body)))
+        self.end_headers(); self.wfile.write(body)
+    def log_message(self, *a):
+        pass
+
+http.server.ThreadingHTTPServer.daemon_threads = True
+threading.Thread(target=http.server.ThreadingHTTPServer(("0.0.0.0", HTTP_PORT), StateHandler).serve_forever, daemon=True).start()
 signal.signal(signal.SIGUSR1, wake)
 threading.Thread(target=serve, args=(PAIR_PORT, handle_pairing), daemon=True).start()
 log("mock TV listening on", PAIR_PORT, REMOTE_PORT)

@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<!--
+Copyright (c) 2026 PJ
+SPDX-License-Identifier: MIT
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Android TV Remote Tester</title>
+<style>
+:root { color-scheme: light dark; --bg:#f6f7f8; --fg:#1b1f23; --mut:#5f6b76; --card:#fff; --line:#d5dbe0; --acc:#0b6bcb; --accfg:#fff;
+  --ok:#1a7f37; --box:#9a6700; --drv:#cf222e; --warn:#fff8c5; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg:#14181c; --fg:#e4e8ec; --mut:#9aa6b2; --card:#1d2329; --line:#333c45; --acc:#4c9aff; --accfg:#0a0f14;
+    --ok:#3fb950; --box:#d29922; --drv:#f85149; --warn:#3b3200; }
+}
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+main { max-width:1040px; margin:0 auto; padding:12px; }
+h1 { font-size:1.2em; margin:0 0 4px; }
+section, .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin:10px 0; }
+.mut { color:var(--mut); font-size:.9em; }
+button { font:inherit; padding:8px 12px; border-radius:6px; border:1px solid var(--line); background:var(--card); color:var(--fg); cursor:pointer; min-height:40px; }
+button.primary { background:var(--acc); color:var(--accfg); border-color:var(--acc); }
+button:disabled { opacity:.45; cursor:default; }
+[hidden] { display:none !important; }
+.banner { background:var(--warn); border:1px solid var(--box); border-radius:6px; padding:8px 12px; margin:10px 0; }
+fieldset { border:0; padding:0; margin:6px 0; }
+legend { padding:0; font-weight:600; }
+fieldset label, .optrow { margin-right:14px; white-space:nowrap; }
+.optrow { display:block; margin:4px 0; white-space:normal; }
+#opt-standby-min { width:5em; font:inherit; padding:4px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg); }
+table { width:100%; border-collapse:collapse; }
+td { padding:6px 4px; border-top:1px solid var(--line); vertical-align:top; }
+td.ic { width:1.6em; text-align:center; font-weight:700; }
+td.num { width:2em; color:var(--mut); }
+td.det { color:var(--mut); overflow-wrap:anywhere; }
+tr.s-ok .ic { color:var(--ok); } tr.s-box .ic { color:var(--box); } tr.s-driver .ic { color:var(--drv); }
+tr.s-running td.nm { font-weight:600; }
+tr.s-waiting, tr.s-notrun, tr.s-skipped { color:var(--mut); }
+.bar { height:6px; background:var(--line); border-radius:3px; overflow:hidden; margin-top:4px; }
+.bar i { display:block; height:100%; width:0; background:var(--acc); }
+#prompt { background:var(--card); border:2px solid var(--acc); border-radius:8px; padding:8px 10px; margin:2px 0 6px; color:var(--fg); }
+td.det #prompt { float:right; clear:right; width:46%; margin:0 0 4px 12px; }
+@media (max-width:640px) { td.det #prompt { float:none; width:auto; margin:6px 0 2px; } }
+#prompt-text { font-weight:600; }
+#prompt-buttons { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 4px; }
+#report { width:100%; height:16em; font:12px/1.35 ui-monospace, Menlo, Consolas, monospace; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px; }
+.row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+#pad .grid { display:grid; gap:6px; max-width:420px; margin:6px 0; }
+#pad .power, #pad .conn { grid-template-columns:repeat(2, 1fr); }
+#pad .nav, #pad .vol { grid-template-columns:repeat(3, 1fr); }
+#pad .shortcuts { grid-template-columns:repeat(5, 1fr); }
+#pad .dpad { grid-template-columns:repeat(3, 1fr); max-width:300px; }
+#pad .chan { grid-template-columns:repeat(2, 1fr); }
+#pad .media { grid-template-columns:repeat(7, 1fr); }
+#pad button { padding:8px 4px; }
+#pad .field { margin:6px 0; max-width:420px; }
+#pad .field input { flex:1; min-width:0; font:inherit; padding:8px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg); }
+#hub-note { color:var(--drv); }
+#pad-log .head { display:flex; gap:8px; align-items:center; }
+#pad-log .head b { flex:1; }
+#pad-log button { min-height:30px; padding:2px 10px; }
+#pad-log-entries { max-height:18em; overflow:auto; margin-top:6px; }
+.pad-entry { border-top:1px solid var(--line); padding:3px 0; }
+.pad-entry .pt { color:var(--mut); margin-right:6px; }
+.pad-entry pre { margin:2px 0 0; font:11px/1.3 ui-monospace, Menlo, Consolas, monospace; white-space:pre-wrap; overflow-wrap:anywhere; color:var(--mut); }
+.pad-entry .pad-more { min-height:0; padding:0 6px; font-size:.85em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Android TV Remote Tester</h1>
+  <div class="mut"><span id="version"></span> <span id="device"></span></div>
+  <div id="version-banner" class="banner" hidden></div>
+  <div id="hub-note" class="mut" hidden>Hub not answering.</div>
+
+  <div id="prompt-park">
+    <div id="prompt" hidden>
+      <div id="prompt-text"></div>
+      <div id="prompt-buttons"></div>
+      <div class="mut">Time left <span id="prompt-countdown"></span></div>
+    </div>
+  </div>
+
+  <section id="setup">
+    <div id="unpaired-note" class="banner" hidden>This device isn't paired. Run is the pairing test alone: it opens a pairing dialog on the TV and answers it with a wrong code.</div>
+    <fieldset id="setup-kind"><legend>What is it?</legend>
+      <label><input type="radio" name="kind" value="tv"> TV with Android TV built in</label>
+      <label><input type="radio" name="kind" value="box"> Box plugged into a TV</label>
+      <label><input type="radio" name="kind" value="unknown" checked> Don't know</label>
+    </fieldset>
+    <label id="attended-row"><input type="checkbox" id="attended" checked> I'm at the TV</label>
+    <div class="mut">Off: no questions are asked and every test runs without them.</div>
+    <div id="optional">
+      <div class="optrow"><label><input type="checkbox" id="opt-standby"> Long standby, </label>
+        <input type="number" id="opt-standby-min" min="1" max="240" step="1" value="2" aria-label="Standby minutes"> minutes</div>
+      <div class="optrow"><label><input type="checkbox" id="opt-cut"> Power cut (needs a plug on the device)</label></div>
+      <div class="optrow"><label><input type="checkbox" id="opt-wrongcode"> Wrong pairing code</label></div>
+    </div>
+  </section>
+
+  <div class="row">
+    <button id="run" class="primary" type="button">Run tests</button>
+    <button id="abort" type="button" hidden>Abort</button>
+    <span id="summary"></span>
+  </div>
+
+  <section id="current-box" hidden>
+    <div id="current-label"></div>
+    <div class="mut">Time left <span id="current-countdown"></span></div>
+    <div class="bar"><i id="current-bar"></i></div>
+  </section>
+  <div id="timeout-note" class="banner" hidden></div>
+
+  <section><table><tbody id="rows"></tbody></table>
+    <div id="legend" class="mut">&#9888; box differs: your TV does something the driver doesn't assume, often harmless. &#10007; driver differs: the driver didn't act on what the TV sent.</div></section>
+
+  <section id="report-box" hidden>
+    <div class="row"><button id="copy" type="button">Copy</button>
+      <button id="download-profile" type="button" hidden>Download mock profile</button>
+      <span id="copy-note" class="mut"></span></div>
+    <textarea id="report" readonly></textarea>
+  </section>
+
+  <section id="pad">
+    <div class="mut">Remote</div>
+    <div class="grid power">
+      <button type="button" data-key="on">On</button>
+      <button type="button" data-key="off">Off</button>
+    </div>
+    <div class="grid shortcuts">
+      <button type="button" data-key="sendKey" data-arg="SEARCH">Search</button>
+      <button type="button" data-key="sendKey" data-arg="ASSIST">Assistant</button>
+      <button type="button" data-key="sendKey" data-arg="SETTINGS">Settings</button>
+      <button type="button" data-key="sendKey" data-arg="TV_INPUT">Input</button>
+      <button type="button" data-key="sendKey" data-arg="GUIDE">Guide</button>
+    </div>
+    <div class="grid dpad">
+      <span></span>
+      <button type="button" data-key="sendKey" data-arg="DPAD_UP">Up</button>
+      <span></span>
+      <button type="button" data-key="sendKey" data-arg="DPAD_LEFT">Left</button>
+      <button type="button" data-key="sendKey" data-arg="DPAD_CENTER">OK</button>
+      <button type="button" data-key="sendKey" data-arg="DPAD_RIGHT">Right</button>
+      <span></span>
+      <button type="button" data-key="sendKey" data-arg="DPAD_DOWN">Down</button>
+      <span></span>
+    </div>
+    <div class="grid nav">
+      <button type="button" data-key="sendKey" data-arg="BACK">Back</button>
+      <button type="button" data-key="sendKey" data-arg="HOME">Home</button>
+      <button type="button" data-key="sendKey" data-arg="MENU">Menu</button>
+    </div>
+    <div class="grid vol">
+      <button type="button" data-key="volumeUp">Vol+</button>
+      <button type="button" data-key="volumeDown">Vol&minus;</button>
+      <button type="button" data-key="sendKey" data-arg="VOLUME_MUTE">Mute</button>
+    </div>
+    <div class="grid chan">
+      <button type="button" data-key="sendKey" data-arg="CHANNEL_UP">CH+</button>
+      <button type="button" data-key="sendKey" data-arg="CHANNEL_DOWN">CH&minus;</button>
+    </div>
+    <div class="grid media">
+      <button type="button" data-key="sendKey" data-arg="MEDIA_PREVIOUS">Previous</button>
+      <button type="button" data-key="sendKey" data-arg="MEDIA_REWIND">Rewind</button>
+      <button type="button" data-key="play">Play</button>
+      <button type="button" data-key="pause">Pause</button>
+      <button type="button" data-key="stop">Stop</button>
+      <button type="button" data-key="sendKey" data-arg="MEDIA_FAST_FORWARD">Fast forward</button>
+      <button type="button" data-key="sendKey" data-arg="MEDIA_NEXT">Next</button>
+    </div>
+    <div class="grid conn">
+      <button type="button" data-key="connect">Connect</button>
+      <button type="button" data-key="disconnect">Disconnect</button>
+    </div>
+    <div class="row field">
+      <input type="text" id="pad-key" maxlength="40" placeholder="Key name, e.g. MEDIA_PLAY_PAUSE" aria-label="Key name" autocomplete="off" spellcheck="false">
+      <button type="button" data-key="sendKey">Send key</button>
+    </div>
+    <div class="row field">
+      <input type="text" id="pad-text" maxlength="200" placeholder="Text to type" aria-label="Text" autocomplete="off">
+      <button type="button" data-key="sendText">Send text</button>
+    </div>
+    <div class="row field">
+      <input type="text" id="pad-link" maxlength="300" placeholder="Link, e.g. https://www.youtube.com" aria-label="Link" autocomplete="off" spellcheck="false">
+      <button type="button" data-key="launchApp">Open link</button>
+    </div>
+    <div id="pad-note" class="mut"></div>
+  </section>
+
+  <section id="pad-log">
+    <div class="head"><b>Pad log</b>
+      <button type="button" id="pad-log-copy">Copy</button>
+      <button type="button" id="pad-log-clear">Clear</button>
+      <span id="pad-log-note" class="mut"></span></div>
+    <div id="pad-log-entries"></div>
+  </section>
+</main>
+
+<script id="logic">
+// Pure logic, no DOM: this block is also evaluated by test-tester-ui.js.
+const CODE_VERSION = '0.7.0';
+(function (w) {
+  var TEST_LIST = [[1, 'Session start'], [2, 'Pings'], [3, 'Power off/on'], [4, 'Volume'], [5, 'Launch by URL'],
+                   [6, 'Launch by package'], [7, 'Recovery after a box error'], [8, 'HOME'], [9, 'Discovery'],
+                   [10, 'Text input'], [11, 'Media keys'], [12, 'Long standby'], [13, 'Power cut'],
+                   [14, 'Wrong pairing code'], [15, 'Pairing']];
+  var OPTIONAL = { 12: 'standby', 13: 'cut', 14: 'wrongcode' };
+  var TIMEOUT_NOTE_MS = 4000, FAILS_BEFORE_NOTE = 3, PAD_LINES_SHOWN = 6;
+  var STANDBY_MIN = 1, STANDBY_MAX = 240, STANDBY_DEFAULT = 2;
+  var ICONS = { ok: '✓', box: '⚠', driver: '✗', skipped: '–', running: '…', waiting: '·', 'not run': '·' };
+  var KINDS = { tv: 1, box: 1, unknown: 1 };
+  var PAD_COMMANDS = ['on', 'off', 'volumeUp', 'volumeDown', 'play', 'pause', 'stop', 'connect', 'disconnect', 'sendKey', 'sendText', 'launchApp'];
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  // m:ss, rounded up so the last second shows 0:01 and 0:00 means out of time.
+  function formatCountdown(ms) {
+    if (typeof ms !== 'number' || !isFinite(ms) || ms <= 0) return '0:00';
+    var s = Math.ceil(ms / 1000), m = Math.floor(s / 60), r = s % 60;
+    return m + ':' + (r < 10 ? '0' : '') + r;
+  }
+
+  // Hub clock minus page clock, taken when a status arrives; hub deadlines are in hub time.
+  function clockOffset(hubNowMs, localNowMs) { return hubNowMs - localNowMs; }
+  // Each reply's offset carries its network delay, so a slower reply makes the countdown jump back up.
+  // Keep the largest offset seen (the least delayed reply); take a new one only on a jump over 5 s.
+  function nextOffset(prev, sample) {
+    if (typeof prev !== 'number' || Math.abs(sample - prev) > 5000) return sample;
+    return Math.max(prev, sample);
+  }
+  function remainingMs(deadlineMs, offset, localNowMs) { return deadlineMs - (localNowMs + offset); }
+
+  function countdownView(startedMs, deadlineMs, offset, localNowMs) {
+    if (typeof deadlineMs !== 'number') return { text: '', fraction: 0, remaining: 0 };
+    var rem = Math.max(0, remainingMs(deadlineMs, offset, localNowMs));
+    var total = typeof startedMs === 'number' ? deadlineMs - startedMs : 0;
+    var fraction = total > 0 ? Math.min(1, Math.max(0, 1 - rem / total)) : 0;
+    return { text: formatCountdown(rem), fraction: fraction, remaining: rem };
+  }
+
+  function rowView(row, current) {
+    var st = ICONS.hasOwnProperty(row.state) ? row.state : 'not run';
+    var isCur = !!(current && current.test === row.test && st === 'running');
+    return {
+      test: row.test, name: row.name || ('Test ' + row.test), state: st, icon: ICONS[st],
+      cls: 's-' + st.replace(' ', ''),
+      detail: isCur && current.label ? current.label : (row.detail || ''),
+      current: isCur
+    };
+  }
+
+  function rowHtml(v) {
+    return '<tr data-test="' + v.test + '" data-state="' + escapeHtml(v.state) + '" class="' + v.cls + '">' +
+      '<td class="ic">' + v.icon + '</td><td class="num">' + v.test + '</td>' +
+      '<td class="nm">' + escapeHtml(v.name) + '</td><td class="det">' + escapeHtml(v.detail) + '</td></tr>';
+  }
+
+  // Standby minutes from the field: a whole number 1..240, else the default.
+  function standbyMinutes(v, dflt) {
+    var d = typeof dflt === 'number' && dflt >= STANDBY_MIN && dflt <= STANDBY_MAX ? Math.floor(dflt) : STANDBY_DEFAULT;
+    var n = parseInt(v, 10);
+    if (!isFinite(n)) return d;
+    return Math.min(STANDBY_MAX, Math.max(STANDBY_MIN, n));
+  }
+
+  function isPaired(device) { return !!(device && device.pairing === 'paired'); }
+
+  // What the setup box shows. Unpaired: Run is the pairing test alone and the optional tests are hidden.
+  function setupView(status) {
+    var dev = status && status.device, opts = (status && status.options) || {};
+    var paired = isPaired(dev);
+    return {
+      paired: paired, unpairedNote: !!dev && !paired, showOptional: paired,
+      cutAvailable: !!(dev && dev.plug === true),
+      standbyDefault: standbyMinutes(opts.standbyMinutes, STANDBY_DEFAULT)
+    };
+  }
+
+  // Static list shown before any run: the tests a Run will do (the pairing test alone when unpaired).
+  // choices: {paired, standby, cut, wrongcode}
+  function idleRows(choices) {
+    var c = choices || { paired: true };
+    return TEST_LIST.filter(function (t) {
+      if (c.paired === false) return t[0] === 15;
+      if (t[0] === 15) return false;
+      return OPTIONAL[t[0]] ? !!c[OPTIONAL[t[0]]] : true;
+    }).map(function (t) { return { test: t[0], name: t[1], state: 'not run', detail: '' }; });
+  }
+
+  // before: nothing run yet; running; after: finished, aborted, stalled or interrupted.
+  function runMode(run) {
+    if (!run || !run.status) return 'before';
+    return run.status === 'running' ? 'running' : 'after';
+  }
+
+  function promptView(prompt, offset, localNowMs, clicked) {
+    if (!prompt) return null;
+    var cd = countdownView(prompt.askedAtMs, prompt.deadlineMs, offset, localNowMs);
+    var expired = typeof prompt.deadlineMs === 'number' && cd.remaining <= 0;
+    return {
+      id: prompt.id, test: prompt.test, kind: prompt.kind || '', text: prompt.text || '', countdown: cd.text, fraction: cd.fraction, expired: expired,
+      choices: (prompt.choices || []).map(function (c) {
+        return { id: c.id, label: c.label, disabled: !!clicked || expired };
+      })
+    };
+  }
+
+  function promptButtonsHtml(pv) {
+    return pv.choices.map(function (c) {
+      return '<button type="button" data-choice="' + escapeHtml(c.id) + '"' + (c.disabled ? ' disabled' : '') + '>' + escapeHtml(c.label) + '</button>';
+    }).join('');
+  }
+
+  // Shown for 4 s after the hub records a timeout; measured on hub time so a reload does not replay old ones.
+  function timeoutNote(lastTimeout, offset, localNowMs) {
+    if (!lastTimeout || typeof lastTimeout.atMs !== 'number') return null;
+    var age = localNowMs + offset - lastTimeout.atMs;
+    if (age < 0 || age >= TIMEOUT_NOTE_MS) return null;
+    return (lastTimeout.test != null ? 'Test ' + lastTimeout.test + ': ' : '') + 'no answer, moving on';
+  }
+
+  function padEnabled(run) { return !(run && run.status === 'running'); }
+
+  // A pad press as a /key query. `arg` is a button's fixed key name; `fields` holds the three inputs.
+  // Returns {params} or {error}.
+  function padRequest(command, arg, fields) {
+    var f = fields || {};
+    if (PAD_COMMANDS.indexOf(command) < 0) return { error: 'Unknown button' };
+    if (command === 'sendKey') {
+      var key = arg != null && arg !== '' ? String(arg) : String(f.key == null ? '' : f.key).trim();
+      if (!key) return { error: 'Type a key name' };
+      if (!/^[A-Za-z0-9_]{1,40}$/.test(key)) return { error: 'A key name is letters, digits and _ (up to 40)' };
+      return { params: { name: 'sendKey', key: key } };
+    }
+    if (command === 'sendText') {
+      var text = String(f.text == null ? '' : f.text);
+      if (!text) return { error: 'Type some text' };
+      if (text.length > 200) return { error: 'Text is limited to 200 characters' };
+      return { params: { name: 'sendText', text: text } };
+    }
+    if (command === 'launchApp') {
+      var link = String(f.link == null ? '' : f.link).trim();
+      if (!link) return { error: 'Type a link' };
+      if (link.length > 300) return { error: 'A link is limited to 300 characters' };
+      if (!/^[A-Za-z][A-Za-z0-9+.\-]*:/.test(link)) return { error: 'A link starts with a scheme, e.g. https:' };
+      return { params: { name: 'launchApp', link: link } };
+    }
+    return { params: { name: command } };
+  }
+
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+  // Hub time shown on the page's clock: the hub clock minus the offset is the page clock.
+  function clockText(atMs, offset) {
+    var d = new Date(atMs - (typeof offset === 'number' ? offset : 0));
+    return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+  }
+
+  // The pad log, newest last. An entry shows its first 6 lines; the rest sit behind "more" until opened (open: {atMs: true}).
+  function padLogView(entries, offset, open) {
+    return (Array.isArray(entries) ? entries : []).map(function (e) {
+      var lines = Array.isArray(e.lines) ? e.lines : [];
+      var expanded = !!(open && open[e.atMs]);
+      var hidden = expanded ? 0 : Math.max(0, lines.length - PAD_LINES_SHOWN);
+      return {
+        atMs: e.atMs, time: clockText(e.atMs, offset), button: e.button || '', key: e.key || '',
+        lines: expanded ? lines : lines.slice(0, PAD_LINES_SHOWN), hidden: hidden, expanded: expanded,
+        canCollapse: expanded && lines.length > PAD_LINES_SHOWN
+      };
+    });
+  }
+
+  function padLogHtml(views) {
+    if (!views.length) return '<div class="mut">No keys pressed yet.</div>';
+    return views.map(function (v) {
+      var more = v.hidden ? ' <button type="button" class="pad-more" data-at="' + v.atMs + '">+' + v.hidden + ' more</button>'
+        : (v.canCollapse ? ' <button type="button" class="pad-more" data-at="' + v.atMs + '">less</button>' : '');
+      return '<div class="pad-entry" data-at="' + v.atMs + '"><span class="pt">' + escapeHtml(v.time) + '</span><b>' + escapeHtml(v.button) + '</b>' +
+        (v.key ? ' ' + escapeHtml(v.key) : '') + more +
+        (v.lines.length ? '<pre>' + v.lines.map(escapeHtml).join('\n') + '</pre>' : '') + '</div>';
+    }).join('');
+  }
+
+  // Everything, for Copy: not only what is expanded.
+  function padLogText(entries, offset) {
+    return (Array.isArray(entries) ? entries : []).map(function (e) {
+      return [clockText(e.atMs, offset) + ' ' + (e.button || '') + (e.key ? ' ' + e.key : '')]
+        .concat((e.lines || []).map(function (l) { return '   ' + l; })).join('\n');
+    }).join('\n');
+  }
+
+  function versionBanner(pageVersion, appVersion) {
+    if (!appVersion || appVersion === pageVersion) return null;
+    return 'This page is ' + pageVersion + ' and the app is ' + appVersion + '. Reload the page.';
+  }
+
+  function deviceLine(device) {
+    if (!device) return '';
+    if (!device.selected) return 'No device selected';
+    return [device.name, device.switch ? 'switch ' + device.switch : '', device.networkStatus ? device.networkStatus : '',
+            device.pairing ? device.pairing : ''].filter(Boolean).join(' · ');
+  }
+
+  function summaryLine(run) {
+    if (!run || !run.status) return '';
+    var n = { ok: 0, box: 0, driver: 0, skipped: 0 };
+    (run.rows || []).forEach(function (r) { if (n.hasOwnProperty(r.state)) n[r.state]++; });
+    var head = { running: 'Running', done: 'Done', aborted: 'Aborted', stalled: 'Stalled', interrupted: 'Interrupted' }[run.status] || run.status;
+    var s = head + (run.reason ? ' (' + run.reason + ')' : '');
+    if (run.status !== 'running') s += ': ' + n.ok + ' ok, ' + n.box + ' box, ' + n.driver + ' driver, ' + n.skipped + ' skipped';
+    return s;
+  }
+
+  // Which buttons can be used. Run needs a selected device and no run going.
+  function controls(status) {
+    var run = status && status.run, mode = runMode(run);
+    var sel = !!(status && status.device && status.device.selected);
+    return { run: sel && mode !== 'running', abort: mode === 'running', setup: mode !== 'running', pad: padEnabled(run) };
+  }
+
+  function encodeQuery(params) {
+    return Object.keys(params).filter(function (k) { return params[k] != null && params[k] !== ''; })
+      .map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); }).join('&');
+  }
+
+  function accessToken(search) {
+    var m = /[?&]access_token=([^&#]*)/.exec(search || '');
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+
+  // Endpoints sit beside ui.html under the same app path.
+  function endpointUrl(loc, name, params) {
+    var p = {};
+    Object.keys(params || {}).forEach(function (k) { p[k] = params[k]; });
+    p.access_token = accessToken(loc.search);
+    return loc.pathname.replace(/[^\/]*$/, name) + '?' + encodeQuery(p);
+  }
+
+  // setup: {attended, deviceKind, standby (bool), standbyMin, cut, wrongcode, paired (false: pairing test alone), cutAvailable}.
+  function runParams(setup, paired, cutAvailable) {
+    var s = setup || {};
+    var p = {
+      attended: s.attended === false || s.attended === 'false' || s.attended === 'no' ? 'false' : 'true',
+      deviceKind: KINDS[s.deviceKind] ? s.deviceKind : 'unknown'
+    };
+    if (paired === false) return p;
+    if (s.standby) p.standby = standbyMinutes(s.standbyMin, STANDBY_DEFAULT);
+    if (s.cut && cutAvailable !== false) p.cut = 'true';
+    if (s.wrongcode) p.wrongcode = 'true';
+    return p;
+  }
+
+  function reportView(resp) {
+    var text = resp && typeof resp.report === 'string' ? resp.report : '';
+    var profile = resp && resp.profile && typeof resp.profile === 'object' ? resp.profile : null;
+    return { text: text, hasProfile: !!profile, profileJson: profile ? JSON.stringify(profile, null, 2) + '\n' : null };
+  }
+
+  // One report per run: a new startedAtMs means a new run.
+  function runKey(run) { return run && run.status && run.status !== 'running' ? String(run.startedAtMs) : null; }
+
+  function pollState(prev, ok) {
+    var fails = ok ? 0 : (prev ? prev.fails : 0) + 1;
+    return { fails: fails, noteVisible: fails >= FAILS_BEFORE_NOTE };
+  }
+
+  w.TesterUI = {
+    CODE_VERSION: CODE_VERSION, TEST_LIST: TEST_LIST, TIMEOUT_NOTE_MS: TIMEOUT_NOTE_MS, FAILS_BEFORE_NOTE: FAILS_BEFORE_NOTE,
+    escapeHtml: escapeHtml, formatCountdown: formatCountdown, clockOffset: clockOffset, remainingMs: remainingMs,
+    countdownView: countdownView, rowView: rowView, rowHtml: rowHtml, idleRows: idleRows, runMode: runMode,
+    nextOffset: nextOffset, promptView: promptView, promptButtonsHtml: promptButtonsHtml, timeoutNote: timeoutNote, padEnabled: padEnabled,
+    padRequest: padRequest, standbyMinutes: standbyMinutes, isPaired: isPaired, setupView: setupView,
+    versionBanner: versionBanner, deviceLine: deviceLine, summaryLine: summaryLine, controls: controls,
+    encodeQuery: encodeQuery, accessToken: accessToken, endpointUrl: endpointUrl, runParams: runParams,
+    reportView: reportView, runKey: runKey, pollState: pollState,
+    PAD_LINES_SHOWN: PAD_LINES_SHOWN, clockText: clockText, padLogView: padLogView, padLogHtml: padLogHtml, padLogText: padLogText
+  };
+})(window);
+</script>
+
+<script id="wiring">
+// DOM wiring only; decisions live in window.TesterUI.
+(function () {
+  var U = window.TesterUI;
+  var $ = function (id) { return document.getElementById(id); };
+  var status = null, offset = null, pollInFlight = false, poll = null;
+  var promptClicked = false, reportKey = null, lastHtml = {}, setupApplied = false;
+  var profileJson = null, padOpen = {}, padCount = 0;
+
+  function setHtml(el, html) { if (lastHtml[el.id] !== html) { lastHtml[el.id] = html; el.innerHTML = html; } }
+  function setText(el, t) { if (el.textContent !== t) el.textContent = t; }
+
+  // A request the hub holds (a busy app answers late) must not freeze polling: give up after 8 s.
+  function getJson(name, params) {
+    var ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    var timer = ctl ? setTimeout(function () { ctl.abort(); }, 8000) : null;
+    return fetch(U.endpointUrl(location, name, params), ctl ? { cache: 'no-store', signal: ctl.signal } : { cache: 'no-store' }).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function (j) { if (timer) clearTimeout(timer); return j; },
+            function (e) { if (timer) clearTimeout(timer); throw e; });
+  }
+
+  function checkedKind() {
+    var el = document.querySelector('input[name="kind"]:checked');
+    return el ? el.value : 'unknown';
+  }
+  function setupValues() {
+    return { attended: $('attended').checked, deviceKind: checkedKind(), standby: $('opt-standby').checked,
+             standbyMin: $('opt-standby-min').value, cut: $('opt-cut').checked && !$('opt-cut').disabled, wrongcode: $('opt-wrongcode').checked };
+  }
+
+  // The open question sits in the row of the test that asked it; with no such row it stays in the park above the setup box.
+  // The rows are rebuilt as HTML, so the prompt is parked first and put back after.
+  function parkPrompt() {
+    var pr = $('prompt'), park = $('prompt-park');
+    if (pr.parentNode !== park) park.appendChild(pr);
+  }
+  function placePrompt(p) {
+    var pr = $('prompt');
+    if (!p) { parkPrompt(); return; }
+    var cell = document.querySelector('#rows tr[data-test="' + p.test + '"] td.det');
+    if (cell) { if (pr.parentNode !== cell) cell.insertBefore(pr, cell.firstChild); }
+    else parkPrompt();
+  }
+
+  function renderRows() {
+    parkPrompt();
+    var run = status && status.run, mode = U.runMode(run), html;
+    if (mode === 'before' || !run.rows) {
+      var sv = U.setupView(status), s = setupValues();
+      html = U.idleRows({ paired: status ? sv.paired : true, standby: s.standby, cut: s.cut, wrongcode: s.wrongcode })
+        .map(function (r) { return U.rowHtml(U.rowView(r, null)); }).join('');
+    } else {
+      html = run.rows.map(function (r) { return U.rowHtml(U.rowView(r, run.current)); }).join('');
+    }
+    setHtml($('rows'), html);
+  }
+
+  // Everything that depends on the clock; runs every 250 ms and after each status.
+  function tick() {
+    var now = Date.now();
+    var run = status && status.run;
+    var cur = run && run.status === 'running' ? run.current : null;
+    $('current-box').hidden = !cur;
+    if (cur) {
+      setText($('current-label'), 'Test ' + cur.test + ' ' + cur.name + ': ' + (cur.label || cur.step || ''));
+      var cv = U.countdownView(cur.startedAtMs, cur.deadlineMs, offset, now);
+      setText($('current-countdown'), cv.text);
+      $('current-bar').style.width = Math.round(cv.fraction * 100) + '%';
+    }
+    var pv = U.promptView(status && status.prompt, offset, now, promptClicked);
+    if (pv) {
+      setText($('prompt-countdown'), pv.countdown);
+      setHtml($('prompt-buttons'), U.promptButtonsHtml(pv));
+    }
+    var note = U.timeoutNote(status && status.lastTimeout, offset, now);
+    $('timeout-note').hidden = !note;
+    if (note) setText($('timeout-note'), note);
+  }
+
+  // Newest entry last; the list scrolls to it when a press is added.
+  function renderPadLog() {
+    var log = status && status.padLog ? status.padLog : [];
+    var box = $('pad-log-entries');
+    setHtml(box, U.padLogHtml(U.padLogView(log, offset, padOpen)));
+    if (log.length !== padCount) { padCount = log.length; box.scrollTop = box.scrollHeight; }
+  }
+
+  function render() {
+    var run = status.run, c = U.controls(status), sv = U.setupView(status);
+    setText($('version'), 'App ' + (status.appVersion || '?'));
+    setText($('device'), U.deviceLine(status.device));
+    var b = U.versionBanner(U.CODE_VERSION, status.appVersion);
+    $('version-banner').hidden = !b;
+    if (b) setText($('version-banner'), b);
+
+    if (!setupApplied && status.setup) {
+      var kind = status.setup.deviceKind, el = document.querySelector('input[name="kind"][value="' + kind + '"]');
+      if (el) el.checked = true;
+      $('attended').checked = status.setup.attended !== false;
+      var o = status.options || {};
+      $('opt-standby').checked = !!o.standby;
+      $('opt-standby-min').value = U.standbyMinutes(o.standbyMinutes, 2);
+      $('opt-cut').checked = !!o.powerCut;
+      $('opt-wrongcode').checked = !!o.wrongCode;
+      setupApplied = true;
+    }
+    $('unpaired-note').hidden = !sv.unpairedNote;
+    $('optional').hidden = !sv.showOptional;
+    Array.prototype.forEach.call(document.querySelectorAll('#setup input'), function (i) { i.disabled = !c.setup; });
+    $('opt-cut').disabled = !c.setup || !sv.cutAvailable;
+    $('opt-standby-min').disabled = !c.setup || !$('opt-standby').checked;
+    $('run').disabled = !c.run;
+    $('abort').hidden = !c.abort;
+    Array.prototype.forEach.call(document.querySelectorAll('#pad button[data-key]'), function (bt) { bt.disabled = !c.pad; });
+    Array.prototype.forEach.call(document.querySelectorAll('#pad input'), function (i) { i.disabled = !c.pad; });
+    setText($('summary'), U.summaryLine(run));
+    renderRows();
+    renderPadLog();
+
+    var p = status.prompt;
+    $('prompt').hidden = !p;
+    if (p) setText($('prompt-text'), p.text || '');
+    placePrompt(p);
+
+    var key = U.runKey(run);
+    if (!key) { reportKey = null; $('report-box').hidden = true; }
+    else if (status.reportReady && key !== reportKey) {
+      reportKey = key;
+      getJson('report').then(function (r) {
+        var v = U.reportView(r);
+        $('report').value = v.text;
+        profileJson = v.profileJson;
+        $('download-profile').hidden = !v.hasProfile;
+        $('report-box').hidden = false;
+      }).catch(function () { reportKey = null; });   // retry on the next status
+    }
+    tick();
+  }
+
+  function pollOnce() {
+    if (pollInFlight) return;
+    pollInFlight = true;
+    getJson('status').then(function (s) {
+      offset = U.nextOffset(offset, U.clockOffset(s.nowMs, Date.now()));
+      status = s;
+      promptClicked = false;   // buttons stay disabled only until the next status
+      poll = U.pollState(poll, true);
+      render();
+    }).catch(function () {
+      poll = U.pollState(poll, false);
+    }).then(function () {
+      pollInFlight = false;
+      $('hub-note').hidden = !(poll && poll.noteVisible);
+    });
+  }
+
+  // Puts text on the clipboard; `done` gets a short result text.
+  function copyText(text, done) {
+    var fallback = function () {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      document.body.removeChild(ta);
+      done(ok ? 'Copied' : 'Copy failed, select the text and copy it');
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { done('Copied'); }, fallback);
+    } else fallback();
+  }
+  function noteFor(id) {
+    return function (t) { setText($(id), t); setTimeout(function () { setText($(id), ''); }, 2000); };
+  }
+  function copyReport() { copyText($('report').value, noteFor('copy-note')); }
+
+  function downloadProfile() {
+    if (!profileJson) return;
+    var url = URL.createObjectURL(new Blob([profileJson], { type: 'application/json' }));
+    var a = document.createElement('a');
+    a.href = url; a.download = 'androidtv-mock-profile.json';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  $('run').addEventListener('click', function () {
+    $('run').disabled = true;
+    var sv = U.setupView(status);
+    var params = U.runParams(setupValues(), sv.paired, sv.cutAvailable);
+    getJson('run', params).then(function (r) {
+      if (!r.ok) setText($('summary'), 'Not started: ' + (r.error || 'unknown'));
+      pollOnce();
+    }).catch(function () { setText($('summary'), 'Not started: hub not answering'); });
+  });
+  $('abort').addEventListener('click', function () { getJson('abort').then(pollOnce, function () {}); });
+  $('setup').addEventListener('change', function () { if (status) { render(); } });
+  $('prompt-buttons').addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('button[data-choice]') : null;
+    if (!b || b.disabled || !status || !status.prompt) return;
+    promptClicked = true;
+    b.disabled = true;
+    Array.prototype.forEach.call($('prompt-buttons').querySelectorAll('button'), function (x) { x.disabled = true; });
+    lastHtml['prompt-buttons'] = null;
+    getJson('answer', { id: status.prompt.id, choice: b.getAttribute('data-choice') }).then(pollOnce, function () {});
+  });
+  function sendPad(command, arg) {
+    var req = U.padRequest(command, arg, { key: $('pad-key').value, text: $('pad-text').value, link: $('pad-link').value });
+    if (req.error) { setText($('pad-note'), req.error); return; }
+    getJson('key', req.params).then(function (r) {
+      setText($('pad-note'), r.ok ? '' : (r.error || 'Key failed'));
+      pollOnce();
+    }, function () { setText($('pad-note'), 'Hub not answering'); });
+  }
+  $('pad').addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('button[data-key]') : null;
+    if (!b || b.disabled) return;
+    sendPad(b.getAttribute('data-key'), b.getAttribute('data-arg'));
+  });
+  [['pad-key', 'sendKey'], ['pad-text', 'sendText'], ['pad-link', 'launchApp']].forEach(function (p) {
+    $(p[0]).addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !$(p[0]).disabled) sendPad(p[1], null);
+    });
+  });
+  $('copy').addEventListener('click', copyReport);
+  $('pad-log-copy').addEventListener('click', function () {
+    copyText(U.padLogText(status && status.padLog, offset), noteFor('pad-log-note'));
+  });
+  $('pad-log-clear').addEventListener('click', function () {
+    padOpen = {};
+    getJson('padlog/clear').then(function () { if (status) status.padLog = []; renderPadLog(); pollOnce(); }, function () {});
+  });
+  $('pad-log-entries').addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('button[data-at]') : null;
+    if (!b) return;
+    var at = b.getAttribute('data-at');
+    if (padOpen[at]) delete padOpen[at]; else padOpen[at] = true;
+    renderPadLog();
+  });
+  $('download-profile').addEventListener('click', downloadProfile);
+
+  renderRows();
+  renderPadLog();
+  pollOnce();
+  setInterval(pollOnce, 1000);
+  setInterval(function () { if (status) tick(); }, 250);
+})();
+</script>
+</body>
+</html>

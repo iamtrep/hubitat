@@ -7,13 +7,14 @@
 # Runs the Android TV Remote Tester through its endpoints and prints one line per test.
 # A test where the driver didn't act on what the box sent is [FAIL]; one where only the box differs
 # from what the driver assumes (a model quirk) is [WARN], as is a skipped test. Exit 1 only on [FAIL].
-# Needs Script access turned on in the app.
+# Asks no questions (attended defaults to false), so the page's prompts never open. The app turns OAuth on
+# itself; open its page once so it makes the access token.
 #
 # Usage:
 #   bash drivers/androidtv/tests/test-live-tv.sh [@hub] [<instance-id>]            # test 1 only, about 15 s
-#   RUN_SLOW_TESTS=1 bash drivers/androidtv/tests/test-live-tv.sh [@hub]           # tests 1-8 and 13-15, about 3 min
+#   RUN_SLOW_TESTS=1 bash drivers/androidtv/tests/test-live-tv.sh [@hub]           # tests 1-11, about 3 min
 #   RUN_SLOW_TESTS=1 ATV_OPTS="standby=5&cut=true&wrongcode=true" bash ...          # opt-in tests too
-#   ATV_TESTS=14 bash drivers/androidtv/tests/test-live-tv.sh [@hub]                # the listed tests only
+#   ATV_TESTS=10 bash drivers/androidtv/tests/test-live-tv.sh [@hub]                # the listed tests only
 # Upper bound: 20 min plus the standby minutes (a full run with every option takes about 7 min plus the standby).
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -62,7 +63,7 @@ try:
     if not inst: print("Android TV Remote Tester is not installed"); sys.exit(2)
     page = json.dumps(get(f"/installedapp/configure/json/{inst}"))
     m = re.search(r"access_token=([a-f0-9-]+)", page)
-    if not m: print("no access token: turn on Script access in the app"); sys.exit(2)
+    if not m: print("no access token: open the app once so it turns OAuth on and makes one"); sys.exit(2)
 except SystemExit:
     raise
 except Exception as e:
@@ -79,8 +80,8 @@ def api(path, timeout=30):
 
 tests = ["1"]
 if slow:
-    tests = ["1", "2", "3", "4", "5", "6", "7", "8", "13", "14", "15"]
-    tests += [n for flag, n in (("standby=", "9"), ("cut=true", "10"), ("wrongcode=true", "11")) if flag in opts]
+    tests = [str(n) for n in range(1, 12)]
+    tests += [n for flag, n in (("standby=", "12"), ("cut=true", "13"), ("wrongcode=true", "14")) if flag in opts]
 if only:
     tests = [t.strip() for t in only.split(",") if t.strip()]
 q = f"/run?tests={','.join(tests)}" + (f"&{opts}" if slow and opts else "")
@@ -91,7 +92,7 @@ try:
     deadline = time.time() + 20 * 60 + 60 * int((re.search(r"standby=(\d+)", opts or "") or [0, 0])[1] or 0)
     while time.time() < deadline:
         st = api("/status")
-        if st.get("status") != "running": break
+        if (st.get("run") or {}).get("status") != "running": break
         time.sleep(10)
     else:
         api("/abort")   # leave nothing running, so the next invocation can start

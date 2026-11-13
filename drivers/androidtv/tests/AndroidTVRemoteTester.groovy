@@ -12,6 +12,7 @@ definition(
     author: "pj",
     description: "Tests the Android TV Remote driver against your box and writes a report to paste in the forum",
     category: "Utility",
+    oauth: true,
     // Installed when first opened: an instance never saved with Done drops its runIn calls, and a run would hang.
     installOnOpen: true,
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/androidtv/tests/AndroidTVRemoteTester.groovy",
@@ -23,20 +24,36 @@ definition(
 
 import groovy.transform.Field
 import groovy.json.JsonOutput
+import java.nio.file.NoSuchFileException
 import java.security.MessageDigest
 import java.security.cert.CertificateFactory
 import java.text.SimpleDateFormat
 
-@Field static final String CODE_VERSION = "0.6.1"
+@Field static final String CODE_VERSION = "0.7.0"
 
 @Field static final String BUSY = "a run is in progress"
 
 @Field static final String DROP_RE = '^(remote connect returned|Socket \\(|No message from the TV|Connect failed)'
 
+// The driver logs a gap between pings when it is over 7 s or under 3 s. Boxes ping every 7 to 9 s while
+// off, and the driver's idle limit is 20 s, so only a gap over 12 s says anything about the box.
+@Field static final long PING_GAP_MS = 12000L
+
+@Field static final String YOUTUBE_APP = "com.google.android.youtube.tv"
+
+// The pad turns trace logging on for the driver; it goes back after this many seconds without a press.
+@Field static final int PAD_TRACE_S = 600
+@Field static final int PAD_LOG_MAX = 50
+
+// The page lives in File Manager; the GitHub copy is fetched when it is missing or for another version.
+@Field static final String UI_FILE = "androidtv-tester-ui.html"
+@Field static final String UI_URL = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/androidtv/tests/androidtv-tester-ui.html"
+
+// Numbers follow the run order.
 @Field static final Map TEST_NAMES = [
     0: "Connection", 1: "Session start", 2: "Pings", 3: "Power off/on", 4: "Volume", 5: "Launch by URL",
-    6: "Launch by package", 7: "Recovery after a box error", 8: "HOME", 9: "Long standby",
-    10: "Power cut", 11: "Wrong pairing code", 12: "Pairing", 13: "Discovery", 14: "Text input", 15: "Media keys"
+    6: "Launch by package", 7: "Recovery after a box error", 8: "HOME", 9: "Discovery", 10: "Text input",
+    11: "Media keys", 12: "Long standby", 13: "Power cut", 14: "Wrong pairing code", 15: "Pairing"
 ]
 
 // The device's attributes the run watches, to check what the driver made of the box's messages.
@@ -58,18 +75,19 @@ import java.text.SimpleDateFormat
     6: [accepted: [eq: false], appEventMatches: [eq: true, driver: true]],
     7: [reconnectMs: [max: 5000, driver: true], nextCommandOk: [eq: true, driver: true], onlineEvent: [eq: true, driver: true]],
     8: [appChanged: [eq: true], appEventMatches: [eq: true, driver: true]],
-    9: [drops: [eq: 0], pingGaps: [eq: 0], onWorked: [eq: true], onEvent: [eq: true, driver: true]],
-    10: [noticeMs: [max: 50000, driver: true], backMs: [max: 180000], stillPaired: [eq: true],
-         offlineEvent: [eq: true, driver: true], onlineEvent: [eq: true, driver: true]],
-    11: [hexCodeOffered: [ne: false], status: [eq: 402], oldPairingWorks: [eq: true], resumedOnOwn: [eq: true, driver: true], pairingAfter: [eq: "paired", driver: true]],
-    12: [certRead: [eq: true], pairingReply: [eq: true], hexCodeOffered: [ne: false], codeShown: [eq: true], wrongCodeStatus: [eq: 402],
-         pairingAfter: [eq: "unpaired", driver: true]],
     // The driver finds the box by its mDNS announcement; a box that stops announcing while off delays the driver's IP repair until it wakes.
-    13: [announced: [eq: true], deviceTvFound: [ne: false], announcedOff: [eq: true]],
+    9: [announced: [eq: true], deviceTvFound: [ne: false], announcedOff: [eq: true]],
     // The driver echoes the counters of the box's last message 21, so it assumes the box sends one for a focused field.
-    14: [textSent: [eq: true, driver: true], accepted: [eq: true], editReported: [eq: true]],
-    // The protocol has no playback-state message, so the driver expects nothing back from a media key.
-    15: [keysSent: [eq: "126,127,86", driver: true], accepted: [eq: true], sessionKept: [eq: true], replies: [none: true]]
+    10: [textSent: [eq: true, driver: true], accepted: [eq: true], editReported: [eq: true]],
+    // The protocol has no playback-state message, so the driver expects nothing back from a media key. The keys come in
+    // another order when the person has a video playing (pause first), so they are compared as a set.
+    11: [keysSent: [sameKeys: "86,126,127", driver: true], accepted: [eq: true], sessionKept: [eq: true], replies: [none: true]],
+    12: [drops: [eq: 0], pingGaps: [eq: 0], onWorked: [eq: true], onEvent: [eq: true, driver: true]],
+    13: [noticeMs: [max: 50000, driver: true], backMs: [max: 180000], stillPaired: [eq: true],
+         offlineEvent: [eq: true, driver: true], onlineEvent: [eq: true, driver: true]],
+    14: [hexCodeOffered: [ne: false], status: [eq: 402], oldPairingWorks: [eq: true], resumedOnOwn: [eq: true, driver: true], pairingAfter: [eq: "paired", driver: true]],
+    15: [certRead: [eq: true], pairingReply: [eq: true], hexCodeOffered: [ne: false], codeShown: [eq: true], wrongCodeStatus: [eq: 402],
+         pairingAfter: [eq: "unpaired", driver: true]]
 ]
 
 // Applies to every test: the box sent a message type the driver doesn't act on.
@@ -81,20 +99,24 @@ preferences {
 }
 
 mappings {
-    path("/run")    { action: [GET: "apiRun"] }
-    path("/status") { action: [GET: "apiStatus"] }
-    path("/report") { action: [GET: "apiReport"] }
-    path("/abort")  { action: [GET: "apiAbort"] }
+    path("/ui.html") { action: [GET: "apiUi"] }
+    path("/run")     { action: [GET: "apiRun"] }
+    path("/status")  { action: [GET: "apiStatus"] }
+    path("/report")  { action: [GET: "apiReport"] }
+    path("/abort")   { action: [GET: "apiAbort"] }
+    path("/answer")  { action: [GET: "apiAnswer"] }
+    path("/key")     { action: [GET: "apiKey"] }
+    path("/padlog/clear") { action: [GET: "apiPadLogClear"] }
 }
 
 Map mainPage() {
-    if (scriptAccess) checkOAuth() else dropAccessToken()
+    checkOAuth()
     checkStall()
     Map run = state.run as Map
     boolean running = run?.status == "running"
-    // The page reloads itself while a run is in progress, so the table follows it.
+    // The page reloads itself while a run is in progress, so the summary follows it.
     dynamicPage(name: "mainPage", title: "Android TV Remote Tester", install: true, uninstall: true,
-                refreshInterval: run?.status == "running" ? 5 : 0) {
+                refreshInterval: running ? 5 : 0) {
         // Locked while a run is in progress: the run and its cleanup act on the devices it started with.
         section("Devices") {
             if (running) {
@@ -105,37 +127,26 @@ Map mainPage() {
                 input "plug", "capability.switch", title: "Smart plug feeding the box (optional, for the power-cut test)", required: false
             }
         }
-        if (!running) section("Optional tests") {
-            input "optStandby", "bool", title: "Long standby", defaultValue: false, submitOnChange: true
-            if (optStandby) input "standbyMinutes", "number", title: "Standby minutes", defaultValue: 2, range: "1..240"
-            input "optPowerCut", "bool", title: "Power cut: turns the plug off for 30 seconds, then waits for the box to come back", defaultValue: false
-            input "optWrongCode", "bool", title: "Wrong pairing code: shows a pairing dialog on the TV", defaultValue: false
-        }
         section("Run") {
-            paragraph "Tests 3 to 10 and 13 to 15 change what is on the TV. Tests 1 to 8 and 13 to 15 take about 3 minutes; the power cut adds about 3, the wrong code about 1, and the standby its minutes. " +
-                      "Watch the TV during test 14: it opens the search screen and types \"hubitat\". Test 15 sends play, pause and stop: " +
-                      "they act on whatever app plays media, which may resume the last thing played."
+            paragraph "The tests change what is on the TV: they turn the box off and on, launch YouTube, press HOME and open its search screen with the text \"hubitat\", " +
+                      "and send play, pause and stop, which act on whatever app plays media. A run takes about 3 minutes; the power cut adds about 3, " +
+                      "the wrong code about 1, and the standby its minutes. The tester page asks you a few questions about what the TV shows."
             if (tv && tv.currentValue("pairing") != "paired") {
                 paragraph "The device isn't paired, so Run only checks how far pairing gets: it opens a pairing dialog on the TV and answers it with a wrong code. Takes about 1 minute."
             }
-            if (state.startError) paragraph rawHtml: true, message("error", "Cannot start: ${escapeHtml(state.startError as String)}")
-            input "btnRun", "button", title: "Run", disabled: running, width: 2,
-                  inputClass: "p-button bg-hubitat-primary-green text-white"
-            if (running) input "btnAbort", "button", title: "Abort", width: 2, inputClass: "p-button p-button-outlined"
-            if (run?.tests) {
-                paragraph rawHtml: true, summaryHtml(run)
-                paragraph rawHtml: true, statusHtml(run)
+            if (state.accessToken) {
+                href name: "openTester", title: "Open tester", style: "external", required: false,
+                     url: "${getFullLocalApiServerUrl()}/ui.html?access_token=${state.accessToken}",
+                     description: "Opens the tester page, where you start the run and answer its questions"
+            } else {
+                paragraph rawHtml: true, message("warn", "OAuth is being turned on for this app. Reopen this page in a few seconds.")
             }
+            if (run?.tests) paragraph rawHtml: true, summaryHtml(run)
         }
         if (state.report) {
-            section("Report: copy it into your forum post") {
+            section("Last report") {
                 paragraph "<textarea readonly rows='30' style='width:100%;font-family:monospace'>${escapeHtml(state.report as String)}</textarea>"
             }
-        }
-        section("Script access") {
-            input "scriptAccess", "bool", title: "Let a script run the tests (turns on OAuth for this app and makes an access token)",
-                  defaultValue: false, submitOnChange: true
-            if (scriptAccess && state.accessToken) paragraph "<a href='${getFullLocalApiServerUrl()}/report?access_token=${state.accessToken}' target='_blank'>Report as JSON</a>"
         }
         section("Logging") {
             input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
@@ -147,12 +158,14 @@ Map mainPage() {
 void installed() { initialize() }
 
 void uninstalled() {
+    padTraceRestore()
     if ((state.run as Map)?.status == "running") finishRun("aborted", "the app was removed")
 }
 
 void updated() {
     boolean wasRunning = (state.run as Map)?.status == "running"
     if (wasRunning) finishRun("aborted", "settings saved during the run")
+    padTraceRestore()      // unschedule() below drops its timer
     unsubscribe()
     unschedule()
     initialize()
@@ -162,7 +175,7 @@ void updated() {
 
 void initialize() {
     checkVersion(false)
-    if (scriptAccess) checkOAuth() else dropAccessToken()
+    checkOAuth()
     subscribe(location, "systemStart", "onSystemStart")
     if (debugEnable) runIn(1800, "logsOff")
 }
@@ -184,20 +197,6 @@ void onSystemStart(evt) {
     if ((state.run as Map)?.status == "running") finishRun("interrupted", "hub restart")
 }
 
-void appButtonHandler(String btn) {
-    // Re-initialize now rather than in 1 s: the scheduled updated() would abort the run this press starts.
-    if (checkVersion(false)) updated()
-    if (btn == "btnRun") {
-        String err = startRun([tests: null, standby: optStandby == true, standbyMin: (standbyMinutes ?: 2) as Integer,
-                               powerCut: optPowerCut == true, wrongCode: optWrongCode == true])
-        if (err == BUSY) return              // a second press, or one from a stale page: the run goes on
-        state.startError = err
-        if (err) logWarn "Cannot start: ${err}"
-    } else if (btn == "btnAbort") {
-        finishRun("aborted", "aborted by the user")
-    }
-}
-
 private String escapeHtml(String s) {
     s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("'", "&#39;")
 }
@@ -215,7 +214,7 @@ private String summaryHtml(Map run) {
     switch (run.status) {
         case "running":
             String where = (run.idx as int) == 0 ? "checking the connection" : "test ${run.idx} of ${(run.tests as List).size() - 1}"
-            return message("info", "Running since ${when}: ${where}. This page updates every 5 s.")
+            return message("info", "Running since ${when}: ${where}.")
         case "done":
             if (drv) return message("error", "<b>Run of ${when}: the driver did not do what it should in ${drv} test${drv > 1 ? 's' : ''}.</b> " +
                                     "Please post the report in the forum thread.")
@@ -225,33 +224,6 @@ private String summaryHtml(Map run) {
         default:
             return message("error", "<b>Run of ${when} ${run.status}</b>: ${escapeHtml((run.reason ?: '') as String)}")
     }
-}
-
-@Field static final Map ROW_STYLE = [
-    ok: ["✓", "text-green-600"], box: ["⚠", "text-orange-500"], driver: ["✗", "text-red-600"], skipped: ["–", "text-color-secondary"],
-    running: ["▶", "text-blue-500"], waiting: ["·", "text-color-secondary"], "not run": ["·", "text-color-secondary"]
-]
-
-private String statusHtml(Map run) {
-    StringBuilder sb = new StringBuilder("<table style='width:100%;border-collapse:collapse'>")
-    for (Map r : testRows(run, TEST_NAMES)) {
-        List st = ROW_STYLE[r.state] as List
-        sb << "<tr style='border-bottom:1px solid var(--surface-border,#ddd)'>"
-        sb << "<td class='${st[1]}' style='width:1.6em;padding:.35rem 0;font-weight:bold;text-align:center'>${st[0]}</td>"
-        sb << "<td style='width:1.8em;padding:.35rem 0' class='text-color-secondary'>${r.test}</td>"
-        sb << "<td style='padding:.35rem .5rem'>${escapeHtml(r.name as String)}</td>"
-        sb << "<td class='${st[1]}' style='padding:.35rem 0'>${escapeHtml(r.detail as String)}</td></tr>"
-    }
-    sb << "</table><div class='text-color-secondary' style='font-size:.85em;margin-top:.4rem'>" +
-          "⚠ box differs: your TV does something the driver doesn't assume, often harmless. " +
-          "✗ driver differs: the driver didn't act on what the TV sent.</div>"
-    return sb.toString()
-}
-
-private void dropAccessToken() {
-    if (!state.accessToken) return
-    try { revokeAccessToken() } catch (e) { state.remove("accessToken") }     // throws while OAuth is off
-    logCfg "Script access turned off; the access token is revoked"
 }
 
 
@@ -267,23 +239,35 @@ String startRun(Map opts) {
     if (!tv.getSetting("tvIP")) return "set up the device first: save its preferences so it finds the TV, or enter the TV's IP address"
     String pairing = tv.currentValue("pairing") as String
     if (pairing == "awaiting code") return "the TV is waiting for a pairing code; enter it, or wait 5 minutes for it to time out"
+    String kind = (opts.deviceKind ?: "unknown") as String
+    if (!(kind in ["tv", "box", "unknown"])) return "deviceKind must be tv, box or unknown"
     // An unpaired device can't run the session tests; the run then checks how far pairing gets.
     boolean pairingOnly = pairing != "paired"
-    List<Integer> tests = pairingOnly ? [12] : (opts.tests ? (opts.tests as List<Integer>) : [1, 2, 3, 4, 5, 6, 7, 8, 13, 14, 15])
+    List<Integer> tests = pairingOnly ? [15] : (opts.tests ? (opts.tests as List<Integer>) : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
     if (!opts.tests && !pairingOnly) {
-        if (opts.standby) tests << 9
-        if (opts.powerCut) tests << 10
-        if (opts.wrongCode) tests << 11
+        if (opts.standby) tests << 12
+        if (opts.powerCut) tests << 13
+        if (opts.wrongCode) tests << 14
     }
+    // Whether anyone is at the TV to answer questions; without them no prompt opens.
+    Map setup = [deviceKind: kind, attended: opts.attended == true]
+    state.options = [standby: opts.standby == true, standbyMinutes: (opts.standbyMin ?: 2) as Integer,
+                     powerCut: opts.powerCut == true, wrongCode: opts.wrongCode == true]
+    state.setup = setup
     state.slowestReadMs = 0L
     state.readFailures = 0
     state.plugWarning = null
     state.report = null
-    state.startError = null
+    state.prompt = null
+    state.lastTimeout = null
+    // The pad may have turned trace on: the run restores what the person had before the pad, not the pad's own setting.
+    boolean startTrace = runStartTrace(state.padTrace as Map, tv.getSetting("traceEnable"))
+    unschedule("padTraceRestore")
+    state.remove("padTrace")
     state.run = [status: "running", reason: null, tests: [0] + tests, idx: 0, step: 0, results: [], events: [], startedAt: now(),
-                 standbyMin: (opts.standbyMin ?: 2) as Integer, pairingOnly: pairingOnly,
+                 standbyMin: (opts.standbyMin ?: 2) as Integer, pairingOnly: pairingOnly, setup: setup, prompts: [:],
                  needConnect: !pairingOnly && tv.currentValue("networkStatus") != "online",
-                 ctx: [startSwitch: tv.currentValue("switch"), startTrace: tv.getSetting("traceEnable") == true,
+                 ctx: [startSwitch: tv.currentValue("switch"), startTrace: startTrace,
                        startTxt: tv.getSetting("txtEnable") != false, plugCut: false, youtubeMissing: false]]
     tv.updateSetting("traceEnable", [value: "true", type: "bool"])
     tv.updateSetting("txtEnable", [value: "true", type: "bool"])
@@ -314,22 +298,26 @@ void finishRun(String status, String reason) {
     unschedule("runStep")
     unschedule("pollWait")
     unschedule("sleepDone")
+    unschedule("pollPrompt")
+    unschedule("pollHold")
     Map run = state.run as Map
     if (run?.status != "running") return       // a stale Abort after the run ended changes nothing
+    state.prompt = null
     run.status = status
-    run.reason = reason
+    run.reason = maskLine(reason as String)     // an error text can carry the box's IP
     state.run = run
     Map ctx = run.ctx as Map
+    // Commands go through the hub's own request, so a plug or a box that doesn't answer never holds this app.
     if (ctx.plugCut && plug) {
-        plug.on()
+        deviceCommand("on", [], plug.idAsLong)
         runIn(10, "checkPlug", [data: [n: 1]])
     }
     try {
         tv.updateSetting("traceEnable", [value: ctx.startTrace ? "true" : "false", type: "bool"])
         tv.updateSetting("txtEnable", [value: ctx.startTxt ? "true" : "false", type: "bool"])
-        if (ctx.startSwitch == "off" && tv.currentValue("switch") == "on") tv.off()
+        if (ctx.startSwitch == "off" && tv.currentValue("switch") == "on") deviceCommand("off")
     } catch (e) {
-        logError "Cleanup failed: ${e.message}"
+        logError "Cleanup failed: ${maskLine(e.message)}"
     }
     unsubscribe()
     subscribe(location, "systemStart", "onSystemStart")
@@ -338,7 +326,7 @@ void finishRun(String status, String reason) {
         state.report = buildReport(state.run as Map)
     } catch (e) {
         logError "Report failed: ${e}"
-        state.report = "Android TV Remote Tester report\nrun ${status}; the report could not be built: ${e.message}"
+        state.report = "Android TV Remote Tester report\nrun ${status}; the report could not be built: ${maskLine(e.message)}"
     }
     logCmd "Run ${status}${reason ? ': ' + reason : ''}"
 }
@@ -369,7 +357,7 @@ void checkPlug(Map data) {
     if (plug.currentValue("switch") == "on") return
     int n = data.n as int
     if (n < 3) {
-        plug.on()
+        deviceCommand("on", [], plug.idAsLong)
         runIn(10, "checkPlug", [data: [n: n + 1]])
         return
     }
@@ -381,11 +369,17 @@ void checkPlug(Map data) {
 String buildReport(Map run) {
     Map first = ((run.results as List).find { it.test == 1 }?.observed ?: [:]) as Map
     String warning = state.plugWarning ? state.plugWarning as String : (run.status != "done" ? "run ${run.status}: ${run.reason}" : null)
+    Map setup = (run.setup ?: [:]) as Map
     Map header = [appVersion: CODE_VERSION, driverVersion: tv.getDataValue("driverVersion"),
                   firmware: location.hub.firmwareVersionString,
                   vendor: first.vendor ?: tv.getDataValue("manufacturer"), model: first.model ?: tv.getDataValue("model"),
                   androidVersion: first.androidVersion, remoteServiceVersion: first.remoteServiceVersion,
-                  features: first.features, slowestReadMs: state.slowestReadMs, status: run.status, warning: warning]
+                  features: first.features, slowestReadMs: state.slowestReadMs, status: run.status, warning: warning,
+                  deviceKind: setup.deviceKind ?: "unknown", attended: setup.attended == true]
+    // Pad presses made since the previous report was built.
+    long upTo = now()
+    header.manualKeys = padSection(state.padLog as List, (state.padReportedMs ?: 0L) as long, upTo, location.timeZone)
+    state.padReportedMs = upTo
     return formatReport(header, run.results as List<Map>)
 }
 
@@ -394,7 +388,14 @@ String buildReport(Map run) {
 
 private int pollSeconds(Map s) { pollGap((s.timeout ?: 0) as int, state.lastReadMs as Long) }
 
-private String nowTs() { new Date().format("yyyy-MM-dd HH:mm:ss.SSS", location.timeZone) }
+private String tsAt(long ms) { new Date(ms).format("yyyy-MM-dd HH:mm:ss.SSS", location.timeZone) }
+
+private String nowTs() { tsAt(now()) }
+
+// True when the step is the one a callback was started for; a late reply for an earlier step is dropped.
+private boolean sameStep(Map run, Map data) {
+    return run?.status == "running" && (run.idx as int) == (data.idx as int) && (run.step as int) == (data.step as int)
+}
 
 void runStep() {
     try {
@@ -402,95 +403,210 @@ void runStep() {
         if (run?.status != "running") return
         keepTrace(run)
         int test = run.tests[run.idx] as int
-        List<Map> steps = stepsFor(test, run)
-        run.stepCount = steps.size()
         if ((run.step as int) == 0) {
             run.testSince = nowTs()
             run.testStartMs = now()
             run.stepResults = [:]
-            String skip = test == 10 && !plug ? "no plug selected" :
-                          test == 13 && !tv.hasCommand("findTvs") ? "the driver has no Find TVs command; update it" :
-                          test == 14 && !tv.hasCommand("sendText") ? "the driver has no Send Text command; update it" :
-                          test == 15 && !tv.hasCommand("pause") ? "the driver has no Pause command; update it" : null
+            run.events = []      // finishTest reads only this test's events; the 300-event cap is for one test
+            run.testState = null
+            run.cur = null
+            String skip = skipReason(test, run)
             if (skip) {
                 (run.results as List) << [test: test, name: TEST_NAMES[test], skipped: skip]
-                run.idx = (run.idx as int) + 1
-                state.run = run
-                if ((run.idx as int) >= (run.tests as List).size()) finishRun("done", null) else next("runStep", 1, run)
+                advance(run)
                 return
             }
-            if (!(test in [0, 10, 12]) && tv.currentValue("networkStatus") != "online") {
+            if (!(test in [0, 13, 15]) && tv.currentValue("networkStatus") != "online") {
                 if (run.offlineSince == null) run.offlineSince = now()
                 if (now() - (run.offlineSince as Long) > 60000L) {
                     (run.results as List) << [test: test, name: TEST_NAMES[test], skipped: "no session"]
                     run.offlineSince = null
-                    run.idx = (run.idx as int) + 1
-                    state.run = run
-                    if ((run.idx as int) >= (run.tests as List).size()) finishRun("done", null) else next("runStep", 1, run)
+                    advance(run)
                     return
                 }
+                run.cur = [test: test, step: "online", label: "Waiting for the box to connect", startedAtMs: now(),
+                           deadlineMs: (run.offlineSince as Long) + 60000L]
                 next("runStep", 10, run)
                 return
             }
             run.offlineSince = null
         }
+        List<Map> steps = stepsFor(test, run)
+        run.stepCount = steps.size()
         if ((run.step as int) >= steps.size()) { state.run = run; finishTest(); return }
         Map s = steps[run.step as int]
         run.stepSince = s.sinceTest ? run.testSince : nowTs()
         run.stepStartMs = now()
+        run.cur = [test: test, step: s.name, label: s.label ?: s.name, startedAtMs: run.stepStartMs,
+                   deadlineMs: stepDeadline(s, run.stepStartMs as long)]
         state.run = run
         if (s.skipIfOk && ((run.stepResults as Map)[s.skipIfOk] as Map)?.ok) { recordStep(s, true, 0L, "not needed"); return }
         if (s.needOk && !((run.stepResults as Map)[s.needOk] as Map)?.ok) { recordStep(s, false, 0L, "not run"); return }
         if (s.sleep) { next("sleepDone", s.sleep as int, run); return }
-        sendStep(s, run)
-        if (!s.wait) { recordStep(s, true, null, null); return }
-        next("pollWait", pollSeconds(s), run)
+        if (s.onlyIf) {
+            // The question is for a result the log decides; the read is async, like every other one.
+            run.nextDueMs = now() + 35000L
+            state.run = run
+            readTvLinesAsync("onlyIfLines", run.testSince as String, [idx: run.idx, step: run.step])
+            return
+        }
+        startStep(s, test, run)
     } catch (e) {
-        logError "Step failed: ${e}"
+        logError "Step failed: ${maskLine(e.toString())}"
         finishRun("aborted", "error: ${e.message}")
     }
 }
 
-void sendStep(Map s, Map run) {
-    if (!s.cmd) return
-    List args = (s.args ?: []) as List
-    if (s.dev == "plug") {
-        if (s.cmd == "off") { plug.off(); run.ctx.plugCut = true }
-        else if (s.cmd == "on") { plug.on(); run.ctx.plugCut = false }
+// The step's time limit as the page's countdown: its wait, sleep or hold; an await-prompt step ends with the open prompt.
+private Long stepDeadline(Map s, long startMs) {
+    if (s.awaitPrompt) return (state.prompt as Map)?.deadlineMs as Long
+    long durS = ((s.timeout ?: s.sleep ?: s.hold ?: 0) as long)
+    return durS ? startMs + durS * 1000L : null
+}
+
+private void skipStep(Map run) {
+    run.step = (run.step as int) + 1
+    next("runStep", 1, run)
+}
+
+void onlyIfLines(resp, Map data) {
+    try {
+        Map run = state.run as Map
+        if (!sameStep(run, data)) return
+        int test = run.tests[run.idx] as int
+        Map s = stepsFor(test, run)[run.step as int]
+        List<Map> lines = linesFrom(resp, data) ?: []
+        if (!promptNeeded(s.onlyIf as String, run.stepResults as Map, lines)) { skipStep(run); return }
+        // The question's clock starts now, not when the log read began.
+        run.stepStartMs = now()
+        run.cur = [test: test, step: s.name, label: s.label ?: s.name, startedAtMs: run.stepStartMs, deadlineMs: stepDeadline(s, run.stepStartMs as long)]
         state.run = run
+        startStep(s, test, run)
+    } catch (e) {
+        logError "Step failed: ${maskLine(e.toString())}"
+        finishRun("aborted", "error: ${e.message}")
+    }
+}
+
+private void startStep(Map s, int test, Map run) {
+    if (sendStep(s, run)) return        // the send waits for an async read and continues from its callback
+    continueStep(s, test, run)
+}
+
+// What follows a step's command: its question, then the wait, hold or prompt that ends it.
+private void continueStep(Map s, int test, Map run) {
+    if (s.prompt) openPrompt(s, test, run)
+    if (s.hold) {
+        // The hold lasts its time, and until the question beside it is over.
+        Map p = state.prompt as Map
+        boolean open = p != null && promptOutcome(p, now()) == "open"
+        if (open) { run.cur.deadlineMs = Math.max((run.cur.deadlineMs ?: 0L) as long, p.deadlineMs as long); state.run = run }
+        next("pollHold", open ? 1 : (s.hold as int), run)
         return
     }
+    if ((s.prompt && !s.wait) || s.awaitPrompt) {
+        // Nobody to ask: the step ends at once as unanswered, with no deadline to wait out.
+        if (!isAttended(run)) { recordStep(s, false, null, "no answer"); return }
+        if (s.awaitPrompt) {
+            run.cur.deadlineMs = (state.prompt as Map)?.deadlineMs
+            state.run = run
+        }
+        next("pollPrompt", 1, run)
+        return
+    }
+    if (!s.wait) { recordStep(s, true, null, null); return }
+    next("pollWait", pollSeconds(s), run)
+}
+
+private void advance(Map run) {
+    run.idx = (run.idx as int) + 1
+    run.step = 0
+    state.run = run
+    if ((run.idx as int) >= (run.tests as List).size()) finishRun("done", null) else next("runStep", 2, run)
+}
+
+private String skipReason(int test, Map run) {
+    if (test == 13 && !plug) return "no plug selected"
+    if (test == 9 && !tv.hasCommand("findTvs")) return "the driver has no Find TVs command; update it"
+    if (test == 10 && !tv.hasCommand("sendText")) return "the driver has no Send Text command; update it"
+    if (test == 11 && !tv.hasCommand("pause")) return "the driver has no Pause command; update it"
+    return null
+}
+
+// Sends the step's command. True when the send has to wait for a read of the device's state first.
+private boolean sendStep(Map s, Map run) {
+    if (!s.cmd) return false
+    List args = (s.args ?: []) as List
+    if (s.dev == "plug") {
+        if (s.cmd == "off") { deviceCommand("off", [], plug.idAsLong); run.ctx.plugCut = true }
+        else if (s.cmd == "on") { deviceCommand("on", [], plug.idAsLong); run.ctx.plugCut = false }
+        state.run = run
+        return false
+    }
     switch (s.cmd) {
-        case "on": tv.on(); break
-        case "off": tv.off(); break
-        case "connect": tv.connect(); break
-        case "disconnect": tv.disconnect(); break
-        case "volumeUp": tv.volumeUp(); break
-        case "volumeDown": tv.volumeDown(); break
-        case "sendKey": tv.sendKey(args[0] as String); break
-        case "launchApp": tv.launchApp(args[0] as String); break
-        case "sendText": tv.sendText(args[0] as String); break
-        case "play": tv.play(); break
-        case "pause": tv.pause(); break
-        case "stop": tv.stop(); break
-        case "startPairing": tv.startPairing(); break
-        case "connectIfIdle": tv.connect(); break
-        case "wrongCode": tv.submitPairingCode(wrongCodeForTv()); break
-        case "findTvs": tv.findTvs(); break
+        case "on": case "off": case "connect": case "disconnect": case "volumeUp": case "volumeDown":
+        case "play": case "pause": case "stop": case "startPairing": case "findTvs":
+            deviceCommand(s.cmd as String); break
+        case "connectIfIdle": deviceCommand("connect"); break
+        case "sendKey": case "launchApp": case "sendText":
+            deviceCommand(s.cmd as String, [[type: "STRING", value: args[0] as String]]); break
+        case "wrongCode":
+            run.nextDueMs = now() + 35000L
+            state.run = run
+            readStateAsync("wrongCodeState", ["cert", "tvCert"], [idx: run.idx, step: run.step])
+            return true
         default: throw new IllegalArgumentException("unknown step command ${s.cmd}")
+    }
+    return false
+}
+
+// Runs a driver command in a hub request, not in this app's execution. A command waits for the box
+// (a connect to one that doesn't answer blocks the driver about 31 s, a pairing start 4 to 5 s), and
+// this single-threaded app would hold the page's /status and /answer calls all that time. A plug is
+// addressed by its id; its driver may be a cloud one.
+void deviceCommand(String method, List args = [], Long devId = null) {
+    asynchttpPost("deviceCommandDone", [uri: "http://127.0.0.1:8080", path: "/device/runmethod",
+                  requestContentType: "application/json", contentType: "application/json",
+                  body: [id: devId ?: tv.idAsLong, method: method, args: args], timeout: 180],
+                  [method: method])
+}
+
+void deviceCommandDone(resp, Map data) {
+    // A timeout only means the command is still running on the hub.
+    if (resp.hasError()) logDebug "Command ${data.method}: ${maskLine(resp.getErrorMessage())}"
+}
+
+// Reads only the named fields of the device's state, over loopback, in a callback; the private key is never copied.
+void readStateAsync(String handler, List names, Map data) {
+    asynchttpGet(handler, [uri: "http://127.0.0.1:8080", path: "/device/fullJson/${tv.id}", timeout: 20], data + [names: names])
+}
+
+// The named fields of the reply, or null when the read failed.
+private Map stateFrom(resp, Map data) {
+    try {
+        if (resp.hasError()) return null
+        def st = resp.json?.deviceState
+        return pickFields(st instanceof Map ? st as Map : null, data.names as List)
+    } catch (e) {
+        logWarn "Could not read the device's state: ${maskLine(e.message)}"
+        return null
     }
 }
 
-// Reads only the named fields of the device's state; the private key is never copied.
-private Map tvStateFields(List<String> names) {
-    Map st = null
-    httpGet([uri: "http://127.0.0.1:8080", path: "/device/fullJson/${tv.id}", timeout: 20]) { resp -> st = resp.data?.deviceState as Map }
-    return names.collectEntries { [(it): st?.get(it)] }
-}
-
-private String wrongCodeForTv() {
-    Map st = tvStateFields(["cert", "tvCert"])
-    return wrongPairingCode(st.cert as String, st.tvCert as String)
+void wrongCodeState(resp, Map data) {
+    try {
+        Map run = state.run as Map
+        if (!sameStep(run, data)) return
+        int test = run.tests[run.idx] as int
+        Map s = stepsFor(test, run)[run.step as int]
+        Map st = stateFrom(resp, data)
+        if (st == null || !st.cert || !st.tvCert) { recordStep(s, false, null, "certificates not readable"); return }
+        deviceCommand("submitPairingCode", [[type: "STRING", value: wrongPairingCode(st.cert as String, st.tvCert as String)]])
+        continueStep(s, test, run)
+    } catch (e) {
+        logError "Step failed: ${maskLine(e.toString())}"
+        finishRun("aborted", "error: ${e.message}")
+    }
 }
 
 void pollWait() {
@@ -498,8 +614,23 @@ void pollWait() {
         Map run = state.run as Map
         if (run?.status != "running") return
         keepTrace(run)
+        // The log read is async: a sync read of 1-3 s holds this single-threaded app, and the page's
+        // /status and /answer calls queue behind it.
+        run.nextDueMs = now() + 35000L      // the read's own 30 s timeout, so a slow read isn't a stall
+        state.run = run
+        readTvLinesAsync("pollWaitLines", run.stepSince as String, [idx: run.idx, step: run.step])
+    } catch (e) {
+        logError "Wait failed: ${maskLine(e.toString())}"
+        finishRun("aborted", "error: ${e.message}")
+    }
+}
+
+void pollWaitLines(resp, Map data) {
+    try {
+        Map run = state.run as Map
+        if (!sameStep(run, data)) return
         Map s = stepsFor(run.tests[run.idx] as int, run)[run.step as int]
-        List<Map> lines = readTvLines(run.stepSince as String)
+        List<Map> lines = linesFrom(resp, data)
         if (lines == null) {
             if (((state.readFailures ?: 0) as int) >= 3) { finishRun("aborted", "could not read the hub logs"); return }
             next("pollWait", pollSeconds(s), run)
@@ -512,7 +643,7 @@ void pollWait() {
         if (now() - (run.stepStartMs as Long) > ((s.timeout as Long) * 1000L)) { recordStep(s, false, null, "timed out"); return }
         next("pollWait", pollSeconds(s), run)
     } catch (e) {
-        logError "Wait failed: ${e}"
+        logError "Wait failed: ${maskLine(e.toString())}"
         finishRun("aborted", "error: ${e.message}")
     }
 }
@@ -526,97 +657,215 @@ void sleepDone() {
 void recordStep(Map s, boolean ok, Long ms, String note) {
     Map run = state.run as Map
     if (run?.status != "running") return
+    // A concurrent prompt (screen dark, picture back) outlives its step; the hold or await step that follows ends it.
+    if (((s.prompt && !s.concurrent) || s.endsPrompt) && state.prompt) closePrompt(s)
+    run = state.run as Map
     (run.stepResults as Map)[s.name] = [ok: ok, ms: ms, at: run.stepStartMs, note: note]
     run.step = (run.step as int) + 1
+    if (note == "timed out" && !s.quiet) setLastTimeout(run, s)
     state.run = run
     next("runStep", Math.max(1, (s.after ?: 1) as int), run)
 }
 
-List<Map> readTvLines(String since) {
-    long t0 = now()
+private void setLastTimeout(Map run, Map s) {
+    state.lastTimeout = [test: run.tests[run.idx] as int, step: s.name, label: s.label ?: s.name, atMs: now()]
+}
+
+
+// ── Prompts ───────────────────────────────────────────────────────────
+
+private boolean isAttended(Map run) { (run.setup as Map)?.attended == true }
+
+private void openPrompt(Map s, int test, Map run) {
+    if (!isAttended(run)) {
+        Map prompts = (run.prompts ?: [:]) as Map
+        prompts[s.prompt] = [notAsked: true]
+        run.prompts = prompts
+        state.run = run
+        return
+    }
+    int seq = ((state.promptSeq ?: 0) as int) + 1
+    state.promptSeq = seq
+    int promptS = (s.promptTimeout ?: s.timeout) as int
+    state.prompt = newPrompt(s.prompt as String, "p${seq}".toString(), test, now(), promptS)
+    logCmd "Question ${seq} for the person at the TV: ${(state.prompt as Map).text}"
+}
+
+// Ends the open prompt and keeps what the person answered; an unanswered one past its deadline is a timeout the page shows.
+private void closePrompt(Map s) {
+    Map p = state.prompt as Map
+    if (p == null) return
+    Map run = state.run as Map
+    Map prompts = (run.prompts ?: [:]) as Map
+    prompts[p.kind] = [choice: (p.answer as Map)?.choice, atMs: (p.answer as Map)?.atMs, askedAtMs: p.askedAtMs]
+    run.prompts = prompts
+    state.run = run
+    if (promptOutcome(p, now()) == "expired") setLastTimeout(run, s)
+    state.prompt = null
+}
+
+// A prompt-only step ends on the answer or the deadline; the page answers through /answer.
+void pollPrompt() {
+    try {
+        Map run = state.run as Map
+        if (run?.status != "running") return
+        keepTrace(run)
+        Map s = stepsFor(run.tests[run.idx] as int, run)[run.step as int]
+        Map p = state.prompt as Map
+        String outcome = p ? promptOutcome(p, now()) : "expired"
+        if (outcome == "open") { next("pollPrompt", 1, run); return }
+        boolean answered = outcome == "answered"
+        recordStep(s, answered, answered ? (p.answer.atMs as Long) - (p.askedAtMs as Long) : null, answered ? null : "no answer")
+    } catch (e) {
+        logError "Prompt failed: ${maskLine(e.toString())}"
+        finishRun("aborted", "error: ${e.message}")
+    }
+}
+
+// A hold step keeps the box in its state for a set time, and past it until the question beside it is over.
+void pollHold() {
+    try {
+        Map run = state.run as Map
+        if (run?.status != "running") return
+        keepTrace(run)
+        Map s = stepsFor(run.tests[run.idx] as int, run)[run.step as int]
+        Map p = state.prompt as Map
+        boolean promptOver = p == null || promptOutcome(p, now()) != "open"
+        long elapsed = now() - (run.stepStartMs as long)
+        if (elapsed >= (s.hold as long) * 1000L && promptOver) { recordStep(s, true, elapsed, null); return }
+        next("pollHold", 1, run)
+    } catch (e) {
+        logError "Hold failed: ${maskLine(e.toString())}"
+        finishRun("aborted", "error: ${e.message}")
+    }
+}
+
+
+// ── Log reads and the end of a test ───────────────────────────────────
+
+void readTvLinesAsync(String handler, String since, Map data) {
+    asynchttpGet(handler, [uri: "http://127.0.0.1:8080", path: "/logs/past/json", timeout: 30],
+                 data + [since: since, sentAt: now()])
+}
+
+// The device's lines from an async log read, or null when the read failed.
+List<Map> linesFrom(resp, Map data) {
     List raw = null
     try {
-        httpGet([uri: "http://127.0.0.1:8080", path: "/logs/past/json", timeout: 30]) { resp -> raw = resp.data as List }
-    } catch (e) {
+        if (!resp.hasError()) raw = resp.json as List
+    } catch (e) { raw = null }
+    if (raw == null) {
         state.readFailures = ((state.readFailures ?: 0) as int) + 1
-        logWarn "Log read failed: ${e.message}"
+        logWarn "Log read failed: ${resp.hasError() ? maskLine(resp.getErrorMessage()) : 'unreadable reply'}"
         return null
     }
     state.readFailures = 0
-    long ms = now() - t0
+    long ms = now() - (data.sentAt as long)
     state.lastReadMs = ms
     if (ms > ((state.slowestReadMs ?: 0L) as Long)) state.slowestReadMs = ms
-    return deviceLines(raw, tv.idAsLong, tv.displayName, since)
+    return deviceLines(raw, tv.idAsLong, tv.displayName, data.since as String)
+}
+
+// The device state a test's verdict needs, read before its log.
+private List<String> stateNeeds(int test) {
+    switch (test) {
+        // The driver acts on volume it wasn't asked for only once the box has answered a volume key.
+        case 3: return ["volumeTrusted"]
+        case 9: return ["tvId", "foundTvs"]
+        default: return []
+    }
 }
 
 void finishTest() {
     Map run = state.run as Map
     int test = run.tests[run.idx] as int
-    Map steps = run.stepResults as Map
-    if (test == 0) {
-        if (steps.connect != null && !steps.connect.ok) {
-            List<Map> lines = readTvLines(run.testSince as String) ?: []
-            run = state.run as Map
-            Map f = evalConnect(lines)
-            List d = differences(f, EXPECT[0] as Map)
-            (run.results as List) << ([test: 0, name: TEST_NAMES[0], observed: f, diffs: d, trace: traceLines(lines)] + splitDiffs(d, EXPECT[0] as Map))
-            state.run = run
-            finishRun("aborted", "the device did not connect")
-            return
-        }
-    } else {
-        List<Map> lines = readTvLines(run.testSince as String) ?: []
+    run.nextDueMs = now() + 35000L
+    state.run = run
+    List<String> need = stateNeeds(test)
+    if (need) readStateAsync("finishTestState", need, [idx: run.idx])
+    else readTvLinesAsync("finishTestLines", run.testSince as String, [idx: run.idx])
+}
+
+void finishTestState(resp, Map data) {
+    Map run = state.run as Map
+    if (run?.status != "running" || (run.idx as int) != (data.idx as int)) return
+    run.testState = stateFrom(resp, data) ?: [:]
+    run.nextDueMs = now() + 35000L
+    state.run = run
+    readTvLinesAsync("finishTestLines", run.testSince as String, [idx: run.idx])
+}
+
+void finishTestLines(resp, Map data) {
+    try {
+        Map run = state.run as Map
+        if (run?.status != "running" || (run.idx as int) != (data.idx as int)) return
+        int test = run.tests[run.idx] as int
+        Map steps = run.stepResults as Map
+        List<Map> lines = linesFrom(resp, data) ?: []
         run = state.run as Map
         List<Map> events = ((run.events ?: []) as List<Map>).findAll { (it.at as Long) >= (run.testStartMs as Long) }
-        Map r = evaluateTest(test, lines, steps, run, events)
-        if (test in ((run.traceOff ?: []) as List)) r.note = "trace logging was off for part of this test, so lines may be missing"
-        (run.results as List) << r
-        if (test == 5 && r.skipped == "YouTube not installed") run.ctx.youtubeMissing = true
+        if (test == 0) {
+            if (steps.connect != null && !steps.connect.ok) {
+                Map f = evalConnect(lines)
+                List d = differences(f, EXPECT[0] as Map)
+                (run.results as List) << ([test: 0, name: TEST_NAMES[0], observed: f, diffs: d, trace: traceLines(lines)] + splitDiffs(d, EXPECT[0] as Map))
+                state.run = run
+                finishRun("aborted", "the device did not connect")
+                return
+            }
+        } else {
+            Map r = evaluateTest(test, lines, steps, run, events)
+            if (test in ((run.traceOff ?: []) as List)) r.note = "trace logging was off for part of this test, so lines may be missing"
+            (run.results as List) << r
+            if (test == 5 && r.skipped == "YouTube not installed") run.ctx.youtubeMissing = true
+        }
+        run.testState = null
+        advance(run)
+    } catch (e) {
+        logError "Test failed: ${maskLine(e.toString())}"
+        finishRun("aborted", "error: ${e.message}")
     }
-    run.idx = (run.idx as int) + 1
-    run.step = 0
-    state.run = run
-    if ((run.idx as int) >= (run.tests as List).size()) finishRun("done", null)
-    else next("runStep", 2, run)
 }
 
 Map evaluateTest(int test, List<Map> lines, Map steps, Map run, List<Map> events) {
     Map r = [test: test, name: TEST_NAMES[test]]
     if (run.ctx.youtubeMissing && test in [6, 7, 8]) { r.skipped = "YouTube not installed"; return r }
     TimeZone tz = location.timeZone
+    Map st = (run.testState ?: [:]) as Map
+    Map prompts = (run.prompts ?: [:]) as Map
     Map f
     switch (test) {
         case 1: f = evalSessionStart(lines, steps); break
         case 2: f = evalPings(lines, tz); break
         case 3:
             f = evalPower(lines, steps)
-            // The driver acts on volume it wasn't asked for only once the box has answered a volume key.
-            f.volumeTrusted = tvStateFields(["volumeTrusted"]).volumeTrusted == true
+            f.volumeTrusted = st.volumeTrusted == true
+            // Times run from the on() call.
+            Object pic = pictureMs(prompts.picture as Map, (steps.on?.at ?: run.testStartMs) as Long)
+            if (pic != null) f.pictureMs = pic
             break
         case 4: f = evalVolume(lines); break
         case 5: f = evalLaunch(lines, steps); break
         case 6: f = evalLaunch(lines, steps); break
         case 7: f = evalRecovery(lines, steps, tz); break
         case 8: f = evalHome(lines, steps); break
-        case 9: f = evalStandby(lines, steps); break
-        case 10: f = evalPowerCut(lines, steps, [pairing: tv.currentValue("pairing"), switch: tv.currentValue("switch")], tz); break
-        case 11: f = evalWrongCode(lines, steps) + evalPairingOptions(lines); break
-        case 12: f = evalPairing(lines) + evalPairingOptions(lines); break
-        case 13:
-            Map st = tvStateFields(["tvId", "foundTvs"])
-            f = evalDiscovery(lines, st.tvId as String, st.foundTvs as Map, tv.getSetting("tvIP") as String)
-            break
-        case 14:
+        case 9: f = evalDiscovery(lines, st.tvId as String, st.foundTvs instanceof Map ? st.foundTvs as Map : null, tv.getSetting("tvIP") as String); break
+        case 10:
             f = evalText(lines)
-            r.note = "say in your post whether \"hubitat\" appeared in the search box"
+            r.note = textNote(f, prompts)
             break
-        case 15:
+        case 11:
             f = evalMedia(lines)
-            r.note = "say in your post whether anything on the TV reacted to play, pause or stop"
+            r.note = mediaNote(prompts)
             break
+        case 12: f = evalStandby(lines, steps); break
+        case 13: f = evalPowerCut(lines, steps, [pairing: tv.currentValue("pairing"), switch: tv.currentValue("switch")], tz); break
+        case 14: f = evalWrongCode(lines, steps) + evalPairingOptions(lines); break
+        case 15: f = evalPairing(lines) + evalPairingOptions(lines); break
         default: f = [:]
     }
     f.putAll(evalEvents(test, events, f))
+    f.putAll(promptFields(test, prompts))
     String other = otherMessages(lines)
     if (other) f.otherMessages = other
     r.observed = f
@@ -628,7 +877,7 @@ Map evaluateTest(int test, List<Map> lines, Map steps, Map run, List<Map> events
     r.putAll(splitDiffs(r.diffs as List, expect))
     // Session start always: its messages are what a mock of the box replays. Text input and media keys
     // always: what the box sends around a text field or a media key is still being learned.
-    if (r.diffs || test in [1, 14, 15]) r.trace = traceLines(lines)
+    if (r.diffs || test in [1, 10, 11]) r.trace = traceLines(lines)
     return r
 }
 
@@ -638,141 +887,298 @@ List<Map> stepsFor(int test, Map run) {
             List<Map> pre = []
             if (run.pairingOnly) return pre
             // 40 s: a connect to an address that doesn't answer blocks about 31 s before the driver logs why.
-            if (run.needConnect) pre << [name: "connect", cmd: "connect", wait: '^rx 40:', timeout: 40]
-            if (run.ctx.startSwitch == "off") pre << [name: "powerOn", cmd: "on", wait: '^rx 40:\\{1:1\\}', timeout: 15, after: 3]
+            if (run.needConnect) pre << [name: "connect", label: "Waiting for the box to connect", cmd: "connect", wait: '^rx 40:', timeout: 40]
+            if (run.ctx.startSwitch == "off") pre << [name: "powerOn", label: "Waiting for the box to report on", cmd: "on", wait: '^rx 40:\\{1:1\\}', timeout: 15, after: 3]
             return pre
-        case 1: return [[name: "disconnect", cmd: "disconnect", after: 3],
-                        [name: "ready", cmd: "connect", wait: '^rx 20:', timeout: 15, after: 2]]
-        case 2: return [[name: "disconnect", cmd: "disconnect", after: 3],
-                        [name: "connect", cmd: "connect", wait: '^rx 40:', timeout: 15],
-                        [name: "ping1", wait: '^ping #1 ', timeout: 15, sinceTest: true]]
-        // Off for 12 s, two ping intervals: a box that stops pinging while off shows as a long gap.
-        case 3: return [[name: "off", cmd: "off", wait: '^rx 40:(\\{1:0\\}|"")', timeout: 15, after: 12],
-                        [name: "on", cmd: "on", wait: '^rx 40:\\{1:1\\}', timeout: 15, after: 3]]
-        case 4: return [[name: "up", cmd: "volumeUp", after: 2],
-                        [name: "down", cmd: "volumeDown", after: 2],
-                        [name: "mute1", cmd: "sendKey", args: ["VOLUME_MUTE"], after: 2],
-                        [name: "mute2", cmd: "sendKey", args: ["VOLUME_MUTE"], after: 3]]
-        case 5: return [[name: "launch", cmd: "launchApp", args: ["https://www.youtube.com"], wait: '^rx 20:|^TV rejected', timeout: 20, after: 5]]
-        case 6: return [[name: "home", cmd: "sendKey", args: ["HOME"], wait: '^rx 20:', timeout: 15, after: 3],
-                        [name: "launch", cmd: "launchApp", args: ["com.google.android.youtube.tv"], wait: '^rx 20:|^TV rejected', timeout: 20, after: 5]]
-        case 7: return [[name: "badLink", cmd: "launchApp", args: ["market://launch?id=invalid.tester.nosuchapp"], wait: '^TV rejected|^rx 20:', timeout: 15],
-                        [name: "reconnect", wait: '^rx 40:', timeout: 20, sinceTest: true, after: 2],
-                        [name: "home", cmd: "sendKey", args: ["HOME"], wait: '^tx 10:\\{1:3 ', timeout: 10, after: 3]]
-        case 8: return [[name: "launch", cmd: "launchApp", args: ["https://www.youtube.com"], wait: '^rx 20:', timeout: 20, after: 5],
-                        [name: "home", cmd: "sendKey", args: ["HOME"], wait: '^rx 20:', timeout: 15, after: 2]]
-        case 9: return [[name: "off", cmd: "off", wait: '^rx 40:(\\{1:0\\}|"")', timeout: 15],
-                        [name: "standby", sleep: ((run.standbyMin ?: 2) as int) * 60],
-                        [name: "on", cmd: "on", wait: '^rx 40:\\{1:1\\}', timeout: 20, after: 3]]
-        case 10: return [[name: "cut", dev: "plug", cmd: "off"],
-                         [name: "dark", sleep: 30],
-                         [name: "restore", dev: "plug", cmd: "on"],
-                         [name: "back", wait: '^rx 40:', timeout: 600, after: 5]]
-        case 11: return [[name: "pair", cmd: "startPairing", wait: '^Enter the code shown', timeout: 30, after: 2],
-                         [name: "submit", cmd: "wrongCode", wait: '^Pairing failed with status|^Paired', timeout: 20],
-                         [name: "resume", wait: '^rx 40:', timeout: 30, sinceTest: true],
-                         [name: "reconnect", cmd: "connectIfIdle", wait: '^rx 40:', timeout: 20, skipIfOk: "resume", after: 2]]
-        // A wrong code ends the pairing attempt without leaving the TV waiting; the settle covers the driver's 10 s pairing timeout.
-        case 12: return [[name: "pair", cmd: "startPairing", wait: '^Enter the code shown',
-                          fail: '^(Pairing failed|No pairing response|Socket \\(|Connect failed|The client key)|Exception', timeout: 45, after: 2],
-                         [name: "submit", cmd: "wrongCode", needOk: "pair", wait: '^Pairing failed with status|^Paired', timeout: 20],
-                         [name: "settle", sleep: 12]]
+        case 1: return [[name: "disconnect", label: "Closing the session", cmd: "disconnect", after: 3],
+                        [name: "ready", label: "Waiting for the box to start a session", cmd: "connect", wait: '^rx 20:', timeout: 15, after: 2]]
+        case 2: return [[name: "disconnect", label: "Closing the session", cmd: "disconnect", after: 3],
+                        [name: "connect", label: "Waiting for the box to answer", cmd: "connect", wait: '^rx 40:', timeout: 15],
+                        [name: "ping1", label: "Waiting for the first ping", wait: '^ping #1 ', timeout: 15, sinceTest: true]]
+        // Off for at least 12 s, two ping intervals: a box that stops pinging while off shows as a long gap.
+        // The person is asked whether the screen went dark during that hold, and whether the picture came back.
+        case 3: return [[name: "off", label: "Waiting for the box to report off", cmd: "off", wait: '^rx 40:(\\{1:0\\}|"")', timeout: 15,
+                         prompt: "dark", promptTimeout: 20, concurrent: true],
+                        [name: "hold", label: "Keeping the box off", hold: 12, endsPrompt: true],
+                        [name: "on", label: "Waiting for the box to report on", cmd: "on", wait: '^rx 40:\\{1:1\\}', timeout: 15,
+                         prompt: "picture", promptTimeout: 60, concurrent: true],
+                        [name: "picture", label: "Waiting for your answer", awaitPrompt: true, endsPrompt: true, after: 3]]
+        case 4: return [[name: "up", label: "Pressing volume up", cmd: "volumeUp", after: 2],
+                        [name: "down", label: "Pressing volume down", cmd: "volumeDown", after: 2],
+                        [name: "mute1", label: "Pressing mute", cmd: "sendKey", args: ["VOLUME_MUTE"], after: 2],
+                        [name: "mute2", label: "Pressing mute again", cmd: "sendKey", args: ["VOLUME_MUTE"], after: 3]]
+        // HOME first: from inside YouTube, the launch changes nothing and the box looks different from what it is.
+        case 5: return [[name: "home", label: "Pressing HOME", cmd: "sendKey", args: ["HOME"], wait: '^rx 20:', timeout: 15, after: 3, quiet: true],
+                        [name: "launch", label: "Waiting for the box to open YouTube", cmd: "launchApp", args: ["https://www.youtube.com"], wait: '^rx 20:|^TV rejected', timeout: 20, after: 5],
+                        [name: "app", label: "Waiting for your answer", prompt: "app", onlyIf: "noYoutube", timeout: 30]]
+        case 6: return [[name: "home", label: "Pressing HOME", cmd: "sendKey", args: ["HOME"], wait: '^rx 20:', timeout: 15, after: 3, quiet: true],
+                        [name: "launch", label: "Waiting for the box to open YouTube", cmd: "launchApp", args: ["com.google.android.youtube.tv"], wait: '^rx 20:|^TV rejected', timeout: 20, after: 5]]
+        case 7: return [[name: "badLink", label: "Sending a link the box refuses", cmd: "launchApp", args: ["market://launch?id=invalid.tester.nosuchapp"], wait: '^TV rejected|^rx 20:', timeout: 15],
+                        [name: "reconnect", label: "Waiting for the session to come back", wait: '^rx 40:', timeout: 20, sinceTest: true, after: 2],
+                        [name: "home", label: "Pressing HOME", cmd: "sendKey", args: ["HOME"], wait: '^tx 10:\\{1:3 ', timeout: 10, after: 3]]
+        case 8: return [[name: "launch", label: "Waiting for the box to open YouTube", cmd: "launchApp", args: ["https://www.youtube.com"], wait: '^rx 20:', timeout: 20, after: 5],
+                        [name: "home", label: "Pressing HOME", cmd: "sendKey", args: ["HOME"], wait: '^rx 20:', timeout: 15, after: 2, quiet: true],
+                        [name: "homeSeen", label: "Waiting for your answer", prompt: "home", onlyIf: "homeUnchanged", timeout: 30]]
         // A search takes up to 5 s when nothing answers. Off for 30 s before the second search, as a box may stop announcing once asleep.
-        case 13: return [[name: "find", cmd: "findTvs", wait: '^Found |^No Android TV', timeout: 20, after: 2],
-                         [name: "off", cmd: "off", wait: '^rx 40:(\\{1:0\\}|"")', timeout: 15],
-                         [name: "standby", sleep: 30],
-                         [name: "findOff", cmd: "findTvs", wait: '^Found |^No Android TV', timeout: 20, after: 2],
-                         [name: "on", cmd: "on", wait: '^rx 40:\\{1:1\\}', timeout: 20, after: 3]]
-        // The text follows SEARCH by 2 s with no log read between: the search screen closes itself 9-11 s
-        // after it opens. The text stays on screen 6 s, for whoever watches the TV.
-        case 14: return [[name: "home", cmd: "sendKey", args: ["HOME"], after: 3],
-                         [name: "search", cmd: "sendKey", args: ["SEARCH"], after: 2],
-                         [name: "text", cmd: "sendText", args: ["hubitat"], after: 6],
-                         [name: "back", cmd: "sendKey", args: ["BACK"], after: 2],
-                         [name: "home2", cmd: "sendKey", args: ["HOME"], after: 2]]
-        // Ends on stop, so nothing the play key resumed keeps playing.
-        case 15: return [[name: "play", cmd: "play", wait: '^tx 10:\\{1:126 ', timeout: 10, after: 3],
-                         [name: "pause", cmd: "pause", wait: '^tx 10:\\{1:127 ', timeout: 10, after: 3],
-                         [name: "stop", cmd: "stop", wait: '^tx 10:\\{1:86 ', timeout: 10, after: 3]]
+        case 9: return [[name: "find", label: "Searching the network for the box", cmd: "findTvs", wait: '^Found |^No Android TV', timeout: 20, after: 2],
+                        [name: "off", label: "Waiting for the box to report off", cmd: "off", wait: '^rx 40:(\\{1:0\\}|"")', timeout: 15],
+                        [name: "standby", label: "Letting the box sleep", sleep: 30],
+                        [name: "findOff", label: "Searching the network while the box is off", cmd: "findTvs", wait: '^Found |^No Android TV', timeout: 20, after: 2],
+                        [name: "on", label: "Waiting for the box to report on", cmd: "on", wait: '^rx 40:\\{1:1\\}', timeout: 20, after: 3]]
+        case 10: return textSteps(run)
+        case 11: return mediaSteps(run)
+        case 12: return [[name: "off", label: "Waiting for the box to report off", cmd: "off", wait: '^rx 40:(\\{1:0\\}|"")', timeout: 15],
+                         [name: "standby", label: "Leaving the box in standby", sleep: ((run.standbyMin ?: 2) as int) * 60],
+                         [name: "on", label: "Waiting for the box to report on", cmd: "on", wait: '^rx 40:\\{1:1\\}', timeout: 20, after: 3]]
+        case 13: return [[name: "cut", label: "Turning the plug off", dev: "plug", cmd: "off"],
+                         [name: "dark", label: "Keeping the power off", sleep: 30],
+                         [name: "restore", label: "Turning the plug on", dev: "plug", cmd: "on"],
+                         [name: "back", label: "Waiting for the box to boot and reconnect", wait: '^rx 40:', timeout: 600, after: 5]]
+        case 14: return [[name: "pair", label: "Waiting for the pairing dialog", cmd: "startPairing", wait: '^Enter the code shown', timeout: 30, after: 2],
+                         [name: "submit", label: "Sending a wrong code", cmd: "wrongCode", wait: '^Pairing failed with status|^Paired', timeout: 20],
+                         [name: "resume", label: "Waiting for the session to resume", wait: '^rx 40:', timeout: 30, sinceTest: true],
+                         [name: "reconnect", label: "Reconnecting", cmd: "connectIfIdle", wait: '^rx 40:', timeout: 20, skipIfOk: "resume", after: 2]]
+        // A wrong code ends the pairing attempt without leaving the TV waiting; the settle covers the driver's 10 s pairing timeout.
+        case 15: return [[name: "pair", label: "Waiting for the pairing dialog", cmd: "startPairing", wait: '^Enter the code shown',
+                          fail: '^(Pairing failed|No pairing response|Socket \\(|Connect failed|The client key)|Exception', timeout: 45, after: 2],
+                         [name: "submit", label: "Sending a wrong code", cmd: "wrongCode", needOk: "pair", wait: '^Pairing failed with status|^Paired', timeout: 20],
+                         [name: "settle", label: "Letting the box settle", sleep: 12]]
         default:
             return []
     }
 }
 
 
+// Attended: the person opens a text field first, and the text goes into it with no HOME and SEARCH (on Google TV
+// SEARCH opens a voice prompt). Otherwise the text follows SEARCH by 2 s with no log read between: the search
+// screen closes itself 9-11 s after it opens. The text stays on screen 6 s, for whoever watches the TV.
+// The path is chosen once the field answer is in; step 0 is the same on both.
+List<Map> textSteps(Map run) {
+    List<Map> fieldStep = [[name: "field", label: "Waiting for you to open a text field", prompt: "field", timeout: 90]]
+    if (choseReady(run.prompts as Map, "field")) {
+        return fieldStep + [[name: "text", label: "Sending the text", cmd: "sendText", args: ["hubitat"], after: 2],
+                            [name: "textSeen", label: "Waiting for your answer", prompt: "text", timeout: 30],
+                            [name: "back", label: "Pressing BACK", cmd: "sendKey", args: ["BACK"], after: 2],
+                            [name: "home2", label: "Pressing HOME", cmd: "sendKey", args: ["HOME"], after: 2]]
+    }
+    return fieldStep + [[name: "home", label: "Pressing HOME", cmd: "sendKey", args: ["HOME"], after: 3],
+                        [name: "search", label: "Pressing SEARCH", cmd: "sendKey", args: ["SEARCH"], after: 2],
+                        [name: "text", label: "Sending the text", cmd: "sendText", args: ["hubitat"], after: 6],
+                        [name: "back", label: "Pressing BACK", cmd: "sendKey", args: ["BACK"], after: 2],
+                        [name: "home2", label: "Pressing HOME", cmd: "sendKey", args: ["HOME"], after: 2]]
+}
+
+// Ends on stop, so nothing the play key resumed keeps playing. Attended: the person starts a video first, and each
+// key is followed by a question (pause, play, stop). Otherwise play, pause, stop.
+List<Map> mediaSteps(Map run) {
+    List<Map> playingStep = [[name: "playing", label: "Waiting for you to start a video", prompt: "playing", timeout: 90]]
+    if (choseReady(run.prompts as Map, "playing")) {
+        return playingStep + [[name: "pause", label: "Pressing pause", cmd: "pause", wait: '^tx 10:\\x7B1:127 ', timeout: 10, after: 2],
+                              [name: "pauseSeen", label: "Waiting for your answer", prompt: "paused", timeout: 20],
+                              [name: "play", label: "Pressing play", cmd: "play", wait: '^tx 10:\\x7B1:126 ', timeout: 10, after: 2],
+                              [name: "playSeen", label: "Waiting for your answer", prompt: "resumed", timeout: 20],
+                              [name: "stop", label: "Pressing stop", cmd: "stop", wait: '^tx 10:\\x7B1:86 ', timeout: 10, after: 2],
+                              [name: "stopSeen", label: "Waiting for your answer", prompt: "stopped", timeout: 20]]
+    }
+    return playingStep + [[name: "play", label: "Pressing play", cmd: "play", wait: '^tx 10:\\x7B1:126 ', timeout: 10, after: 3],
+                          [name: "pause", label: "Pressing pause", cmd: "pause", wait: '^tx 10:\\x7B1:127 ', timeout: 10, after: 3],
+                          [name: "stop", label: "Pressing stop", cmd: "stop", wait: '^tx 10:\\x7B1:86 ', timeout: 10, after: 3]]
+}
+
 // ── Script endpoints ──────────────────────────────────────────────────
 
+private def json(Map data, int status = 200) {
+    render(status: status, contentType: "application/json", data: JsonOutput.toJson(data))
+}
+
+private Map failure(String text) { [ok: false, error: text] }
+
+def apiUi() {
+    String html = null
+    try {
+        html = readFile(UI_FILE)
+    } catch (Exception e) {
+        logWarn "Could not read ${UI_FILE}: ${maskLine(e.message)}"
+    }
+    if (html == null) {
+        syncUI()
+        return render(status: 200, contentType: "text/html", data: "<html><head><meta http-equiv='refresh' content='10'></head><body>" +
+            "Downloading the page from GitHub. This page reloads every 10 seconds. If it never appears, upload " +
+            "<code>${UI_FILE}</code> to the hub's File Manager and check the hub logs.</body></html>")
+    }
+    if (!html.contains("const CODE_VERSION = '${CODE_VERSION}'")) syncUI()
+    return render(status: 200, contentType: "text/html", data: html)
+}
+
 def apiRun() {
-    if (checkVersion(false)) updated()     // as in appButtonHandler
-    List<Integer> tests = params.tests ? (params.tests as String).tokenize(",").collect { it.trim() as Integer } : null
-    String err = startRun([tests: tests, standby: params.standby != null,
-                           standbyMin: params.standby ? (params.standby as Integer) : 2,
-                           powerCut: params.cut == "true", wrongCode: params.wrongcode == "true"])
-    if (err) return render(status: err.contains("in progress") ? 409 : 400, contentType: "application/json", data: JsonOutput.toJson([error: err]))
-    return render(status: 200, contentType: "application/json", data: JsonOutput.toJson([started: true]))
+    if (checkVersion(false)) updated()     // a new version re-initializes before it starts a run
+    Map parsed = runOptions([tests: params.tests, attended: params.attended, deviceKind: params.deviceKind,
+                             standby: params.standby, cut: params.cut, wrongcode: params.wrongcode], TEST_NAMES)
+    if (!parsed.ok) return json(failure(parsed.error as String), 400)
+    String err = startRun(parsed.opts as Map)
+    if (err) return json(failure(err), err == BUSY ? 409 : 400)
+    return json([ok: true, started: true])
 }
 
 def apiStatus() {
     checkVersion()
     checkStall()
     Map run = (state.run ?: [:]) as Map
-    Integer test = run.tests ? (run.tests[run.idx as int] as Integer) : null
-    return render(status: 200, contentType: "application/json",
-                  data: JsonOutput.toJson([status: run.status, test: test, idx: run.idx, of: (run.tests as List)?.size(), step: run.step]))
+    Map prompt = publicPrompt(state.prompt as Map, now())
+    return json([appVersion: CODE_VERSION, nowMs: now(),
+                 device: [name: tv?.displayName, switch: tv?.currentValue("switch"), networkStatus: tv?.currentValue("networkStatus"),
+                          pairing: tv?.currentValue("pairing"), currentApp: tv?.currentValue("currentApp"), selected: tv != null, plug: plug != null],
+                 setup: (state.setup ?: [deviceKind: "unknown", attended: true]),
+                 options: (state.options ?: [standby: false, standbyMinutes: 2, powerCut: false, wrongCode: false]),
+                 run: statusRun(run, TEST_NAMES), prompt: prompt, lastTimeout: state.lastTimeout, reportReady: state.report != null,
+                 padLog: padLogView(state.padLog as List, 20)])
 }
 
 def apiAbort() {
     checkVersion()
-    finishRun("aborted", "aborted by the script")
-    return render(status: 200, contentType: "application/json", data: JsonOutput.toJson([status: (state.run as Map)?.status]))
+    finishRun("aborted", "aborted by the user")
+    return json([ok: true, status: (state.run as Map)?.status])
+}
+
+def apiAnswer() {
+    Map res = answerPrompt(state.prompt as Map, params.id as String, params.choice as String, now())
+    if (!res.ok) return json(failure(res.error as String))
+    state.prompt = res.prompt
+    return json([ok: true])
 }
 
 def apiReport() {
     checkVersion()
     Map run = (state.run ?: [:]) as Map
-    return render(status: 200, contentType: "application/json",
-                  data: JsonOutput.toJson([status: run.status, reason: run.reason, report: state.report, results: run.results]))
+    Map profile = profileFields((run.results ?: []) as List<Map>)
+    // results and reason are for tests/test-live-tv.sh
+    return json([status: run.status, reason: run.reason, report: state.report, results: run.results, profile: profile ?: null])
+}
+
+// The remote pad: one key at a time, never during a run, which owns the box's session.
+def apiKey() {
+    checkStall()
+    if ((state.run as Map)?.status == "running") return json(failure(BUSY))
+    if (!tv) return json(failure("select the Android TV Remote device"))
+    Map cmd = padCommand(params.name as String, params.key as String, params.text as String, params.link as String)
+    if (!cmd.ok) return json(failure(cmd.error as String))
+    padPressed(params.name as String, cmd)
+    deviceCommand(cmd.method as String, cmd.args as List)
+    return json([ok: true])
+}
+
+def apiPadLogClear() {
+    state.padLog = []
+    return json([ok: true])
+}
+
+
+// ── Pad log ───────────────────────────────────────────────────────────
+
+// A pad press outside a run: trace logging goes on for the driver (remembering how it was), the press is
+// recorded, and 4 s later the driver's lines since it are read and attached to the entry.
+private void padPressed(String name, Map cmd) {
+    long t = now()
+    Map pt = (state.padTrace ?: [:]) as Map
+    if (!pt.active) {
+        pt = [active: true, prev: tv.getSetting("traceEnable") == true]
+        tv.updateSetting("traceEnable", [value: "true", type: "bool"])
+    }
+    state.padTrace = pt
+    runIn(PAD_TRACE_S, "padTraceRestore")      // re-armed by each press
+    state.padLog = padLogAppend(state.padLog as List, [atMs: t, since: tsAt(t), button: name, key: cmd.label, lines: []], PAD_LOG_MAX)
+    runIn(4, "padCollect", [data: [atMs: t], overwrite: false])
+}
+
+void padTraceRestore() {
+    Map pt = state.padTrace as Map
+    if (!pt?.active) return
+    state.remove("padTrace")
+    try {
+        if (tv) tv.updateSetting("traceEnable", [value: pt.prev ? "true" : "false", type: "bool"])
+    } catch (e) {
+        logWarn "Could not restore trace logging: ${maskLine(e.message)}"
+    }
+}
+
+void padCollect(Map data) {
+    Map e = ((state.padLog ?: []) as List<Map>).find { (it.atMs as long) == (data.atMs as long) }
+    if (e == null) return
+    readTvLinesAsync("padLines", e.since as String, [atMs: data.atMs])
+}
+
+void padLines(resp, Map data) {
+    try {
+        List<Map> lines = linesFrom(resp, data)
+        if (lines == null) return
+        List<Map> log = (state.padLog ?: []) as List<Map>
+        Map entry = log.find { (it.atMs as long) == (data.atMs as long) }
+        if (entry == null) return
+        // Up to the next press, or the 4 s window when that comes first.
+        Map later = log.find { (it.atMs as long) > (entry.atMs as long) }
+        String windowEnd = tsAt((entry.atMs as long) + 4000L)
+        String until = later && (later.since as String) < windowEnd ? later.since as String : windowEnd
+        entry.lines = padEntryLines(lines, until)
+        state.padLog = log
+    } catch (ex) {
+        logWarn "Pad log read failed: ${maskLine(ex.message)}"
+    }
+}
+
+
+// ── Page file ─────────────────────────────────────────────────────────
+
+// Null for a missing file: it throws up to 2.5.2 and from 2.5.3.105, and returns null on 2.5.3.102.
+private String readFile(String name) {
+    for (int i = 1; ; i++) {
+        try {
+            byte[] bytes = downloadHubFile(name)
+            return bytes == null ? null : new String(bytes, "UTF-8")
+        } catch (NoSuchFileException ignored) {
+            return null
+        } catch (Exception e) {
+            if (i >= 3) throw e
+            pauseExecution(500)
+        }
+    }
+}
+
+private boolean writeFile(String name, String text) {
+    for (int i = 1; i <= 3; i++) {
+        try {
+            uploadHubFile(name, text.getBytes("UTF-8"))
+            return true
+        } catch (Exception e) {
+            logWarn "Could not write ${name} (${i} of 3): ${maskLine(e.message)}"
+            if (i < 3) pauseExecution(500)
+        }
+    }
+    return false
+}
+
+void syncUI() {
+    if (state.uiSyncAt && now() - (state.uiSyncAt as long) < 3600000L) return
+    state.uiSyncAt = now()
+    asynchttpGet("syncUICallback", [uri: UI_URL, textParser: true, timeout: 30], [:])
+}
+
+void syncUICallback(resp, data) {
+    if (resp.hasError() || resp.getStatus() != 200) {
+        logWarn "Could not download the page: HTTP ${resp.getStatus()}"
+        return
+    }
+    String html = resp.getData() as String
+    // A partial body, or a commit where app and page haven't been changed together yet, is refused.
+    if (!html?.contains("const CODE_VERSION = '${CODE_VERSION}'")) {
+        logWarn "The page on GitHub does not match version ${CODE_VERSION}"
+        return
+    }
+    if (writeFile(UI_FILE, html)) state.remove("uiSyncAt")
 }
 
 
 // ── OAuth ─────────────────────────────────────────────────────────────
-
-private boolean autoEnableOAuth() {
-    String typeId = app.getAppTypeId()?.toString()
-    if (!typeId) { log.error "Could not find app type ID."; return false }
-
-    String internalVer = null
-    try {
-        httpGet([uri: "http://127.0.0.1:8080", path: "/app/ajax/code", query: [id: typeId], timeout: 15]) { resp ->
-            internalVer = resp.data?.version?.toString()
-        }
-    } catch (e) {
-        log.error "Failed to fetch app code version: ${e.message}"
-        return false
-    }
-    if (!internalVer) { log.error "Could not determine app code version."; return false }
-
-    boolean success = false
-    try {
-        httpPost([
-            uri: "http://127.0.0.1:8080",
-            path: "/app/edit/update",
-            requestContentType: "application/x-www-form-urlencoded",
-            body: [
-                id: typeId,
-                version: internalVer,
-                oauthEnabled: "true",
-                _action_update: "Update"
-            ],
-            timeout: 20
-        ]) { resp ->
-            success = true
-        }
-    } catch (e) {
-        log.error "Failed to enable OAuth: ${e.message}"
-    }
-    return success
-}
+// Turning OAuth on is two loopback requests, each in a callback, so opening the app page never waits for them.
 
 private boolean checkOAuth() {
     if (state.accessToken) return true
@@ -780,17 +1186,40 @@ private boolean checkOAuth() {
         createAccessToken()
         return (state.accessToken != null)
     } catch (e) {
-        log.debug "OAuth not enabled yet, attempting auto-enable..."
-        if (autoEnableOAuth()) {
-            try {
-                createAccessToken()
-                return (state.accessToken != null)
-            } catch (e2) {
-                log.error "OAuth enabled but token creation failed: ${e2.message}"
-                return false
-            }
-        }
+        logDebug "OAuth not enabled yet, turning it on"
+        oauthEnableStart()
         return false
+    }
+}
+
+private void oauthEnableStart() {
+    // One attempt a minute: the app page and every endpoint ask.
+    if (state.oauthAt && now() - (state.oauthAt as long) < 60000L) return
+    state.oauthAt = now()
+    String typeId = app.getAppTypeId()?.toString()
+    if (!typeId) { logError "Could not find the app type id"; return }
+    asynchttpGet("oauthCodeDone", [uri: "http://127.0.0.1:8080", path: "/app/ajax/code", query: [id: typeId], timeout: 15], [typeId: typeId])
+}
+
+void oauthCodeDone(resp, Map data) {
+    String ver = null
+    try {
+        if (!resp.hasError()) ver = resp.json?.version?.toString()
+    } catch (e) { ver = null }
+    if (!ver) { logError "Could not read the app code version"; return }
+    asynchttpPost("oauthEnableDone", [uri: "http://127.0.0.1:8080", path: "/app/edit/update",
+                  requestContentType: "application/x-www-form-urlencoded",
+                  // asynchttpPost sends a Map body as JSON whatever the content type: the form goes encoded, as a String.
+                  body: "id=${data.typeId}&version=${ver}&oauthEnabled=true&_action_update=Update".toString(), timeout: 20], data)
+}
+
+void oauthEnableDone(resp, Map data) {
+    if (resp.hasError()) logDebug "OAuth update answered: ${maskLine(resp.getErrorMessage())}"
+    try {
+        createAccessToken()
+        if (state.accessToken) state.remove("oauthAt")
+    } catch (e) {
+        logError "OAuth enabled but the token could not be made: ${maskLine(e.message)}"
     }
 }
 
@@ -871,11 +1300,16 @@ private String lastApp(List<Map> lines) {
 Map evalSessionStart(List<Map> lines, Map steps) {
     List<Integer> order = []
     String cfg = null
+    String startApp = null
     for (Map l : lines) {
         def m = (l.msg as String) =~ /^rx (\d+):/
         if (!m.find()) continue
         order << (m.group(1) as Integer)
         if (m.group(1) == "1" && cfg == null) cfg = l.msg as String
+        if (m.group(1) == "20" && startApp == null) {
+            def am = (l.msg as String) =~ /^rx 20:\x7B1:\x7B12:"([^"]+)"/
+            if (am.find()) startApp = am.group(1)
+        }
     }
     Map kv = [:]
     Long features = null
@@ -889,7 +1323,7 @@ Map evalSessionStart(List<Map> lines, Map steps) {
         }
     }
     return [vendor: kv["2"], model: kv["1"], androidVersion: kv["4"], remoteService: kv["5"],
-            remoteServiceVersion: kv["6"], features: features, firstMessages: order.take(6).join(","),
+            remoteServiceVersion: kv["6"], features: features, firstMessages: order.take(6).join(","), startApp: startApp,
             setupFirst: order.size() >= 2 && order[0] == 1 && order[1] == 2,
             powerReported: order.contains(40), appReported: order.contains(20),
             startMs: steps.ready?.ok ? steps.ready.ms : null]
@@ -922,7 +1356,7 @@ Map evalPower(List<Map> lines, Map steps) {
     Map vol = lines.findResult { volumeOf(it.msg as String) } as Map
     List<Long> gaps = unusualPingGaps(lines)
     return [offReportMs: steps.off?.ok ? steps.off.ms : null, onReportMs: steps.on?.ok ? steps.on.ms : null,
-            sessionKept: !lines.any { (it.msg as String) =~ DROP_RE }, pingGaps: gaps.size(), longestPingGapMs: gaps ? gaps.max() : null,
+            sessionKept: !lines.any { (it.msg as String) =~ DROP_RE }, pingGaps: gaps.count { it > PING_GAP_MS } as Integer, longestPingGapMs: gaps ? gaps.max() : null,
             volumeDuringChange: vol != null, changeVolumeRange: vol?.range, changeVolumeLevel: vol?.level, playerModel: vol?.player]
 }
 
@@ -945,6 +1379,7 @@ Map volumeOf(String msg) {
 }
 
 // Gaps the driver logged between pings: it logs only those over 7 s or under 3 s, after the first ping of a session.
+// Tests 3 and 12 count only those over PING_GAP_MS; the longest of all stays in longestPingGapMs.
 List<Long> unusualPingGaps(List<Map> lines) {
     List<Long> out = []
     for (Map l : lines) {
@@ -964,7 +1399,7 @@ Map evalLaunch(List<Map> lines, Map steps) {
     return [accepted: !rejected, errorCode: code, app: lastApp(lines), launchMs: steps.launch?.ok ? steps.launch.ms : null]
 }
 
-// Test 14: the app the search key opened, whether the box reported a focused text field (message 20 with
+// Test 10: the app the search key opened, whether the box reported a focused text field (message 20 with
 // field 2, or message 21), and whether it refused the text.
 Map evalText(List<Map> lines) {
     String searchApp = null, code = null
@@ -989,7 +1424,7 @@ Map evalText(List<Map> lines) {
             textSent: sent, accepted: !rejected, textEchoed: echoed, errorCode: code]
 }
 
-// Test 15: the media keys the driver sent, and the message types the box sent after the first one.
+// Test 11: the media keys the driver sent, and the message types the box sent after the first one.
 Map evalMedia(List<Map> lines) {
     List<String> keys = []
     Set<Integer> replies = new TreeSet<Integer>()
@@ -1033,7 +1468,7 @@ Map evalHome(List<Map> lines, Map steps) {
 
 Map evalStandby(List<Map> lines, Map steps) {
     List<Long> gaps = unusualPingGaps(lines)
-    return [drops: lines.count { (it.msg as String) =~ DROP_RE } as Integer, pingGaps: gaps.size(), longestPingGapMs: gaps ? gaps.max() : null,
+    return [drops: lines.count { (it.msg as String) =~ DROP_RE } as Integer, pingGaps: gaps.count { it > PING_GAP_MS } as Integer, longestPingGapMs: gaps ? gaps.max() : null,
             onWorked: steps.on?.ok == true]
 }
 
@@ -1135,7 +1570,7 @@ Map searchResult(String msg) {
     return null
 }
 
-// Test 13: the first search runs with the box on, the second while it is off.
+// Test 9: the first search runs with the box on, the second while it is off.
 // With several TVs, ipFound says whether one listed is at the device's address, without naming it:
 // true with deviceTvFound false means the TV there announces another id than the one the device holds.
 Map evalDiscovery(List<Map> lines, String tvId, Map foundTvs, String tvIP = null) {
@@ -1178,10 +1613,10 @@ Map evalEvents(int test, List<Map> events, Map f) {
             String app = lastEvent(events, "currentApp")
             return [appEvent: app, appEventMatches: f.homeApp == null || app == f.homeApp]
         case 7: return [onlineEvent: hasEvent(events, "networkStatus", "online")]
-        case 9: return [onEvent: hasEvent(events, "switch", "on")]
-        case 10: return [offlineEvent: hasEvent(events, "networkStatus", "offline"), onlineEvent: hasEvent(events, "networkStatus", "online")]
-        case 11:
-        case 12: return [pairingAfter: lastEvent(events, "pairing")]
+        case 12: return [onEvent: hasEvent(events, "switch", "on")]
+        case 13: return [offlineEvent: hasEvent(events, "networkStatus", "offline"), onlineEvent: hasEvent(events, "networkStatus", "online")]
+        case 14:
+        case 15: return [pairingAfter: lastEvent(events, "pairing")]
         default: return [:]
     }
 }
@@ -1228,11 +1663,12 @@ List<Map> testRows(Map run, Map names) {
         String detail = ""
         if (r != null) { st = verdictOf(r); detail = verdictText(r) }
         else if (run.status == "running" && i == idx) {
-            // The step count moves on when a step ends, before the pause that lets the TV settle; cap it at the last step.
+            // The current step's plain label, as the page shows it; a step count only before the first label is set.
             st = "running"
             int count = (run.stepCount ?: 0) as int
             int n = ((run.step ?: 0) as int) + 1
-            detail = (count > 0 ? "step ${Math.min(n, count)} of ${count}" : "step ${n}").toString()
+            detail = (run.cur?.test == t && run.cur?.label) ? run.cur.label as String :
+                     (count > 0 ? "step ${Math.min(n, count)} of ${count}" : "step ${n}").toString()
         }
         else if (run.status == "running" && i > idx) st = "waiting"
         else st = "not run"
@@ -1248,6 +1684,7 @@ List<String> differences(Map fields, Map expect) {
         boolean ok = true
         if (rule.containsKey("eq")) ok = (v == rule.eq)
         else if (rule.containsKey("max")) ok = v != null && (v as Long) <= (rule.max as Long)
+        else if (rule.containsKey("sameKeys")) ok = v != null && ((v as String).tokenize(",") as Set) == ((rule.sameKeys as String).tokenize(",") as Set)
         else if (rule.containsKey("none")) ok = v == null
         else if (rule.containsKey("ne")) ok = v != rule.ne
         else if (rule.containsKey("between")) ok = v != null && (v as Long) >= (rule.between[0] as Long) && (v as Long) <= (rule.between[1] as Long)
@@ -1261,6 +1698,8 @@ String formatReport(Map header, List<Map> results) {
     if (header.warning) out << "WARNING: ${header.warning}".toString()
     out << "app ${header.appVersion} · driver ${header.driverVersion ?: 'unknown'} · hub firmware ${header.firmware}".toString()
     out << "box: ${header.vendor ?: '?'} ${header.model ?: '?'} · Android ${header.androidVersion ?: '?'} · remote service ${header.remoteServiceVersion ?: '?'} · features ${header.features ?: '?'}".toString()
+    String kinds = [tv: "TV with Android TV built in", box: "box plugged into a TV"][header.deviceKind as String] ?: "not given"
+    out << "device: ${kinds} · at the TV: ${header.attended == true ? 'yes' : 'no'}".toString()
     out << "run: ${header.status} · slowest log read ${header.slowestReadMs ?: 0} ms".toString()
     out << "box differs: the TV does something the driver doesn't assume · driver differs: the driver didn't act on what the TV sent"
     for (Map r : results) {
@@ -1272,6 +1711,10 @@ String formatReport(Map header, List<Map> results) {
             out << "   trace:"
             (r.trace as List).each { out << "     ${it}".toString() }
         }
+    }
+    if (header.manualKeys) {
+        out << ""
+        out << (header.manualKeys as String)
     }
     return out.join("\n")
 }
@@ -1297,6 +1740,287 @@ byte[] unsignedBytes(BigInteger v) {
     return b
 }
 
+
+// The named fields of the driver's state; null state gives null values.
+Map pickFields(Map st, List names) {
+    return names.collectEntries { [(it): st?.get(it)] }
+}
+
+// True when the box reported the app (message 20) at some point in the lines.
+boolean appReported(List<Map> lines, String pkg) {
+    for (Map l : lines) {
+        def m = (l.msg as String) =~ /^rx 20:\x7B1:\x7B12:"([^"]+)"/
+        if (m.find() && m.group(1) == pkg) return true
+    }
+    return false
+}
+
+// Whether a conditional question is asked: only where the measurement alone leaves the answer open.
+// noYoutube: no message 20 named YouTube after the launch. homeUnchanged: after the HOME key, no message 20, or
+// one naming the app already in front (a box that refused the YouTube link starts this test on its home screen).
+boolean promptNeeded(String cond, Map steps, List<Map> lines) {
+    switch (cond) {
+        case "noYoutube": return !appReported(lines, "com.google.android.youtube.tv")
+        case "homeUnchanged": return !homeChanged(lines)
+        default: return true
+    }
+}
+
+// Whether the app in front changed after the last HOME key the driver sent: the first message 20 after it names
+// another app than the last one before it (or any app, when none was reported before).
+boolean homeChanged(List<Map> lines) {
+    int at = -1
+    for (int i = 0; i < lines.size(); i++) if ((lines[i].msg as String).startsWith("tx 10:\u007B1:3 ")) at = i
+    if (at < 0) return false
+    String before = lastApp(lines.take(at))
+    String after = null
+    for (Map l : lines.drop(at + 1)) {
+        def m = (l.msg as String) =~ /^rx 20:\x7B1:\x7B12:"([^"]+)"/
+        if (m.find()) { after = m.group(1); break }
+    }
+    return after != null && after != before
+}
+
+// Test 10's note: which app the search key opened when no text field was reported (a voice prompt on Google TV).
+String textNote(Map f, Map prompts = [:]) {
+    if (answeredAny(prompts, ["text"])) return null
+    String note = "say in your post whether \"hubitat\" appeared in the search box"
+    if (f.fieldReported != true && f.editReported != true && f.searchApp) {
+        return "the search key opened ${f.searchApp}; no text field reported; ${note}".toString()
+    }
+    return note
+}
+
+// Test 11's note: asked for in the post only when the person answered none of the questions.
+String mediaNote(Map prompts) {
+    if (answeredAny(prompts, ["playing", "paused", "resumed", "stopped"])) return null
+    return "say in your post whether anything on the TV reacted to play, pause or stop"
+}
+
+// True when the person chose "ready" at this prompt: the attended path of tests 10 and 11 follows from it.
+boolean choseReady(Map prompts, String kind) {
+    return (prompts?.get(kind) as Map)?.choice == "ready"
+}
+
+// True when any of these prompts holds an answer (not "not asked", not "no answer").
+boolean answeredAny(Map prompts, List kinds) {
+    return kinds.any { (prompts?.get(it) as Map)?.choice != null }
+}
+
+// The /run parameters as startRun wants them, or the first error. tests are run-order numbers.
+Map runOptions(Map p, Map names) {
+    List<Integer> tests = null
+    if (p.tests) {
+        tests = []
+        for (String t : (p.tests as String).tokenize(",")) {
+            String x = t.trim()
+            if (!(x ==~ /\d{1,2}/)) return [ok: false, error: "tests must be comma-separated test numbers"]
+            int n = x as int
+            if (n == 0 || !names.containsKey(n)) return [ok: false, error: "unknown test ${n}".toString()]
+            tests << n
+        }
+    }
+    String attended = p.attended as String
+    if (attended != null && !(attended in ["true", "false"])) return [ok: false, error: "attended must be true or false"]
+    String kind = (p.deviceKind ?: "unknown") as String
+    if (!(kind in ["tv", "box", "unknown"])) return [ok: false, error: "deviceKind must be tv, box or unknown"]
+    Integer standbyMin = null
+    if (p.standby != null) {
+        String sb = p.standby as String
+        if (!(sb ==~ /\d{1,3}/) || (sb as int) < 1 || (sb as int) > 240) return [ok: false, error: "standby must be minutes from 1 to 240"]
+        standbyMin = sb as Integer
+    }
+    return [ok: true, opts: [tests: tests, attended: attended == "true", deviceKind: kind, standby: standbyMin != null,
+                             standbyMin: standbyMin ?: 2, powerCut: p.cut == "true", wrongCode: p.wrongcode == "true"]]
+}
+
+// ── Prompts: what the person is asked, and the bookkeeping of the answer ──
+
+// kind -> [text, choices]. The page shows the text and one button per choice.
+Map promptSpec(String kind) {
+    switch (kind) {
+        case "dark": return [text: "Did the screen go dark?",
+                             choices: [[id: "dark", label: "The screen is dark"], [id: "on", label: "It stayed on"]]]
+        case "picture": return [text: "Click when the picture is back.",
+                                choices: [[id: "on", label: "Picture is back"], [id: "never", label: "It didn't come back"]]]
+        case "app": return [text: "Did YouTube open on the TV?", choices: [[id: "opened", label: "YouTube opened"], [id: "not", label: "It didn't open"]]]
+        case "home": return [text: "Is the home screen showing?", choices: [[id: "yes", label: "Home screen is showing"], [id: "no", label: "Not the home screen"]]]
+        case "field": return [text: "On the TV, open a text field (YouTube's search box works), then click Ready.",
+                              choices: [[id: "ready", label: "A text field is open"], [id: "cannot", label: "I can't open one"]]]
+        case "text": return [text: "Did hubitat appear in the text field?", choices: [[id: "yes", label: "hubitat appeared"], [id: "no", label: "It didn't"]]]
+        case "playing": return [text: "Start playing a video on the TV, then click Ready.",
+                                choices: [[id: "ready", label: "A video is playing"], [id: "cannot", label: "I can't start one"]]]
+        case "paused": return [text: "Did the video pause?", choices: [[id: "yes", label: "It paused"], [id: "no", label: "It didn't"]]]
+        case "resumed": return [text: "Did it play again?", choices: [[id: "yes", label: "It played again"], [id: "no", label: "It didn't"]]]
+        case "stopped": return [text: "Did it stop?", choices: [[id: "yes", label: "It stopped"], [id: "no", label: "It didn't"]]]
+        default: throw new IllegalArgumentException("unknown prompt ${kind}")
+    }
+}
+
+Map newPrompt(String kind, String id, int test, long nowMs, int deadlineS) {
+    Map spec = promptSpec(kind)
+    return [id: id, test: test, kind: kind, text: spec.text, choices: spec.choices, askedAtMs: nowMs,
+            deadlineMs: nowMs + deadlineS * 1000L, answer: null]
+}
+
+// "open" until answered or past its deadline.
+String promptOutcome(Map prompt, long nowMs) {
+    if (prompt.answer != null) return "answered"
+    return nowMs >= (prompt.deadlineMs as long) ? "expired" : "open"
+}
+
+// An answer for the open prompt only: a stale id, an answered or expired prompt, or an unknown choice is refused.
+Map answerPrompt(Map prompt, String id, String choice, long nowMs) {
+    if (prompt == null || prompt.id != id || promptOutcome(prompt, nowMs) != "open") return [ok: false, error: "stale prompt"]
+    if (!((prompt.choices as List<Map>)*.id).contains(choice)) return [ok: false, error: "unknown choice"]
+    return [ok: true, prompt: prompt + [answer: [choice: choice, atMs: nowMs]]]
+}
+
+// The prompt as the page sees it: null once answered or past its deadline.
+Map publicPrompt(Map prompt, long nowMs) {
+    if (prompt == null || promptOutcome(prompt, nowMs) != "open") return null
+    return [id: prompt.id, test: prompt.test, kind: prompt.kind, text: prompt.text, choices: prompt.choices,
+            askedAtMs: prompt.askedAtMs, deadlineMs: prompt.deadlineMs]
+}
+
+// Milliseconds from on() to the person's "picture is back"; null when no question was asked.
+Object pictureMs(Map prompt, Long startMs) {
+    if (prompt == null) return null
+    if (prompt.notAsked) return "not asked"
+    if (prompt.choice == "on") return (prompt.atMs as Long) - startMs
+    if (prompt.choice == "never") return "never"
+    return "no answer"
+}
+
+// Report fields from the answers of one test: nothing for a question that wasn't asked of this box, "not asked" for one
+// nobody was there to answer, "no answer" for one that was left open. The picture question is pictureMs.
+Map promptFields(int test, Map prompts) {
+    List kinds = [3: ["dark"], 5: ["app"], 8: ["home"], 10: ["field", "text"], 11: ["playing", "paused", "resumed", "stopped"]][test] ?: []
+    Map names = [dark: "screenDark", app: "appSeen", home: "homeSeen", field: "fieldOpened", text: "textSeen",
+                 playing: "playbackStarted", paused: "pauseSeen", resumed: "playSeen", stopped: "stopSeen"]
+    Map out = [:]
+    for (String kind : kinds) {
+        Map p = prompts[kind] as Map
+        // A follow-up question the person was never asked (no field, no video, nobody there) is "not asked".
+        if (p == null && kind != kinds[0] && prompts[kinds[0]] != null) p = [notAsked: true]
+        if (p == null) continue
+        String c = p.choice
+        String yesId = kind in ["dark", "app", "field", "playing"] ? [dark: "dark", app: "opened", field: "ready", playing: "ready"][kind] : "yes"
+        out[names[kind]] = p.notAsked == true ? "not asked" : (c == null ? "no answer" : (c == yesId ? "yes" : "no"))
+    }
+    return out
+}
+
+// The run for /status: rows, and the step in progress with its deadline for the countdown.
+Map statusRun(Map run, Map names) {
+    if (!run?.status) return [status: null, reason: null, startedAtMs: null, rows: [], current: null]
+    Map current = null
+    List tests = (run.tests ?: []) as List
+    if (run.status == "running" && (run.idx as int) < tests.size()) {
+        Integer t = tests[run.idx as int] as Integer
+        Map cur = (run.cur?.test == t ? run.cur : [:]) as Map
+        current = [test: t, name: names[t] ?: "Test ${t}".toString(), step: cur.step, label: cur.label ?: "Starting",
+                   startedAtMs: cur.startedAtMs, deadlineMs: cur.deadlineMs]
+    }
+    return [status: run.status, reason: run.reason, startedAtMs: run.startedAt, rows: testRows(run, names), current: current]
+}
+
+// ── Remote pad ──
+
+// The pad's commands: the driver's own command ids, plus sendKey, sendText and launchApp with their argument.
+// Anything else is refused; the arguments are checked here because the driver would act on whatever it is sent.
+Map padCommand(String name, String key = null, String text = null, String link = null) {
+    List ids = ["on", "off", "volumeUp", "volumeDown", "play", "pause", "stop", "connect", "disconnect"]
+    switch (name) {
+        case "sendKey":
+            if (key == null || !(key ==~ /[A-Za-z0-9_]{1,40}/)) return [ok: false, error: "unknown key"]
+            return [ok: true, method: "sendKey", args: [[type: "STRING", value: key]], label: key.toUpperCase()]
+        case "sendText":
+            if (text == null || text.length() < 1 || text.length() > 200) return [ok: false, error: "unknown key"]
+            // The log shows the length only, as the driver's info line does.
+            return [ok: true, method: "sendText", args: [[type: "STRING", value: text]], label: "${text.length()} characters".toString()]
+        case "launchApp":
+            if (link == null || link.length() > 300 || !(link ==~ /[A-Za-z][A-Za-z0-9+.\-]*:.+/)) return [ok: false, error: "unknown key"]
+            return [ok: true, method: "launchApp", args: [[type: "STRING", value: link]], label: maskLine(link).take(60)]
+        default:
+            if (!(name in ids)) return [ok: false, error: "unknown key"]
+            return [ok: true, method: name, args: [], label: null]
+    }
+}
+
+// ── Pad log: pure helpers ──
+
+// A run restores the trace setting the person had before the pad touched it (the pad's remembered
+// value while it is active), else the device's current one.
+boolean runStartTrace(Map padTrace, Object current) {
+    return padTrace?.active ? padTrace.prev == true : current == true
+}
+
+// The log with one more entry, the oldest dropped beyond the cap.
+List<Map> padLogAppend(List log, Map entry, int cap) {
+    List<Map> out = ((log ?: []) + [entry]) as List<Map>
+    if (out.size() > cap) out = out.drop(out.size() - cap) as List<Map>
+    return out
+}
+
+// The driver's trace, warn and error lines of one press, masked: up to the cut-off timestamp, at most
+// maxLines and about 2000 characters, so fifty entries stay small in the app's state.
+List<String> padEntryLines(List<Map> lines, String untilTs, int maxLines = 15) {
+    List<String> out = []
+    int chars = 0
+    for (String l : traceLines(lines.findAll { (it.ts as String) < untilTs && (it.level in ["trace", "warn", "error"]) })) {
+        String cut = l.take(200)
+        if (out.size() >= maxLines || chars + cut.length() > 2000) break
+        out << cut
+        chars += cut.length()
+    }
+    return out
+}
+
+// The last n entries as the page sees them (newest last).
+List<Map> padLogView(List log, int n) {
+    List<Map> l = ((log ?: []) as List<Map>)
+    if (l.size() > n) l = l.drop(l.size() - n) as List<Map>
+    return l.collect { Map e -> [atMs: e.atMs, button: e.button, key: e.key, lines: (e.lines ?: [])] }
+}
+
+String padEntryText(Map e, TimeZone tz) {
+    List<String> out = ["${new Date(e.atMs as long).format('HH:mm:ss', tz)} ${e.button}${e.key ? ' ' + e.key : ''}".toString()]
+    ((e.lines ?: []) as List).each { out << "   ${it}".toString() }
+    return out.join("\n")
+}
+
+// The report's "Manual keys" section: presses after fromMs up to toMs; empty when there are none.
+String padSection(List log, long fromMs, long toMs, TimeZone tz) {
+    List<Map> hit = ((log ?: []) as List<Map>).findAll { (it.atMs as long) > fromMs && (it.atMs as long) <= toMs }
+    if (!hit) return ""
+    List<String> out = ["Manual keys (remote pad presses since the previous report)"]
+    hit.each { out << padEntryText(it, tz) }
+    return out.join("\n")
+}
+
+// The report's fields a mock box profile uses, under the profile's names, taken from the tests that ran;
+// otherMessages become extraMessages. Null-free: a field the run did not measure is left out.
+Map profileFields(List<Map> results) {
+    Map keys = [1: ["vendor", "model", "androidVersion", "remoteService", "remoteServiceVersion", "features", "firstMessages", "startApp"],
+                3: ["volumeDuringChange", "sessionKept"], 4: ["volumeReported", "playerModel"], 8: ["homeApp"],
+                9: ["announcedOff"], 10: ["searchApp"], 14: ["inputEncodings", "outputEncodings", "preferredRole"],
+                15: ["inputEncodings", "outputEncodings", "preferredRole"]]
+    Map prof = [:]
+    Set<Integer> other = new TreeSet<Integer>()
+    for (Map r : results) {
+        Map obs = (r.observed ?: [:]) as Map
+        ((keys[r.test as Integer] ?: []) as List).each { k -> if (obs.get(k) != null) prof[k] = obs[k] }
+        // Volume: the volume keys' message when there was one, else the one around a power change.
+        if (r.test == 3 && obs.changeVolumeRange != null) { prof.volumeRange = obs.changeVolumeRange; prof.volumeLevel = obs.changeVolumeLevel }
+        if (r.test == 4 && obs.volumeRange != null) { prof.volumeRange = obs.volumeRange; prof.volumeLevel = obs.volumeLevel }
+        if (r.test == 6 && obs.errorCode != null) prof.errorCode = obs.errorCode as Integer
+        if (r.test == 7 && obs.boxError != null) prof.errorCode = obs.boxError as Integer
+        if (obs.otherMessages) other.addAll((obs.otherMessages as String).tokenize(",").collect { it as Integer })
+    }
+    if (prof) prof.extraMessages = other.toList()
+    return prof
+}
 
 // Seconds until the next log read: at least as long as the last read took, so reading the log
 // never takes more than about half the hub's time; at least 1 s for short waits, 10 s for long ones.

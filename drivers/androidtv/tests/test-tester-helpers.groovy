@@ -65,10 +65,38 @@ List<String> SIGNATURES = [
     'String wrongPairingCode(String clientPem, String tvPem) {',
     'byte[] unsignedBytes(BigInteger v) {',
     'int pollGap(int timeoutS, Long lastReadMs) {',
+    'Map pickFields(Map st, List names) {',
+    'boolean appReported(List<Map> lines, String pkg) {',
+    'boolean promptNeeded(String cond, Map steps, List<Map> lines) {',
+    'boolean homeChanged(List<Map> lines) {',
+    'String textNote(Map f, Map prompts = [:]) {',
+    'String mediaNote(Map prompts) {',
+    'boolean choseReady(Map prompts, String kind) {',
+    'boolean answeredAny(Map prompts, List kinds) {',
+    'List<Map> textSteps(Map run) {',
+    'List<Map> mediaSteps(Map run) {',
+    'Map runOptions(Map p, Map names) {',
+    'Map promptSpec(String kind) {',
+    'Map newPrompt(String kind, String id, int test, long nowMs, int deadlineS) {',
+    'String promptOutcome(Map prompt, long nowMs) {',
+    'Map answerPrompt(Map prompt, String id, String choice, long nowMs) {',
+    'Map publicPrompt(Map prompt, long nowMs) {',
+    'Object pictureMs(Map prompt, Long startMs) {',
+    'Map promptFields(int test, Map prompts) {',
+    'Map statusRun(Map run, Map names) {',
+    'Map padCommand(String name, String key = null, String text = null, String link = null) {',
+    'boolean runStartTrace(Map padTrace, Object current) {',
+    'List<Map> padLogAppend(List log, Map entry, int cap) {',
+    'List<String> padEntryLines(List<Map> lines, String untilTs, int maxLines = 15) {',
+    'List<Map> padLogView(List log, int n) {',
+    'String padEntryText(Map e, TimeZone tz) {',
+    'String padSection(List log, long fromMs, long toMs, TimeZone tz) {',
+    'Map profileFields(List<Map> results) {',
 ]
 String IMPORTS = "import java.security.MessageDigest\nimport java.security.cert.CertificateFactory\nimport java.text.SimpleDateFormat\n"
+String GAP = "long getPING_GAP_MS() { 12000L }\n"
 String DROP = "String getDROP_RE() { '^(remote connect returned|Socket \\\\(|No message from the TV|Connect failed)' }\n"
-def h = new GroovyShell().parse(IMPORTS + DROP + SIGNATURES.collect { extract(text, it) }.join("\n") + "\nreturn this\n").run()
+def h = new GroovyShell().parse(IMPORTS + GAP + DROP + SIGNATURES.collect { extract(text, it) }.join("\n") + "\nreturn this\n").run()
 
 int pass = 0, fail = 0
 def check = { String name, boolean cond ->
@@ -151,6 +179,8 @@ check 'features', s1.features == 639L
 check 'first messages', s1.firstMessages == '1,2,50,40,20'
 check 'setup first, power and app', s1.setupFirst && s1.powerReported && s1.appReported
 check 'start time from step', s1.startMs == 1300L
+check 'app at session start', s1.startApp == 'com.google.android.tvlauncher'
+check 'no app reported: no start app', h.evalSessionStart([ln('11:00:00.000', 'rx 40:{1:1}')], [:]).startApp == null
 
 println 'evalPings'
 List<Map> pings = [ln('11:00:00.000', 'ping #1 val1=1 gap=0 ms 8:{}'), ln('11:00:55.000', 'ping #12 val1=12 gap=5000 ms 8:{}'),
@@ -172,7 +202,12 @@ check 'volume during change, its values and player', s3.volumeDuringChange == tr
 check 'no ping gaps', s3.pingGaps == 0 && s3.longestPingGapMs == null
 Map s3g = h.evalPower(pw + [ln('11:46:13.000', 'ping #1 val1=9 gap=0 ms 8:{1:9 2:1}'), ln('11:46:25.000', 'ping #4 val1=12 gap=11900 ms 8:{1:12 2:1}')],
                       [off: [ok: true, ms: 1L], on: [ok: true, ms: 1L]])
-check 'gap while off counted, first ping of a session ignored', s3g.pingGaps == 1 && s3g.longestPingGapMs == 11900L
+check 'a gap under 12 s is not counted, the longest stays', s3g.pingGaps == 0 && s3g.longestPingGapMs == 11900L
+Map s3h = h.evalPower(pw + [ln('11:46:13.000', 'ping #1 val1=9 gap=0 ms 8:{1:9 2:1}'), ln('11:46:25.000', 'ping #4 val1=12 gap=12001 ms 8:{1:12 2:1}'),
+                            ln('11:46:30.000', 'ping #5 val1=13 gap=9000 ms 8:{1:13 2:1}'), ln('11:46:31.000', 'ping #6 val1=14 gap=2100 ms 8:{1:14 2:1}')],
+                      [off: [ok: true, ms: 1L], on: [ok: true, ms: 1L]])
+check 'gap over 12 s counted once, first ping of a session ignored', s3h.pingGaps == 1 && s3h.longestPingGapMs == 12001L
+check 'exactly 12 s is not over', h.evalPower([ln('11:46:25.000', 'ping #4 val1=12 gap=12000 ms 8:{1:12 2:1}')], [:]).pingGaps == 0
 check 'volume without a range is not a volume report', h.evalPower([ln('11:00:00.000', 'rx 50:{1:2252 2:9 3:"EBOX TV" 4:1}')], [:]).volumeDuringChange == false
 check 'drop detected', h.evalPower(pw + [ln('11:46:05.000', 'remote connect returned after 1073 ms')], [off: [ok: true, ms: 1L], on: [ok: true, ms: 1L]]).sessionKept == false
 
@@ -229,8 +264,8 @@ check 'messages 22 and 23 are handled', h.otherMessages([ln('11:00:00.000', 'rx 
 println 'evalStandby'
 Map s9 = h.evalStandby([ln('12:00:00.000', 'rx 40:{1:0}'), ln('12:30:00.000', 'rx 40:{1:1}')], [on: [ok: true, ms: 300L]])
 check 'no drops, on worked', s9.drops == 0 && s9.onWorked == true && s9.pingGaps == 0
-check 'standby gaps', h.evalStandby([ln('12:00:00.000', 'ping #7 val1=7 gap=30010 ms 8:{1:7 2:1}'), ln('12:01:00.000', 'ping #9 val1=9 gap=2100 ms 8:{1:9 2:1}')], [:])
-    .with { it.pingGaps == 2 && it.longestPingGapMs == 30010L }
+check 'standby gaps over 12 s only', h.evalStandby([ln('12:00:00.000', 'ping #7 val1=7 gap=30010 ms 8:{1:7 2:1}'), ln('12:01:00.000', 'ping #9 val1=9 gap=2100 ms 8:{1:9 2:1}')], [:])
+    .with { it.pingGaps == 1 && it.longestPingGapMs == 30010L }
 
 println 'evalPowerCut'
 long cutAt = h.tsMs('2026-10-15 11:47:24.000', utc)
@@ -294,8 +329,10 @@ check 'no volume, no event', h.evalEvents(4, [], [volumeReported: false]).volume
 check 'app event matches the box', h.evalEvents(5, [ev('currentApp', 'x'), ev('currentApp', 'yt')], [app: 'yt']) == [appEvent: 'yt', appEventMatches: true]
 check 'app event missing', h.evalEvents(6, [], [app: 'yt']).appEventMatches == false
 check 'home app event', h.evalEvents(8, [ev('currentApp', 'home')], [homeApp: 'home']).appEventMatches == true
-check 'offline then online', h.evalEvents(10, [ev('networkStatus', 'offline'), ev('networkStatus', 'online')], [:]) == [offlineEvent: true, onlineEvent: true]
-check 'pairing after', h.evalEvents(12, [ev('pairing', 'pairing'), ev('pairing', 'unpaired')], [:]).pairingAfter == 'unpaired'
+check 'offline then online', h.evalEvents(13, [ev('networkStatus', 'offline'), ev('networkStatus', 'online')], [:]) == [offlineEvent: true, onlineEvent: true]
+check 'pairing after', h.evalEvents(15, [ev('pairing', 'pairing'), ev('pairing', 'unpaired')], [:]).pairingAfter == 'unpaired' && h.evalEvents(14, [ev('pairing', 'paired')], [:]).pairingAfter == 'paired'
+check 'standby event', h.evalEvents(12, [ev('switch', 'on')], [:]) == [onEvent: true]
+check 'old numbers give nothing', h.evalEvents(9, [ev('switch', 'on')], [:]) == [:] && h.evalEvents(11, [ev('pairing', 'paired')], [:]) == [:]
 
 println 'differences'
 check 'eq, max, between', h.differences([a: true, b: 4000L, c: 7000L, d: null],
@@ -326,8 +363,10 @@ Map running = [status: 'running', tests: [0, 1, 2, 3], idx: 2, step: 1,
 List<Map> tr = h.testRows(running, names)
 check 'precheck hidden when it passed', tr*.test == [1, 2, 3]
 check 'done, running with step, waiting', tr*.state == ['ok', 'running', 'waiting'] && tr[1].detail == 'step 2'
-check 'step of count', h.testRows(running + [stepCount: 3], names)[1].detail == 'step 2 of 3'
+check 'step of count before a label is set', h.testRows(running + [stepCount: 3], names)[1].detail == 'step 2 of 3'
 check 'settling after the last step', h.testRows(running + [stepCount: 1], names)[1].detail == 'step 1 of 1'
+check 'the current step\'s plain label', h.testRows(running + [cur: [test: 2, step: 'connect', label: 'Waiting for the box to answer']], names)[1].detail == 'Waiting for the box to answer'
+check 'a label of another test is not shown', h.testRows(running + [cur: [test: 1, step: 'x', label: 'old']], names)[1].detail == 'step 2'
 Map aborted = [status: 'aborted', tests: [0, 1, 2], idx: 0, results: [[test: 0, diffs: ['connected'], driverDiffs: [], boxDiffs: ['connected']]]]
 List<Map> ta = h.testRows(aborted, names)
 check 'failed precheck shown, rest not run', ta*.test == [0, 1, 2] && ta*.state == ['box', 'not run', 'not run']
@@ -343,6 +382,10 @@ check 'as expected line', rep.contains('1. Session start — as expected\n   mod
 check 'box differs line with trace', rep.contains('6. Launch by package — box differs (accepted, app)') && rep.contains('     11:44:55.588 rx 3:{1:7}')
 check 'legend line', rep.contains('box differs: the TV does something')
 check 'skipped line', rep.contains('10. Power cut — skipped: no plug selected')
+check 'device line: not given by default, at the TV no', rep.contains('\ndevice: not given · at the TV: no\nrun: done')
+check 'device line: kind and at the TV', h.formatReport([status: 'done', deviceKind: 'box', attended: true], []).contains('device: box plugged into a TV · at the TV: yes') &&
+    h.formatReport([status: 'done', deviceKind: 'tv', attended: false], []).contains('device: TV with Android TV built in · at the TV: no')
+check 'manual keys after the tests', h.formatReport([status: 'done', manualKeys: 'Manual keys (x)\n00:00:01 home'], [[test: 1, name: 'Session start', observed: [a: 1], diffs: []]]).endsWith('1. Session start — as expected\n   a=1\n\nManual keys (x)\n00:00:01 home')
 check 'note line', h.formatReport([status: 'done'], [[test: 9, name: 'Long standby', observed: [drops: 0], diffs: [], note: 'trace off']]).contains('   drops=0\n   note: trace off')
 check 'trace printed without a difference', h.formatReport([status: 'done'], [[test: 1, name: 'Session start', observed: [model: 'X'], diffs: [], trace: ['11:00:00.000 rx 1:{1:639}']]])
     .contains('1. Session start — as expected\n   model=X\n   trace:\n     11:00:00.000 rx 1:{1:639}')
@@ -387,7 +430,16 @@ Map m3 = h.evalMedia([ln('11:00:01.000', 'tx 10:{1:86 2:3}'), ln('11:00:01.050',
 check 'refused key', m3.accepted == false && m3.errorCode == '3'
 check 'drop seen', m3.sessionKept == false
 check 'other keys not counted', h.evalMedia([ln('11:00:00.000', 'tx 10:{1:3 2:3}')]).keysSent == ''
-check 'expected run has no differences', h.differences(m1, [keysSent: [eq: '126,127,86'], accepted: [eq: true], sessionKept: [eq: true], replies: [none: true]]) == []
+check 'expected run has no differences', h.differences(m1, [keysSent: [sameKeys: '86,126,127'], accepted: [eq: true], sessionKept: [eq: true], replies: [none: true]]) == []
+
+Map m4 = h.evalMedia([ln('11:00:01.000', 'tx 10:{1:127 2:3}'), ln('11:00:04.000', 'tx 10:{1:126 2:3}'), ln('11:00:07.000', 'tx 10:{1:86 2:3}')])
+check 'keys sent in the attended order', m4.keysSent == '127,126,86'
+println 'sameKeys rule'
+check 'same codes in any order', h.differences([keysSent: '127,126,86'], [keysSent: [sameKeys: '86,126,127']]) == [] &&
+    h.differences([keysSent: '126,127,86'], [keysSent: [sameKeys: '86,126,127']]) == []
+check 'a missing, extra or absent key differs', h.differences([keysSent: '126,127'], [keysSent: [sameKeys: '86,126,127']]) == ['keysSent'] &&
+    h.differences([keysSent: '126,127,86,3'], [keysSent: [sameKeys: '86,126,127']]) == ['keysSent'] &&
+    h.differences([:], [keysSent: [sameKeys: '86,126,127']]) == ['keysSent'] && h.differences([keysSent: ''], [keysSent: [sameKeys: '86,126,127']]) == ['keysSent']
 
 println 'evalDiscovery'
 def dl = { String m -> [ts: '2026-10-17 10:00:00.000', level: 'info', msg: m] }
@@ -416,6 +468,183 @@ check 'several TVs: list gone, unknown', h.evalDiscovery([dl('Found 2 TVs: choos
 Map dNone = h.evalDiscovery([dl('No Android TV or Google TV found. Check that the TV is on')], id7, null)
 check 'nothing announced', dNone.announced == false && dNone.tvCount == 0 && dNone.deviceTvFound == null
 check 'no search line at all', h.evalDiscovery([], id7, null).announced == null
+
+println 'pickFields, appReported, promptNeeded'
+check 'pickFields: named only, missing and null state', h.pickFields([a: 1, cert: 'x', key: 'secret'], ['a', 'b']) == [a: 1, b: null] && h.pickFields(null, ['a']) == [a: null]
+check 'appReported: YouTube in a message 20', h.appReported([ln('11:00:00.000', 'rx 20:{1:{12:"com.google.android.youtube.tv"}}')], 'com.google.android.youtube.tv')
+check 'appReported: another app, no message', !h.appReported([ln('11:00:00.000', 'rx 20:{1:{12:"com.google.android.tvlauncher"}}')], 'com.google.android.youtube.tv') && !h.appReported([], 'x')
+check 'app question only without YouTube', h.promptNeeded('noYoutube', [:], []) &&
+    !h.promptNeeded('noYoutube', [:], [ln('11:00:00.000', 'rx 20:{1:{12:"com.google.android.youtube.tv"}}')])
+Map homeKey = ln('11:00:01.000', 'tx 10:{1:3 2:3}')
+Map launcher = ln('11:00:01.100', 'rx 20:{1:{12:"com.google.android.tvlauncher"}}')
+Map youtube = ln('11:00:00.000', 'rx 20:{1:{12:"com.google.android.youtube.tv"}}')
+check 'home question when HOME brought no app message', h.promptNeeded('homeUnchanged', [:], [youtube, homeKey])
+check 'home question when HOME re-reported the app in front', h.promptNeeded('homeUnchanged', [:],
+    [ln('11:00:00.000', 'rx 20:{1:{12:"com.google.android.tvlauncher"}}'), homeKey, launcher])
+check 'no home question when HOME changed the app', !h.promptNeeded('homeUnchanged', [:], [youtube, homeKey, launcher])
+check 'no home question when nothing was in front before and HOME reported an app', !h.promptNeeded('homeUnchanged', [:], [homeKey, launcher])
+check 'homeChanged false without a HOME key', !h.homeChanged([youtube, launcher])
+
+println 'textNote'
+check 'plain note when a field was reported', h.textNote([fieldReported: true, editReported: false, searchApp: 'x']) == 'say in your post whether "hubitat" appeared in the search box' &&
+    h.textNote([fieldReported: false, editReported: true, searchApp: 'x']).startsWith('say in your post')
+check 'search app named when no field was reported', h.textNote([fieldReported: false, editReported: false, searchApp: 'com.google.android.katniss']) ==
+    'the search key opened com.google.android.katniss; no text field reported; say in your post whether "hubitat" appeared in the search box'
+check 'no search app seen: plain note', h.textNote([fieldReported: false, editReported: false, searchApp: null]).startsWith('say in your post')
+
+check 'a text answer drops the note, no answer and not asked keep it', h.textNote([fieldReported: true], [text: [choice: 'yes']]) == null &&
+    h.textNote([fieldReported: true], [text: [choice: 'no']]) == null &&
+    h.textNote([fieldReported: true], [text: [choice: null]]).startsWith('say in your post') && h.textNote([fieldReported: true], [field: [notAsked: true]]).startsWith('say in your post')
+check 'media note: kept without answers, dropped with any', h.mediaNote([:]).startsWith('say in your post') && h.mediaNote([playing: [notAsked: true]]).startsWith('say in your post') &&
+    h.mediaNote([playing: [choice: null]]) != null && h.mediaNote([playing: [choice: 'cannot']]) == null && h.mediaNote([playing: [choice: 'ready'], stopped: [choice: null]]) == null &&
+    h.mediaNote([playing: [choice: 'ready'], paused: [choice: 'no']]) == null
+
+println 'step paths of tests 10 and 11'
+Closure stepNames = { List<Map> st -> st*.name }
+Map fresh = [prompts: [:], ctx: [:]]
+check 'test 10: field first, default path until answered', stepNames(h.textSteps(fresh)) == ['field', 'home', 'search', 'text', 'back', 'home2']
+check 'test 10: ready answer', stepNames(h.textSteps([prompts: [field: [choice: 'ready']]])) == ['field', 'text', 'textSeen', 'back', 'home2']
+check 'test 10: cannot, no answer, not asked take the 0.6.1 path', ['cannot', null].every { stepNames(h.textSteps([prompts: [field: [choice: it]]])) == ['field', 'home', 'search', 'text', 'back', 'home2'] } &&
+    stepNames(h.textSteps([prompts: [field: [notAsked: true]]])) == ['field', 'home', 'search', 'text', 'back', 'home2']
+check 'test 10: step 0 is the same on both paths, so the index stays put', h.textSteps(fresh)[0] == h.textSteps([prompts: [field: [choice: 'ready']]])[0]
+check 'test 10: SEARCH to text keeps its 2 s, ready path has the text prompt', h.textSteps(fresh)[2].after == 2 && h.textSteps(fresh)[3].cmd == 'sendText' &&
+    h.textSteps([prompts: [field: [choice: 'ready']]])[2] == [name: 'textSeen', label: 'Waiting for your answer', prompt: 'text', timeout: 30]
+check 'test 11: playing first, play pause stop otherwise', stepNames(h.mediaSteps(fresh)) == ['playing', 'play', 'pause', 'stop'] &&
+    stepNames(h.mediaSteps([prompts: [playing: [choice: 'cannot']]])) == ['playing', 'play', 'pause', 'stop']
+check 'test 11: ready answer', stepNames(h.mediaSteps([prompts: [playing: [choice: 'ready']]])) == ['playing', 'pause', 'pauseSeen', 'play', 'playSeen', 'stop', 'stopSeen']
+check 'test 11: prompts 90 s then 20 s each', h.mediaSteps(fresh)[0].timeout == 90 && h.textSteps(fresh)[0].timeout == 90 &&
+    h.mediaSteps([prompts: [playing: [choice: 'ready']]]).findAll { it.prompt }.collect { [it.prompt, it.timeout] } == [['playing', 90], ['paused', 20], ['resumed', 20], ['stopped', 20]]
+check 'every new step has a label and a deadline', (h.textSteps([prompts: [field: [choice: 'ready']]]) + h.mediaSteps([prompts: [playing: [choice: 'ready']]]) + h.mediaSteps(fresh) + h.textSteps(fresh)).every { it.label && (it.timeout || it.after) }
+check 'choseReady', h.choseReady([field: [choice: 'ready']], 'field') && !h.choseReady([field: [choice: 'cannot']], 'field') && !h.choseReady(null, 'field') && !h.choseReady([:], 'field')
+
+println 'runOptions'
+Map names16 = [0: 'Connection', 1: 'a', 2: 'b', 15: 'Pairing']
+check 'defaults: no prompts, unknown kind, no options', h.runOptions([:], names16) == [ok: true, opts: [tests: null, attended: false, deviceKind: 'unknown', standby: false, standbyMin: 2, powerCut: false, wrongCode: false]]
+check 'all parameters', h.runOptions([tests: '1, 2,15', attended: 'true', deviceKind: 'box', standby: '5', cut: 'true', wrongcode: 'true'], names16) ==
+    [ok: true, opts: [tests: [1, 2, 15], attended: true, deviceKind: 'box', standby: true, standbyMin: 5, powerCut: true, wrongCode: true]]
+check 'attended false', h.runOptions([attended: 'false'], names16).opts.attended == false
+check 'cut and wrongcode only on "true"', h.runOptions([cut: '1', wrongcode: 'yes'], names16).opts.with { !it.powerCut && !it.wrongCode }
+check 'bad test numbers refused', h.runOptions([tests: '1,x'], names16).error == 'tests must be comma-separated test numbers' &&
+    h.runOptions([tests: '0'], names16).error == 'unknown test 0' && h.runOptions([tests: '99'], names16).error == 'unknown test 99' &&
+    h.runOptions([tests: '1,3'], names16).error == 'unknown test 3' && !h.runOptions([tests: '1,,'], names16).error
+check 'bad attended, kind and standby refused', h.runOptions([attended: 'yes'], names16).error == 'attended must be true or false' &&
+    h.runOptions([deviceKind: 'phone'], names16).error == 'deviceKind must be tv, box or unknown' &&
+    ['0', '241', 'x', '', '-1'].every { h.runOptions([standby: it], names16).error == 'standby must be minutes from 1 to 240' } && h.runOptions([standby: '240'], names16).opts.standbyMin == 240
+
+println 'prompts'
+Map pp = h.newPrompt('picture', 'p7', 3, 1000L, 60)
+check 'new prompt: text, choices, deadline', pp.id == 'p7' && pp.kind == 'picture' && pp.test == 3 && pp.deadlineMs == 61000L && pp.askedAtMs == 1000L && pp.answer == null &&
+    pp.text == 'Click when the picture is back.' && pp.choices*.id == ['on', 'never']
+check 'spec: dark', h.promptSpec('dark').choices == [[id: 'dark', label: 'The screen is dark'], [id: 'on', label: 'It stayed on']]
+check 'spec: app and home', h.promptSpec('app').choices*.id == ['opened', 'not'] && h.promptSpec('home').choices*.id == ['yes', 'no']
+boolean threw = false
+try { h.promptSpec('allow') } catch (IllegalArgumentException e) { threw = true }
+check 'unknown prompt kind throws', threw
+check 'outcome: open, answered, expired', h.promptOutcome(pp, 5000L) == 'open' && h.promptOutcome(pp + [answer: [choice: 'on']], 5000L) == 'answered' && h.promptOutcome(pp, 61000L) == 'expired'
+Map ans = h.answerPrompt(pp, 'p7', 'on', 5000L)
+check 'answer taken', ans.ok && ans.prompt.answer == [choice: 'on', atMs: 5000L]
+check 'stale id, null prompt, second answer, late answer', h.answerPrompt(pp, 'p6', 'on', 5000L) == [ok: false, error: 'stale prompt'] && h.answerPrompt(null, 'p7', 'on', 5000L).error == 'stale prompt' &&
+    h.answerPrompt(ans.prompt, 'p7', 'never', 6000L).error == 'stale prompt' && h.answerPrompt(pp, 'p7', 'on', 61000L).error == 'stale prompt'
+check 'unknown choice', h.answerPrompt(pp, 'p7', 'maybe', 5000L).error == 'unknown choice'
+check 'page sees open prompts only, without the answer', h.publicPrompt(pp, 5000L).keySet().containsAll(['id', 'test', 'kind', 'text', 'choices', 'askedAtMs', 'deadlineMs']) &&
+    !h.publicPrompt(pp, 5000L).containsKey('answer') && h.publicPrompt(ans.prompt, 6000L) == null && h.publicPrompt(pp, 200000L) == null && h.publicPrompt(null, 1L) == null
+
+check 'spec: field, text, playing', h.promptSpec('field').text == "On the TV, open a text field (YouTube's search box works), then click Ready." && h.promptSpec('field').choices*.id == ['ready', 'cannot'] &&
+    h.promptSpec('text').text == 'Did hubitat appear in the text field?' && h.promptSpec('text').choices*.id == ['yes', 'no'] &&
+    h.promptSpec('playing').text == 'Start playing a video on the TV, then click Ready.' && h.promptSpec('playing').choices*.id == ['ready', 'cannot']
+check 'spec: paused, resumed, stopped', h.promptSpec('paused').text == 'Did the video pause?' && h.promptSpec('resumed').text == 'Did it play again?' &&
+    h.promptSpec('stopped').text == 'Did it stop?' && ['paused', 'resumed', 'stopped'].every { h.promptSpec(it).choices*.id == ['yes', 'no'] }
+
+println 'pictureMs, promptFields'
+check 'seconds from on()', h.pictureMs([choice: 'on', atMs: 5000L], 2000L) == 3000L
+check 'never, no answer, not asked, no question', h.pictureMs([choice: 'never', atMs: 1L], 0L) == 'never' && h.pictureMs([choice: null], 0L) == 'no answer' &&
+    h.pictureMs([notAsked: true], 0L) == 'not asked' && h.pictureMs(null, 0L) == null
+check 'dark: yes, no, no answer, not asked', h.promptFields(3, [dark: [choice: 'dark']]) == [screenDark: 'yes'] && h.promptFields(3, [dark: [choice: 'on']]) == [screenDark: 'no'] &&
+    h.promptFields(3, [dark: [choice: null]]) == [screenDark: 'no answer'] && h.promptFields(3, [dark: [notAsked: true]]) == [screenDark: 'not asked']
+check 'app and home', h.promptFields(5, [app: [choice: 'opened']]) == [appSeen: 'yes'] && h.promptFields(5, [app: [choice: 'not']]) == [appSeen: 'no'] && h.promptFields(5, [app: [choice: null]]) == [appSeen: 'no answer'] &&
+    h.promptFields(8, [home: [choice: 'yes']]) == [homeSeen: 'yes'] && h.promptFields(8, [home: [choice: 'no']]) == [homeSeen: 'no'] && h.promptFields(8, [home: [notAsked: true]]) == [homeSeen: 'not asked']
+check 'a question not asked of this box adds nothing; the picture is pictureMs', h.promptFields(5, [:]) == [:] && h.promptFields(8, [:]) == [:] && h.promptFields(3, [picture: [choice: 'on']]) == [:] &&
+    h.promptFields(4, [app: [choice: 'opened']]) == [:]
+check 'field: ready is yes, cannot is no', h.promptFields(10, [field: [choice: 'ready'], text: [choice: 'yes']]) == [fieldOpened: 'yes', textSeen: 'yes'] &&
+    h.promptFields(10, [field: [choice: 'ready'], text: [choice: 'no']]) == [fieldOpened: 'yes', textSeen: 'no'] &&
+    h.promptFields(10, [field: [choice: 'cannot']]) == [fieldOpened: 'no', textSeen: 'not asked']
+check 'field: no answer and not asked', h.promptFields(10, [field: [choice: null]]) == [fieldOpened: 'no answer', textSeen: 'not asked'] &&
+    h.promptFields(10, [field: [notAsked: true]]) == [fieldOpened: 'not asked', textSeen: 'not asked'] && h.promptFields(10, [field: [choice: 'ready'], text: [choice: null]]).textSeen == 'no answer'
+check 'media: four answers', h.promptFields(11, [playing: [choice: 'ready'], paused: [choice: 'yes'], resumed: [choice: 'no'], stopped: [choice: null]]) ==
+    [playbackStarted: 'yes', pauseSeen: 'yes', playSeen: 'no', stopSeen: 'no answer']
+check 'media: cannot, unattended, nothing', h.promptFields(11, [playing: [choice: 'cannot']]) == [playbackStarted: 'no', pauseSeen: 'not asked', playSeen: 'not asked', stopSeen: 'not asked'] &&
+    h.promptFields(11, [playing: [notAsked: true]]).playbackStarted == 'not asked' && h.promptFields(11, [:]) == [:] && h.promptFields(10, [:]) == [:]
+
+println 'statusRun'
+Map sr = h.statusRun([status: 'running', startedAt: 99L, tests: [0, 1, 3], idx: 2, step: 0,
+                      cur: [test: 3, step: 'off', label: 'Waiting for the box to report off', startedAtMs: 500L, deadlineMs: 1500L], results: []], [1: 'Session start', 3: 'Power off/on'])
+check 'current step with label and deadline', sr.current == [test: 3, name: 'Power off/on', step: 'off', label: 'Waiting for the box to report off', startedAtMs: 500L, deadlineMs: 1500L]
+check 'run fields and rows', sr.status == 'running' && sr.startedAtMs == 99L && sr.rows*.test == [1, 3] && sr.rows*.state == ['not run', 'running']
+check 'a step of an earlier test gives a starting label', h.statusRun([status: 'running', tests: [0, 1], idx: 1, step: 0, results: [], cur: [test: 0, step: 'x', label: 'old']], [1: 'S']).current.label == 'Starting'
+check 'finished run has no current step', h.statusRun([status: 'done', tests: [0, 1], idx: 2, results: []], [:]).current == null
+check 'no run', h.statusRun(null, [:]) == [status: null, reason: null, startedAtMs: null, rows: [], current: null]
+
+println 'padCommand'
+check 'a driver command passes by its name', ['on', 'off', 'volumeUp', 'volumeDown', 'play', 'pause', 'stop', 'connect', 'disconnect'].every { h.padCommand(it) == [ok: true, method: it, args: [], label: null] }
+check 'the id is case-sensitive and must be listed', !h.padCommand('VOLUMEUP').ok && !h.padCommand('mute').ok && !h.padCommand('startPairing').ok && !h.padCommand('forgetPairing').ok &&
+    !h.padCommand('submitPairingCode').ok && !h.padCommand(null).ok && !h.padCommand('').ok && !h.padCommand('sendKey ').ok && h.padCommand('mute').error == 'unknown key'
+check 'sendKey passes the name as typed', h.padCommand('sendKey', 'HOME') == [ok: true, method: 'sendKey', args: [[type: 'STRING', value: 'HOME']], label: 'HOME'] &&
+    h.padCommand('sendKey', 'keycode_5').args[0].value == 'keycode_5' && h.padCommand('sendKey', '86').ok && h.padCommand('sendKey', 'x' * 40).ok
+check 'sendKey refuses odd names', ['', null, 'A B', 'A;B', 'A-B', 'x' * 41, 'A\n', 'DPAD/UP'].every { !h.padCommand('sendKey', it).ok }
+check 'sendText: 1 to 200 characters, the log shows the length', h.padCommand('sendText', null, 'hello there') == [ok: true, method: 'sendText', args: [[type: 'STRING', value: 'hello there']], label: '11 characters'] &&
+    h.padCommand('sendText', null, 'x' * 200).ok && !h.padCommand('sendText', null, 'x' * 201).ok && !h.padCommand('sendText', null, '').ok && !h.padCommand('sendText').ok
+check 'launchApp: a link with a scheme, up to 300 characters', h.padCommand('launchApp', null, null, 'https://www.youtube.com') ==
+    [ok: true, method: 'launchApp', args: [[type: 'STRING', value: 'https://www.youtube.com']], label: 'https://www.youtube.com'] &&
+    h.padCommand('launchApp', null, null, 'market://launch?id=x').ok
+check 'launchApp refuses a bare name, an empty or long link', !h.padCommand('launchApp', null, null, 'com.google.android.youtube.tv').ok && !h.padCommand('launchApp').ok &&
+    !h.padCommand('launchApp', null, null, '://x').ok && !h.padCommand('launchApp', null, null, 'https:').ok && !h.padCommand('launchApp', null, null, 'https://' + 'a' * 300).ok &&
+    h.padCommand('launchApp', null, null, 'https://' + 'a' * 292).ok
+check 'launchApp: the logged link is masked', h.padCommand('launchApp', null, null, 'http://192.0.2.10:8080/x').label == 'http://<ip>:8080/x'
+check 'text and link parameters are ignored for other commands', h.padCommand('on', 'HOME', 'x', 'https://x').args == [] && h.padCommand('sendKey', 'HOME', 'x', 'https://x').args[0].value == 'HOME'
+
+println 'pad log'
+check 'append keeps the order', h.padLogAppend([[atMs: 1L]], [atMs: 2L], 50)*.atMs == [1L, 2L] && h.padLogAppend(null, [atMs: 1L], 50)*.atMs == [1L]
+List big = (1..50).collect { [atMs: it as long] }
+check 'append drops the oldest beyond the cap', h.padLogAppend(big, [atMs: 51L], 50).with { it.size() == 50 && it[0].atMs == 2L && it[-1].atMs == 51L } && h.padLogAppend(big.take(10), [atMs: 99L], 50).size() == 11
+check 'a run restores the value from before the pad', h.runStartTrace([active: true, prev: false], true) == false && h.runStartTrace([active: true, prev: true], false) == true &&
+    h.runStartTrace(null, true) == true && h.runStartTrace(null, false) == false && h.runStartTrace([:], null) == false
+def pl = { String t, String lvl, String m -> [ts: "2026-10-15 ${t}".toString(), level: lvl, msg: m] }
+List<Map> pl1 = [pl('3:00:01.000', 'info', 'Key 3'), pl('3:00:01.010', 'trace', 'tx 10:{1:3 2:3}'), pl('3:00:01.500', 'trace', 'chunk 10 bytes, mode remote, buffered 0 bytes'),
+                 pl('3:00:02.000', 'trace', 'rx 20:{1:{12:"com.google.android.tvlauncher"}}'), pl('3:00:04.500', 'warn', 'Connect failed to 192.0.2.10'), pl('3:00:09.000', 'trace', 'late')]
+check 'entry lines: trace, warn and error only, before the cut-off, masked, no chunk lines',
+    h.padEntryLines(pl1, '2026-10-15 3:00:04.000') == ['3:00:01.010 tx 10:{1:3 2:3}', '3:00:02.000 rx 20:{1:{12:"com.google.android.tvlauncher"}}'] &&
+    h.padEntryLines(pl1, '2026-10-15 3:00:09.000')[-1] == '3:00:04.500 Connect failed to <ip>'
+check 'entry lines: info lines left out', !h.padEntryLines(pl1, '2027').any { it.contains('Key 3') }
+check 'entry lines: cut to 15 lines, and by size', h.padEntryLines((1..30).collect { pl("3:00:${10 + it}.000", 'trace', 'tx 10:{1:3 2:3}') }, '2027').size() == 15 &&
+    h.padEntryLines((1..30).collect { pl("3:00:${10 + it}.000", 'trace', 'tx ' + ('y' * 400)) }, '2027').with { it.size() <= 10 && it.every { s -> s.length() <= 200 } } &&
+    h.padEntryLines((1..30).collect { pl("3:00:${10 + it}.000", 'trace', 'tx 10:{1:3 2:3}') }, '2027', 4).size() == 4
+List plog = [[atMs: 1000L, since: 'a', button: 'sendKey', key: 'HOME', lines: ['a']], [atMs: 2000L, since: 'b', button: 'sendText', key: '7 characters', lines: []], [atMs: 3000L, since: 'c', button: 'volumeUp', key: null, lines: null]]
+check 'view: last n, the page fields only, newest last', h.padLogView(plog, 2)*.atMs == [2000L, 3000L] && h.padLogView(plog, 20).size() == 3 &&
+    h.padLogView(plog, 20)[2] == [atMs: 3000L, button: 'volumeUp', key: null, lines: []] && !h.padLogView(plog, 20)[0].containsKey('since') && h.padLogView(null, 20) == []
+check 'entry text: time, button, key, indented lines', h.padEntryText(plog[0], utc) == '00:00:01 sendKey HOME\n   a' && h.padEntryText(plog[2], utc) == '00:00:03 volumeUp'
+check 'manual keys section: presses after the previous report up to this one', h.padSection(plog, 1000L, 2000L, utc) == 'Manual keys (remote pad presses since the previous report)\n00:00:02 sendText 7 characters' &&
+    h.padSection(plog, 0L, 5000L, utc).split('\n').size() == 5
+check 'no section without presses', h.padSection(plog, 3000L, 9000L, utc) == '' && h.padSection(null, 0L, 9L, utc) == '' && h.padSection([], 0L, 9L, utc) == ''
+
+println 'profileFields'
+List<Map> res = [
+    [test: 1, observed: [vendor: 'onn', model: 'onn. 4K Plus Streaming', androidVersion: '14', remoteService: 'svc', remoteServiceVersion: '7.0', features: 639L, firstMessages: '1,2,50,40,20', startApp: 'yt', startMs: 1300L]],
+    [test: 3, observed: [volumeDuringChange: true, changeVolumeRange: 25L, changeVolumeLevel: 20L, sessionKept: true, pingGaps: 0, otherMessages: '51']],
+    [test: 4, observed: [volumeReported: false, volumeRange: null, volumeLevel: null, playerModel: 'onn. 4K Plus Streaming', otherMessages: '24,51']],
+    [test: 6, observed: [accepted: false, errorCode: '7']],
+    [test: 8, observed: [homeApp: 'launcher']], [test: 9, observed: [announcedOff: false, announced: true]],
+    [test: 10, observed: [searchApp: 'katniss', fieldReported: false]], [test: 15, observed: [inputEncodings: 'hexadecimal/6', outputEncodings: '', preferredRole: 'input']]]
+Map pf = h.profileFields(res)
+check 'identity, features and first app', pf.vendor == 'onn' && pf.model == 'onn. 4K Plus Streaming' && pf.androidVersion == '14' && pf.remoteService == 'svc' && pf.remoteServiceVersion == '7.0' &&
+    pf.features == 639L && pf.firstMessages == '1,2,50,40,20' && pf.startApp == 'yt' && !pf.containsKey('startMs')
+check 'volume: the power-change message when the keys brought none', pf.volumeRange == 25L && pf.volumeLevel == 20L && pf.volumeReported == false && pf.volumeDuringChange == true && pf.playerModel == 'onn. 4K Plus Streaming'
+check 'volume keys\' message wins', h.profileFields([[test: 3, observed: [changeVolumeRange: 25L, changeVolumeLevel: 1L]], [test: 4, observed: [volumeReported: true, volumeRange: 100L, volumeLevel: 20L]]]).with { it.volumeRange == 100L && it.volumeLevel == 20L }
+check 'error code, home, search, announcement, pairing options', pf.errorCode == 7 && pf.homeApp == 'launcher' && pf.searchApp == 'katniss' && pf.announcedOff == false && pf.sessionKept == true &&
+    pf.inputEncodings == 'hexadecimal/6' && pf.outputEncodings == '' && pf.preferredRole == 'input'
+check 'other messages merged as numbers', pf.extraMessages == [24, 51]
+check 'recovery error code when the package launch gave none', h.profileFields([[test: 7, observed: [boxError: '3']]]).errorCode == 3
+check 'nothing measured: no profile', h.profileFields([]) == [:] && h.profileFields([[test: 2, observed: [firstPingMs: 100L]]]) == [:]
+check 'unmeasured fields left out', !pf.containsKey('closeAfterErrorS') && !pf.containsKey('pingIntervalS')
 
 println "\n${pass} passed, ${fail} failed"
 System.exit(fail ? 1 : 0)
