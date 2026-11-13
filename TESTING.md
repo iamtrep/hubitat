@@ -92,7 +92,7 @@ Each mode below has a purpose, a canonical example to mimic, and notes on how it
 
 **Pattern:** virtual test devices created via `POST /device/save`; a dedicated Maker API instance fronting them; a dedicated installed instance of the app under test, configured with the test devices and test-friendly timing; a test script (bash + Python or bash + curl) driving the cycle `reset() → action() → wait() → verify()`.
 
-**Canonical example:** [`apps/sensors/tests/test-sadc.sh`](apps/sensors/tests/test-sadc.sh), generated from [`apps/sensors/tests/spec-sadc.yaml`](apps/sensors/tests/spec-sadc.yaml). The spec documents the test; the generated script runs on its own.
+**Canonical example:** [`apps/sensors/tests/test-sadc.sh`](apps/sensors/tests/test-sadc.sh), generated from [`apps/sensors/tests/spec-sadc.yaml`](apps/sensors/tests/spec-sadc.yaml). The spec documents the test. The generated script holds the spec's data and calls the shared harness, [`scripts/lib/behavior_harness.py`](scripts/lib/behavior_harness.py), which fails a case when the hub refuses a step, when a capture socket closes early, or when the app logs an unexpected warn or error.
 
 The spec maps directly onto the procedure below — for [`apps/sensors/SensorAggregatorDiscreteChild.groovy`](apps/sensors/SensorAggregatorDiscreteChild.groovy) (SADC), which aggregates discrete sensor values across N inputs into a single virtual output device:
 

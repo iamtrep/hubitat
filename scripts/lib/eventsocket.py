@@ -130,6 +130,9 @@ class EventCapture:
         self._thread: Optional[threading.Thread] = None
         self._open_error: Optional[str] = None
         self._ws = None  # populated by _run, used by stop() to interrupt recv
+        # True when the hub closed the socket, or it failed, before stop(): the
+        # capture then holds only part of the window.
+        self.closed_early = False
 
     # ── Lifecycle ─────────────────────────────────────────────────────
 
@@ -189,11 +192,14 @@ class EventCapture:
                     except TimeoutError:
                         continue
                     except websockets.exceptions.ConnectionClosed:
+                        self.closed_early = not self._stop.is_set()
                         break
                     if isinstance(raw, bytes):
                         raw = raw.decode("utf-8", errors="replace")
                     self._ingest(raw)
         except Exception as e:
+            if self._ready.is_set():
+                self.closed_early = not self._stop.is_set()
             self._open_error = str(e)
             self._ready.set()
 
