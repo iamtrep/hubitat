@@ -5,7 +5,7 @@ import groovy.transform.Field
 import com.hubitat.hub.domain.Event
 import java.nio.file.AccessDeniedException
 
-@Field static final String CODE_VERSION = "0.0.2"
+@Field static final String CODE_VERSION = "0.0.3"
 
 @Field static final List<String> MONITORED_ATTRIBUTES = ["battery", "batteryVoltage", "lowBattery", "batteryDefect"]
 @Field static final String CSV_HEADER = "timestamp,deviceId,deviceLabel,attribute,value"
@@ -133,32 +133,49 @@ private String csvEscape(String s) {
 }
 
 private void appendLogFile(String row) {
-    String existing = null
-    byte[] bytes = safeDownloadHubFile(logFileName)
-    if (bytes != null) {
-        existing = new String(bytes, "UTF-8")
-    }
-    if (existing == null || existing.isEmpty()) {
+    Map result = readLogFile(logFileName)
+    String existing
+    if (result.status == "content") {
+        existing = new String(result.bytes as byte[], "UTF-8")
+    } else if (result.status == "absent") {
         existing = CSV_HEADER + "\n"
+    } else {
+        // The file may exist: a write now would replace the history with one row.
+        logError "Skipping write to ${logFileName}, could not read it (${result.reason}). Row lost: ${row.trim()}"
+        return
     }
     String combined = existing + row
     safeUploadHubFile(logFileName, combined.getBytes("UTF-8"))
 }
 
-private byte[] safeDownloadHubFile(String fileName) {
+// Classifies a file read as content, absent (nothing to lose, start a new file) or failed (the
+// file may exist, so nothing may be written over it). errorClass is the exception's toString() (class name first),
+// null when the call returned. A missing file throws NoSuchFileException or returns null
+// depending on firmware; a busy file throws AccessDeniedException.
+static String classifyFileRead(String errorClass, byte[] bytes) {
+    if (errorClass == null) return (bytes == null || bytes.length == 0) ? "absent" : "content"
+    return errorClass.startsWith("java.nio.file.NoSuchFileException") ? "absent" : "failed"
+}
+
+// Returns [status: "content"|"absent"|"failed", bytes: byte[], reason: String].
+private Map readLogFile(String fileName) {
+    String errorClass = null
+    String errorMsg = null
     for (int i = 1; i <= 3; i++) {
         try {
-            return downloadHubFile(fileName)
+            byte[] bytes = downloadHubFile(fileName)
+            return [status: classifyFileRead(null, bytes), bytes: bytes]
         } catch (AccessDeniedException ex) {
             logWarn "download ${fileName} contended: ${ex.message}. Retry ${i}/3"
-            pauseExecution(500)
+            errorClass = ex.toString()
+            errorMsg = ex.message
+            if (i < 3) pauseExecution(500)
         } catch (Exception e) {
-            // First write: file does not exist yet — caller will seed with header.
-            return null
+            errorClass = e.toString()
+            return [status: classifyFileRead(errorClass, null), reason: e.message ?: errorClass]
         }
     }
-    logError "download ${fileName} failed after 3 attempts"
-    return null
+    return [status: classifyFileRead(errorClass, null), reason: "${errorClass}: ${errorMsg}"]
 }
 
 private void safeUploadHubFile(String fileName, byte[] bytes) {

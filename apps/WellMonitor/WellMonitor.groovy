@@ -870,20 +870,7 @@ private void appendToFlowCsvLog(long timestamp, BigDecimal durationSeconds, BigD
     String dateStr = formatDate(timestamp)
     String csvLine = "${dateStr},${durationSeconds},${volume}\n"
 
-    String existingData = null
-    try {
-        byte[] byteArray = safeDownloadHubFile(fileName)
-        if (byteArray) existingData = new String(byteArray, 'UTF-8')
-    } catch (Exception e) {
-        logWarn("Could not read existing flow CSV data: ${e.message}")
-    }
-
-    if (existingData == null) {
-        existingData = "datetime,duration_s,volume_L\n"
-    }
-
-    String newData = existingData + csvLine
-    safeUploadHubFile(fileName, newData.getBytes('UTF-8'))
+    appendCsvRow(fileName, "datetime,duration_s,volume_L\n", csvLine)
     logDebug("Appended flow event to ${fileName}")
 }
 
@@ -1487,20 +1474,7 @@ private void appendToCsvLog(long timestamp, BigDecimal durationSeconds, BigDecim
     String dateStr = formatDate(timestamp)
     String csvLine = "${dateStr},${durationSeconds},${coincidentFlow},${coincidentLpm},${volumeAtStart},${volumeAtEnd}\n"
 
-    String existingData = null
-    try {
-        byte[] byteArray = safeDownloadHubFile(fileName)
-        if (byteArray) existingData = new String(byteArray, 'UTF-8')
-    } catch (Exception e) {
-        logWarn("Could not read existing CSV data: ${e.message}")
-    }
-
-    if (existingData == null) {
-        existingData = "datetime,duration_s,coincident_flow_L,coincident_lpm,vol_at_start,vol_at_end\n"
-    }
-
-    String newData = existingData + csvLine
-    safeUploadHubFile(fileName, newData.getBytes('UTF-8'))
+    appendCsvRow(fileName, "datetime,duration_s,coincident_flow_L,coincident_lpm,vol_at_start,vol_at_end\n", csvLine)
     logDebug("Appended pump cycle to ${fileName}")
 }
 
@@ -1690,6 +1664,47 @@ private byte[] safeDownloadHubFile(String fileName) {
     }
     logError("Failed to download ${fileName} after 3 attempts")
     return null
+}
+
+// Reads a file result as content, absent (nothing to lose, start a new file) or failed (the
+// file may exist, so nothing may be written over it). errorClass is the exception's toString() (class name first),
+// null when the call returned. A missing file throws NoSuchFileException or returns null
+// depending on firmware; a busy file throws AccessDeniedException.
+static String classifyFileRead(String errorClass, byte[] bytes) {
+    if (errorClass == null) return (bytes == null || bytes.length == 0) ? "absent" : "content"
+    return errorClass.startsWith("java.nio.file.NoSuchFileException") ? "absent" : "failed"
+}
+
+// Adds one row to a CSV file (the hub has no append). Never throws and stays within the 3 x 500 ms
+// retry of safeDownloadHubFile. When the file cannot be read the row is dropped and an error
+// logged, because uploading a header and one row would replace the history.
+private void appendCsvRow(String fileName, String header, String csvLine) {
+    String errorClass = null
+    String errorMsg = null
+    byte[] bytes = null
+    for (int i = 1; i <= 3; i++) {
+        errorClass = null
+        try {
+            bytes = downloadHubFile(fileName)
+            break
+        } catch (AccessDeniedException ex) {
+            errorClass = ex.toString()
+            errorMsg = ex.message
+            logWarn("Failed to download ${fileName}: ${ex.message}. Retrying (${i} / 3) ...")
+            if (i < 3) pauseExecution(500)
+        } catch (Exception ex) {
+            errorClass = ex.toString()
+            errorMsg = ex.message
+            break
+        }
+    }
+    String status = classifyFileRead(errorClass, bytes)
+    if (status == "failed") {
+        logError("Skipping write to ${fileName}, could not read it (${errorMsg ?: errorClass}). Row lost: ${csvLine.trim()}")
+        return
+    }
+    String existingData = (status == "content") ? new String(bytes, 'UTF-8') : header
+    safeUploadHubFile(fileName, (existingData + csvLine).getBytes('UTF-8'))
 }
 
 private void safeUploadHubFile(String fileName, byte[] bytes) {

@@ -5,7 +5,7 @@ import groovy.transform.Field
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 
-@Field static final String CODE_VERSION = "0.0.5"
+@Field static final String CODE_VERSION = "0.0.6"
 
 // File name used by uploadHubFile / downloadHubFile for durable history storage.
 // The file survives app reinstall and can be inspected/downloaded from File Manager.
@@ -194,18 +194,25 @@ void initialize() {
         state.batteryLevels = [:]
     }
     // If state history is absent (e.g., after reinstall), attempt to restore from file.
-    // This makes the file the authoritative long-term record.
-    if (!state.replacementHistory) {
-        Map fileHistory = loadHistoryFromFile()
-        if (fileHistory != null) {
-            state.replacementHistory = fileHistory
+    // This makes the file the authoritative long-term record. A failed read is retried here
+    // until it succeeds; meanwhile no save may replace the file.
+    if (!state.replacementHistory || state.historyFileUnreadable) {
+        Map result = loadHistoryFromFile()
+        if (result.status == "content") {
+            Map fileHistory = result.devices as Map
+            state.replacementHistory = fileHistory + ((state.replacementHistory ?: [:]) as Map)
+            state.historyFileUnreadable = false
             logCfg "Restored replacement history from ${HISTORY_FILE} (${fileHistory.size()} device(s))"
+        } else if (result.status == "absent") {
+            state.replacementHistory = state.replacementHistory ?: [:]
+            state.historyFileUnreadable = false
         } else {
-            state.replacementHistory = [:]
+            state.replacementHistory = state.replacementHistory ?: [:]
+            state.historyFileUnreadable = true
+            logError "Could not read ${HISTORY_FILE} (${result.reason}); the file is left as it is and not saved to until it can be read"
         }
     }
-    // Always sync state to file on init so the file is created/updated whenever
-    // the app is installed or settings are saved, even if no battery events have fired yet.
+    // Sync state to file on init so the file is created/updated even if no battery events have fired yet.
     saveHistoryToFile(state.replacementHistory as Map)
     subscribe(batteryDevices, "battery", "batteryHandler")
     seedInitialLevels()
@@ -338,7 +345,12 @@ private void updateNotesStatus(String deviceId, long entryId, boolean success) {
 
 // Serialize the history map to a versioned JSON document and upload to hub file storage.
 // Best-effort: logs a warning on failure but does not throw — state is already updated.
+// Skipped while the file could not be read, so an unread history is never overwritten.
 private void saveHistoryToFile(Map history) {
+    if (state.historyFileUnreadable) {
+        logWarn "Not saving history to ${HISTORY_FILE}: the existing file could not be read"
+        return
+    }
     try {
         String json = JsonOutput.toJson([version: 1, devices: history])
         uploadHubFile(HISTORY_FILE, json.getBytes("UTF-8"))
@@ -348,21 +360,36 @@ private void saveHistoryToFile(Map history) {
     }
 }
 
-// Download and parse the history file. Returns the devices map, or null if the file
-// does not exist, is empty, or cannot be parsed.
+// Reads a file result as content, absent (nothing to lose, start a new file) or failed (the
+// file may exist, so nothing may be written over it). errorClass is the exception's toString() (class name first),
+// null when the call returned. A missing file throws NoSuchFileException or returns null
+// depending on firmware; a busy file throws AccessDeniedException.
+static String classifyFileRead(String errorClass, byte[] bytes) {
+    if (errorClass == null) return (bytes == null || bytes.length == 0) ? "absent" : "content"
+    return errorClass.startsWith("java.nio.file.NoSuchFileException") ? "absent" : "failed"
+}
+
+// Download and parse the history file. Returns [status: "content", devices: Map],
+// [status: "absent"], or [status: "failed", reason: String] (read error, unparsable body,
+// unknown version).
 private Map loadHistoryFromFile() {
+    byte[] data = null
+    String errorClass = null
+    String errorMsg = null
     try {
-        byte[] data = downloadHubFile(HISTORY_FILE)
-        if (!data) return null
-        Map doc = new JsonSlurper().parseText(new String(data, "UTF-8")) as Map
-        if ((doc.version as int) != 1) {
-            logWarn "History file has unrecognised version ${doc.version} — skipping restore"
-            return null
-        }
-        return doc.devices as Map
+        data = downloadHubFile(HISTORY_FILE)
     } catch (Exception e) {
-        logWarn "Could not load history from ${HISTORY_FILE}: ${e.message}"
-        return null
+        errorClass = e.toString()
+        errorMsg = e.message
+    }
+    String status = classifyFileRead(errorClass, data)
+    if (status != "content") return [status: status, reason: errorMsg ?: errorClass]
+    try {
+        Map doc = new JsonSlurper().parseText(new String(data, "UTF-8")) as Map
+        if ((doc.version as int) != 1) return [status: "failed", reason: "unrecognised version ${doc.version}"]
+        return [status: "content", devices: (doc.devices ?: [:]) as Map]
+    } catch (Exception e) {
+        return [status: "failed", reason: "unparsable: ${e.message}"]
     }
 }
 
