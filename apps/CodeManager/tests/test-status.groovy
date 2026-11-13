@@ -43,6 +43,12 @@ t('an ilm that survived a JSON round trip still matches', { assert H.componentSt
 t('newer upstream version is an update', { assert H.componentStatus([o: 'url'], [k: 'driver', id: '1', lm: 5L, ih: 'aa', ah: 'aa', iv: '1.0'], [rhash: 'bb', rver: '1.1', ilm: 5L], [:]) == 'update-available' })
 t('differing hash with no version order is changed-upstream', { assert H.componentStatus([o: 'url'], [k: 'driver', id: '1', lm: 5L, ih: 'aa', ah: 'aa'], [rhash: 'bb', ilm: 5L], [:]) == 'changed-upstream' })
 t('edited on the hub is modified-locally', { assert H.componentStatus([o: 'url'], [k: 'driver', id: '1', lm: 5L, ih: 'cc', ah: 'aa'], [rhash: 'bb', ilm: 5L], [:]) == 'modified-locally' })
+// An item updated to an upstream version outside Code Manager no longer equals its adoption hash. The drift entry
+// remembers that the installed hash matched upstream (mh), so a later upstream change is an update, not a local edit.
+t('updated outside Code Manager, then upstream moves: update-available', { assert H.componentStatus([o: 'url'], [k: 'app', id: '1', lm: 9L, ih: 'bb', ah: 'aa', iv: '1.1'], [rhash: 'cc', rver: '1.2', ilm: 9L, mh: 'bb'], [:]) == 'update-available' })
+t('same, with no ordered versions: changed-upstream', { assert H.componentStatus([o: 'url'], [k: 'app', id: '1', lm: 9L, ih: 'bb', ah: 'aa'], [rhash: 'cc', ilm: 9L, mh: 'bb'], [:]) == 'changed-upstream' })
+t('edited after it matched upstream is still modified-locally', { assert H.componentStatus([o: 'url'], [k: 'app', id: '1', lm: 9L, ih: 'dd', ah: 'aa'], [rhash: 'cc', ilm: 9L, mh: 'bb'], [:]) == 'modified-locally' })
+t('a locally modified component shows on its package', { assert H.packageStatus('url', ['current', 'modified-locally'], [:]) == 'modified-locally' })
 t('a strike-out on the component is broken-source', { assert H.componentStatus([o: 'url'], [k: 'driver', id: '1', lm: 5L, ih: 'aa', ah: 'aa'], [rhash: 'aa', broken: true, ilm: 5L], [:]) == 'broken-source' })
 t('a strike-out against older code is not-checked', { assert H.componentStatus([o: 'url'], [k: 'driver', id: '1', lm: 6L, ih: 'aa', ah: 'aa'], [broken: true, ilm: 5L], [:]) == 'not-checked' })
 t('a result for another location is not-checked', { assert H.componentStatus([o: 'url'], [k: 'driver', id: '1', lm: 5L, loc: 'https://b/x', ih: 'aa', ah: 'aa'], [rhash: 'aa', ilm: 5L, loc: 'https://a/x'], [:]) == 'not-checked' })

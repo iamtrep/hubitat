@@ -22,7 +22,7 @@ String field(String name) {
     return m.group(1)
 }
 String code = (['BROKEN_AFTER', 'DRIFT_STRIKE_ERROR_RE'].collect { field(it) } +
-    ['driftApply', 'sameStampValue', 'normalizeSource', 'sha256Hex', 'sourceHash', 'hashPrefix', 'parseVersionLiteral'].collect { extract(it) }).join('\n')
+    ['driftApply', 'driftNoteMatch', 'installedHashNow', 'sameStampValue', 'normalizeSource', 'sha256Hex', 'sourceHash', 'hashPrefix', 'parseVersionLiteral'].collect { extract(it) }).join('\n')
 def H = new GroovyShell().parse("import groovy.transform.CompileStatic\nimport groovy.json.JsonSlurper\nimport java.security.MessageDigest\nclass H {\n${code}\n}\nreturn H").run()
 
 void t(String name, Closure c) { try { c(); pass++; println "  ok   ${name}" } catch (Throwable e) { fail++; println "  FAIL ${name}\n         ${e.message}" } }
@@ -134,6 +134,20 @@ t('a manifest that does not parse is not a comparison', {
 })
 t('stamp values compare across number types', {
     assert H.sameStampValue(5, 5L) && !H.sameStampValue(5, 6L) && H.sameStampValue('1.0', '1.0') && H.sameStampValue(null, null)
+})
+
+// --- driftNoteMatch / installedHashNow: remembering that the installed code matched upstream ---
+t('a match is recorded', { assert H.driftNoteMatch([rhash: 'bb'], null, 'bb').mh == 'bb' })
+t('no match keeps the earlier one', { assert H.driftNoteMatch([rhash: 'cc'], [mh: 'bb', rhash: 'bb'], 'bb').mh == 'bb' })
+t('a new match replaces the earlier one', { assert H.driftNoteMatch([rhash: 'cc'], [mh: 'bb'], 'cc').mh == 'cc' })
+t('a failed fetch (no rhash) keeps the earlier match', { assert H.driftNoteMatch([httpStatus: 503], [mh: 'bb'], 'bb').mh == 'bb' })
+t('nothing known stays unset', { assert !H.driftNoteMatch([rhash: 'cc'], null, null).containsKey('mh') })
+t('the entry passed in is not changed', { Map e = [rhash: 'bb']; H.driftNoteMatch(e, null, 'bb'); assert !e.containsKey('mh') })
+t('installed hash counts only when read at the current lastModified', {
+    assert H.installedHashNow([ih: 'bb', flm: 9L, lm: 9L]) == 'bb'
+    assert H.installedHashNow([ih: 'bb', flm: 8L, lm: 9L]) == null
+    assert H.installedHashNow([ih: 'bb', lm: 9L]) == null
+    assert H.installedHashNow(null) == null
 })
 
 println "\n${pass} passed, ${fail} failed, 0 warnings"

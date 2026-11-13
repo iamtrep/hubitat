@@ -38,7 +38,7 @@ The content hash of the installed source (normalized: BOM stripped, CRLF→LF, t
 | `Current` | the hashes match |
 | `Update available` | they differ *and* the upstream version compares newer by an ordered numeric comparison |
 | `Changed upstream` | they differ but no ordered comparison is possible (no version literal on one side, or a form that cannot be ordered such as `2.3.9l`), or the upstream version is not newer |
-| `Modified locally` | the installed source no longer matches the hash recorded when Code Manager first saw it — it was edited in the code editor — unless it now matches upstream, in which case it is `Current` |
+| `Modified locally` | the installed source no longer matches the hash recorded when Code Manager first saw it — it was edited in the code editor — unless it now matches upstream, in which case it is `Current`. Code that a drift check has seen equal to upstream (after an update through HPM or an import) is not counted as edited when upstream changes again |
 | `Broken source` | the upstream URL struck out — see [Broken sources](#broken-source) |
 | `Missing on hub` | the package requires this component and it is not installed |
 | `Not installed` | the package declares this component as optional and it is not installed. HPM packages typically declare every driver a repository ships; this is the normal state for the ones you never chose |

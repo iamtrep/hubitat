@@ -20,7 +20,7 @@ import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "0.2.0"
+@Field static final String CODE_VERSION = "0.2.1"
 
 // ===== Constants =====
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -1078,7 +1078,7 @@ static String componentStatus(Map p, Map c, Map s, Map pe) {
         if (ss.broken == true) return 'broken-source'
         boolean factsOk = c.basis != 'unread' && c.basis != 'stale'    // the installed hash must describe the installed code
         if (factsOk) {
-            boolean localMod = isLocallyModified(c.ih as String, c.ah as String, ss.rhash as String)
+            boolean localMod = isLocallyModified(c.ih as String, c.ah as String, ss.rhash as String, ss.mh as String)
             status = freshnessStatus(c.ih as String, ss.rhash as String, c.iv as String, ss.rver as String, localMod)
         }
     } else if (p.o == 'hpm' && c.k != 'file' && !c.bm && peOk && pk.broken != true) {
@@ -1101,6 +1101,7 @@ static String componentStatus(Map p, Map c, Map s, Map pe) {
 static String packageStatus(String origin, List statuses, Map pe) {
     if (pe?.broken == true) return 'broken-source'
     if (statuses.contains('missing')) return 'incomplete'
+    if (statuses.contains('modified-locally')) return 'modified-locally'
     if (statuses.contains('update-available')) return 'update-available'
     if (statuses.contains('changed-upstream')) return 'changed-upstream'
     if (statuses.contains('broken-source')) return 'broken-source'
@@ -1686,7 +1687,9 @@ Map apiDriftCheck() {
         if (!loc) return out + [status: statusOf(pkey, p, c), error: "no upstream location"]
         Map stamp = [key: 'ilm', val: (c.lm ?: 0L)]
         Map fr = !loc.startsWith("https://") ? [status: 0, error: "non-https location", transport: false] : fetchUpstreamNow(loc, (DRIFT[key]?.loc == loc ? DRIFT[key]?.etag : null) as String)
-        Map res = driftApply(DRIFT[key], fr, loc, 'ilm', stamp.val, false, now())
+        Map prevEntry = DRIFT[key]
+        Map res = driftApply(prevEntry, fr, loc, 'ilm', stamp.val, false, now())
+        res.entry = driftNoteMatch(res.entry as Map, prevEntry, installedHashNow(c))
         DRIFT[key] = res.entry as Map
         persistDriftCache()
         Map e = res.entry as Map
@@ -1839,7 +1842,8 @@ private boolean dispatchDrift(String jobId) {
     if (t == null || !(t.loc as String)?.startsWith("https://")) {       // http:// locations are not fetched (DESIGN.md §6.3)
         if (t != null) {
             Map st = driftStamp(t)
-            DRIFT[qk] = driftApply(DRIFT[qk], [status: 0, error: 'non-https location', transport: false], t.loc as String, st.key as String, st.val, qk.startsWith("pkg:"), now()).entry as Map
+            Map prevEntry = DRIFT[qk]
+            DRIFT[qk] = driftNoteMatch(driftApply(prevEntry, [status: 0, error: 'non-https location', transport: false], t.loc as String, st.key as String, st.val, qk.startsWith("pkg:"), now()).entry as Map, prevEntry, null)
         }
         driftStep(jobId, 'failed'); return true
     }
@@ -1863,8 +1867,9 @@ void driftCallback(resp, data) {
         else r.error = (resp?.errorMessage ?: "HTTP ${status}") as String
         Map st = driftStamp(t)
         boolean manifest = qk.startsWith("pkg:")
-        Map res = driftApply(DRIFT[qk], r, t.loc as String, st.key as String, st.val, manifest, now())
-        DRIFT[qk] = res.entry as Map
+        Map prevEntry = DRIFT[qk]
+        Map res = driftApply(prevEntry, r, t.loc as String, st.key as String, st.val, manifest, now())
+        DRIFT[qk] = driftNoteMatch(res.entry as Map, prevEntry, manifest ? null : installedHashNow(t.comp as Map))
         outcome = res.outcome as String
         // A changed package manifest: the package's components are compared body to body this run.
         if (manifest && outcome == 'changed') {
@@ -2058,7 +2063,7 @@ Map apiItemSource() {
     // same rule as the inventory status (C1): a re-import that lands back on the upstream hash is
     // Current again, not modified-locally forever.
     Map dr = (c != null && driftEntryValid(c, readDriftCache()[ckey(kind, id)] as Map)) ? (readDriftCache()[ckey(kind, id)] as Map) : [:]
-    boolean modifiedLocally = isLocallyModified(cur, c?.ah as String, dr.rhash as String)
+    boolean modifiedLocally = isLocallyModified(cur, c?.ah as String, dr.rhash as String, dr.mh as String)
     return jsonResponse([kind: kind, hubId: id, lock: d.version, ihash: c?.ih, ahash: c?.ah, currentHash: cur, modifiedLocally: modifiedLocally,
                          version: pv.ver, versionSrc: pv.src, location: c?.loc, packageKey: t?.key, source: source])
 }
@@ -2259,8 +2264,28 @@ static String freshnessStatus(String ihash, String rhash, String iver, String rv
 
 // True when the installed hash has moved since adoption AND still doesn't match the upstream hash
 // (a user import that lands back on the upstream file is Current again, not modified-locally forever, C1).
+// mh is the last installed hash a drift check saw equal to upstream: code that was updated to an upstream
+// version outside Code Manager is not a local edit once upstream moves on.
 @CompileStatic
-static boolean isLocallyModified(String ih, String ah, String rhash) { return ih && ah && ih != ah && ih != rhash }
+static boolean isLocallyModified(String ih, String ah, String rhash, String mh = null) { return ih && ah && ih != ah && ih != rhash && ih != mh }
+
+// The installed hash, when the facts were read at the item's current lastModified; null when they may describe older code.
+@CompileStatic
+static String installedHashNow(Map c) {
+    if (c == null || c.get('ih') == null || c.get('flm') == null) return null
+    return sameStampValue(c.get('flm'), c.get('lm')) ? (c.get('ih') as String) : null
+}
+
+// A drift entry remembers in `mh` the last installed hash found equal to upstream. It is carried from the previous
+// entry whatever else changed, since it is a fact about the installed code, not about this upstream answer.
+@CompileStatic
+static Map driftNoteMatch(Map entry, Map prev, String ih) {
+    Map e = new LinkedHashMap(entry)
+    Object rh = e.get('rhash')
+    if (ih && rh != null && ih == rh) e.put('mh', ih)
+    else if (prev != null && prev.get('mh') != null) e.put('mh', prev.get('mh'))
+    return e
+}
 
 // ===== Source normalization and hashing (DESIGN.md §4.1) =====
 @CompileStatic
