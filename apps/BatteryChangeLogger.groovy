@@ -27,6 +27,7 @@ definition(
     menu: "Apps", // new in platform 2.5.0
     category: "Utility",
     singleThreaded: true,
+    singleInstance: true,   // one constant history file: a second instance would overwrite the first's entries
     iconUrl: "",
     importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/BatteryChangeLogger.groovy",
     iconX2Url: ""
