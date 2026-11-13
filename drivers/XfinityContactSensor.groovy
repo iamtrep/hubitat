@@ -23,7 +23,7 @@ import hubitat.zigbee.zcl.DataType
 import hubitat.zigbee.clusters.iaszone.ZoneStatus
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.1.6"
+@Field static final String CODE_VERSION = "0.1.7"
 
 metadata {
 	definition (
@@ -56,10 +56,10 @@ metadata {
 	}
 
     preferences {
-        input(name: "batteryInterval", type: "number", title: "<b>Battery Reporting Interval</b>", defaultValue: 12,
-              description: "Set battery reporting interval by this many <b>hours</b>.</br>Default: 12 hours", required: false)
-        input(name: "tempInterval", type: "number", title: "<b>Temperature Reporting Interval</b>", defaultValue: 720,
-              description: "Set temperature reporting interval by this many <b>minutes</b>. </br>Default: 720 (12 hours)", required: false)
+        input(name: "batteryInterval", type: "number", range: "1..18", title: "<b>Battery Reporting Interval</b>", defaultValue: 12,
+              description: "Set battery reporting interval by this many <b>hours</b>.</br>Range: 1 thru 18</br>Default: 12 hours", required: false)
+        input(name: "tempInterval", type: "number", range: "60..1092", title: "<b>Temperature Reporting Interval</b>", defaultValue: 720,
+              description: "Set temperature reporting interval by this many <b>minutes</b>. </br>Range: 60 thru 1092</br>Default: 720 (12 hours)", required: false)
         input name: "tempOffset", title: "<b>Temperature Calibration</b>", type: "number", range: "-128..127", defaultValue: 0, required: true,
             description: "Adjust temperature by this many degrees.</br>Range: -128 thru 127</br>Default: 0"
         input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
@@ -162,7 +162,7 @@ void configure() {
     state.lastRx = 0
     state.codeVersion = CODE_VERSION
 
-    int reportInterval = (batteryInterval == null ? 12 : batteryInterval).toInteger() * 60 * 60
+    int reportInterval = Math.min((batteryInterval == null ? 12 : batteryInterval).toInteger() * 60 * 60, 65535)
     List<String> cmds = []
 
     // IAS Zone binding and enrollment
@@ -177,7 +177,10 @@ void configure() {
 
     // Configure attribute reports
     cmds += zigbee.configureReporting(zigbee.POWER_CONFIGURATION_CLUSTER, 0x0020, DataType.UINT8, 0, reportInterval, 1, [:], constDefaultDelay) //Battery Voltage Reporting
-    cmds += zigbee.temperatureConfig(3600,((tempInterval != null ? tempInterval : 12).toInteger() * 60)) // Temperature Reporting
+    // minimum 3600 s; the maximum must not be below it and must fit the 16-bit field (a value saved before the
+    // preference had a range may be out of bounds)
+    int tempMaxSeconds = Math.min(Math.max((tempInterval != null ? tempInterval : 720).toInteger() * 60, 3600), 65535)
+    cmds += zigbee.temperatureConfig(3600, tempMaxSeconds) // Temperature Reporting
 
     sendZigbeeCommands(cmds)
     issueAttributeReads()
