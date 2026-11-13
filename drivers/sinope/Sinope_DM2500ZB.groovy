@@ -15,7 +15,7 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.33"
+@Field static final String CODE_VERSION = "0.0.34"
 // device.id -> deadline (ms) until which a state report counts as digital. Static rather than
 // state: a driver's state is written back whole at method exit, so a command and a parse() on
 // another thread can undo each other's flag, and a deadline expires on its own when the device
@@ -325,11 +325,17 @@ void setLevel(BigDecimal level, BigDecimal duration = 0) {
         markOffFade()
     }
     List<String> cmds = []
-    cmds += zigbee.setLevel(level, duration)
+    cmds += zigbee.setLevel(level.intValue(), fadeToRate(duration))
     //logTrace("zigbee.setLevel($level,$duration) = $cmds")
     cmds += zigbee.readAttribute(0x0006, 0x0000)
     cmds += zigbee.readAttribute(0x0008, 0x0000)
     sendZigbeeCommands(cmds)
+}
+
+// zigbee.setLevel takes the rate in tenths of a second as an Integer; Hubitat's duration is seconds.
+@CompileStatic
+private static int fadeToRate(BigDecimal seconds) {
+    return seconds == null ? 0 : Math.round(seconds.floatValue() * 10f)
 }
 
 // A digital command marks the next state report as digital for DIGITAL_WINDOW_MS. A command the
@@ -746,11 +752,18 @@ private double getEnergy(String value) {
     return 0
 }
 
+// Cluster 0x0002 attribute 0x0000 is INT16: a chip reading below 0 C arrives as FFxx.
+@CompileStatic
+private static int hexToSignedInt16(String hex) {
+    int v = Integer.parseInt(hex, 16)
+    return v > 0x7FFF ? v - 0x10000 : v
+}
+
 private Long getTemperature(String value) {
     if (value == null) {
         return null
     }
-    int celsius = Integer.parseInt(value, 16)
+    int celsius = hexToSignedInt16(value)
     if (getTemperatureScale() == "C") {
         return (long) celsius
     } else {
@@ -767,12 +780,13 @@ private String reverseHexString(String hexString) {
 	return reversed
 }
 
+// Two digits always: writeAttribute copies a String value as given, so "c" would be a half byte.
 @CompileStatic
-private String percentToHex(Integer percentValue) {
+private static String percentToHex(Integer percentValue) {
 	BigDecimal hexValue = (percentValue * 255) / 100
 	hexValue = hexValue < 0 ? 0 : hexValue
 	hexValue = hexValue > 255 ? 255 : hexValue
-	return Integer.toHexString(hexValue.intValue())
+	return String.format("%02x", hexValue.intValue())
 }
 
 @CompileStatic
