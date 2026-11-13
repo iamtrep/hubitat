@@ -334,4 +334,59 @@ cases:
     assert:
       - { device: test-season Season, attribute: season, value: winter }
 
+  # Daily evaluation (btnRunDaily, omEnable false: no Open-Meteo, no sensor samples, so no 3-day mean). The daily
+  # path uses the real day, not testDate. To keep the result independent of the day the test runs, the date
+  # limits are squeezed into Feb 18-24, so the cases hold on every day of the year except those seven.
+  - name: daily-stays-and-ignores-test-inputs
+    setup:
+      - settings: { debugEnable: true, w2sFrom: "02-20", w2sUntil: "02-21", summerFrom: "02-22", fallFrom: "02-23", summerUntil: "02-24", f2wFrom: "02-18", f2wUntil: "02-19" }
+      - { device: test-season Season, command: setSeason, args: ["fall", 0] }
+      # btnEvaluate on these would move fall to winter (3-day mean 2 below 3, inside the f2w window)
+      - settings: { testDate: "2026-02-18", testMean: "2" }
+    actions:
+      - { button: btnRunDaily }
+    wait_seconds: 3
+    assert:
+      - { device: test-season Season, attribute: season, value: fall }
+    assert_logs:
+      - { pattern: "daily: season stays fall", level: debug }
+    allow_log_patterns: ["no 3-day mean"]
+
+  - name: daily-changes-season-outside-summer-dates
+    setup:
+      - settings: { debugEnable: true, w2sFrom: "02-20", w2sUntil: "02-21", summerFrom: "02-22", fallFrom: "02-23", summerUntil: "02-24", f2wFrom: "02-18", f2wUntil: "02-19" }
+      - { device: test-season Season, command: setSeason, args: ["summer", 0] }
+    actions:
+      - { button: btnRunDaily }
+    wait_seconds: 3
+    assert:
+      - { device: test-season Season, attribute: season, value: fall }
+    assert_logs:
+      - { pattern: "season summer → fall: outside the summer dates \\(02-22 to 02-24\\)", level: info }
+    allow_log_patterns: ["no 3-day mean"]
+
+  - name: daily-respects-hold
+    setup:
+      - settings: { debugEnable: true, w2sFrom: "02-20", w2sUntil: "02-21", summerFrom: "02-22", fallFrom: "02-23", summerUntil: "02-24", f2wFrom: "02-18", f2wUntil: "02-19" }
+      - { device: test-season Season, command: setSeason, args: ["summer", 3] }
+    actions:
+      - { button: btnRunDaily }
+    wait_seconds: 3
+    assert:
+      - { device: test-season Season, attribute: season, value: summer }
+    assert_logs:
+      - { pattern: "daily: season stays summer", level: debug }
+    allow_log_patterns: ["no 3-day mean"]
+
+  - name: restore-default-dates
+    setup:
+      - settings: { debugEnable: true, w2sFrom: "03-11", w2sUntil: "04-08", summerFrom: "05-10", fallFrom: "08-15", summerUntil: "09-14", f2wFrom: "10-26", f2wUntil: "11-11" }
+      - { device: test-season Season, command: setSeason, args: ["winter", 0] }
+      - settings: { testDate: "2026-03-01", testMean: "10" }
+    actions:
+      - { button: btnEvaluate }
+    wait_seconds: 2
+    assert:
+      - { device: test-season Season, attribute: season, value: winter }
+
 runtime_budget_seconds: 270
