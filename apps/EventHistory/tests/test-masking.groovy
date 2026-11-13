@@ -26,6 +26,7 @@ String method(String s, String start) {
 void t(String name, Closure c) { try { c(); pass++; println "  ok   ${name}" } catch (Throwable e) { fail++; println "  FAIL ${name}: ${e.message}" } }
 
 String code = block(src).replaceAll(/(?m)^@Field /, '') + method(src, 'static Map maskEvent(') + method(src, 'static boolean isExcluded(') +
+        method(src, 'static boolean flushDue(') +
         'static final int MAX_FIELD = 1000\n' + method(src, 'static String clip(') + method(src, 'static boolean hasDarkMode(')
 def M = new GroovyShell().parse("import java.util.regex.Matcher\nimport java.util.regex.Pattern\nclass M {\n${code}\n}\nreturn M").run()
 
@@ -75,6 +76,26 @@ t('dark mode by firmware') {
         assert M.hasDarkMode(v) == want : v
     }
     assert !M.hasDarkMode(null)
+}
+
+t('an unterminated quoted value with many escape pairs is masked in bounded time') {
+    // Each of the two quoted patterns used to take about 2x longer per pair on these inputs.
+    ['"a":"' + ('\\q' * 40), 'a="' + ('\\q' * 40), "a='" + ('\\q' * 40)].each { String text ->
+        long t0 = System.nanoTime()
+        M.maskSecrets(text)
+        long ms = (System.nanoTime() - t0).intdiv(1000000L)
+        assert ms < 1000 : "${ms} ms for ${text.take(8)}"
+    }
+}
+t('a quoted value with escaped quotes is still masked whole') {
+    String text = 'password="ab\\"cd" tail'
+    assert !M.maskSecrets(text).contains('cd"')
+}
+t('flush on an event: full buffer, and the write back-off') {
+    assert M.flushDue(100, 100, 5000L, null)
+    assert !M.flushDue(99, 100, 5000L, null)
+    assert !M.flushDue(150, 100, 5000L, 8000L)   // a write failed; wait
+    assert M.flushDue(150, 100, 8000L, 8000L)
 }
 
 println "${pass} passed, ${fail} failed"

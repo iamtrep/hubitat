@@ -559,6 +559,7 @@ private void savePendingBridge() {
     if (idx >= 0 && idx < bridges.size()) {
         // Edit existing bridge
         Map br = bridges[idx]
+        String oldAddress = br.hubAddress as String
         br.label = label
         br.hubAddress = hubAddress
         bridges[idx] = br
@@ -568,6 +569,8 @@ private void savePendingBridge() {
         if (dev) {
             dev.setLabel(label)
             dev.updateSetting("hubAddress", [type: "text", value: hubAddress])
+            // An app's updateSetting does not run the driver's updated(), and an open socket keeps the old host.
+            if (oldAddress != hubAddress) dev.reconnect()
         }
     } else {
         // New bridge
@@ -1180,8 +1183,8 @@ private Long retryAfterSeconds(resp) {
 @Field static final Pattern UUID_IN_TEXT = ~/(?<![\w•-])[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![\w-])/
 // [pattern, key group, value group, quoted]: "key": "value", key: 'value', key=value / key: value.
 @Field static final List<List> KEY_VALUE = [
-    [~/(["'])([A-Za-z_][A-Za-z0-9_.-]*)\1\s*:\s*(["'])((?:\\.|(?!\3).)*)\3/, 2, 4, true],
-    [~/(?<![A-Za-z0-9_"'])([A-Za-z_][A-Za-z0-9_.-]*)\s*[:=]\s*(["'])((?:\\.|(?!\2).)*)\2/, 1, 3, true],
+    [~/(["'])([A-Za-z_][A-Za-z0-9_.-]*)\1\s*:\s*(["'])((?:\\.|(?!\3)[^\\])*+)\3/, 2, 4, true],
+    [~/(?<![A-Za-z0-9_"'])([A-Za-z_][A-Za-z0-9_.-]*)\s*[:=]\s*(["'])((?:\\.|(?!\2)[^\\])*+)\2/, 1, 3, true],
     [~/(?<![A-Za-z0-9_"'])([A-Za-z_][A-Za-z0-9_.-]*)(?:=|:[ \t]*)([^\s"',;&\]\)}<>]+)/, 1, 2, false]
 ]
 

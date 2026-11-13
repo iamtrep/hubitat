@@ -21,7 +21,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.regex.Matcher
 import java.util.regex.Pattern
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
 @Field static final String UI_FILE = "eventhistory-ui.html"
 @Field static final String UI_URL = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/EventHistory/eventhistory-ui.html"
@@ -44,6 +44,10 @@ import java.util.regex.Pattern
 // Recent event ids, keyed by app id, so a row seen by the subscription and the list is stored once.
 @Field static final ConcurrentHashMap<String, LinkedHashSet<Long>> SEEN = new ConcurrentHashMap<>()
 @Field static final ConcurrentHashMap<String, List<String>> NAME_ORDER = new ConcurrentHashMap<>()
+// Earliest time (ms) an event may trigger a flush again after a write failed, keyed by app id. A failed
+// read or write pauses 1 s, which must not happen on every event; the 5-minute schedule still retries.
+@Field static final ConcurrentHashMap<String, Long> FLUSH_RETRY_AT = new ConcurrentHashMap<>()
+@Field static final long FLUSH_BACKOFF_MS = 60000L
 
 definition(
     name: "Event History",
@@ -212,7 +216,12 @@ void eventHandler(evt) {
         evt.unit as String, evt.descriptionText as String, evt.type as String)
     // The lists are read again after a restart, for what happened while the app wasn't running.
     if (evt.name == "systemStart") runIn(120, "poll")
-    if (buffered("hub") + buffered("location") >= FLUSH_ROWS) flush()
+    if (flushDue(buffered("hub") + buffered("location"), FLUSH_ROWS, now(), FLUSH_RETRY_AT.get(app.id.toString()))) flush()
+}
+
+// An event flushes a full buffer, unless a write failed and the back-off has not passed.
+static boolean flushDue(int buffered, int threshold, long nowMs, Long retryAt) {
+    return buffered >= threshold && (retryAt == null || nowMs >= retryAt)
 }
 
 void hourlyPoll() { poll() }
@@ -347,14 +356,19 @@ private void trimBuffer(ConcurrentLinkedQueue<Map> q) {
 // ── Files ─────────────────────────────────────────────────────────────
 
 void flush() {
-    LIST_PATHS.keySet().each { String s -> flushStream(s) }
+    boolean ok = true
+    LIST_PATHS.keySet().each { String s -> if (!flushStream(s)) ok = false }
+    if (ok) FLUSH_RETRY_AT.remove(app.id.toString())
+    else FLUSH_RETRY_AT.put(app.id.toString(), now() + FLUSH_BACKOFF_MS)
 }
 
-private void flushStream(String s) {
+// False when rows were put back because a file could not be read or written.
+private boolean flushStream(String s) {
     ConcurrentLinkedQueue<Map> q = queue(s)
     List<Map> rows = []
     for (Map r = q.poll(); r != null; r = q.poll()) rows << r
-    if (!rows) return
+    if (!rows) return true
+    boolean ok = true
     Map streams = state.streams as Map
     Map st = streams[s] as Map
     int cap = rowsCap()
@@ -374,12 +388,14 @@ private void flushStream(String s) {
             q.addAll(rows.subList(i, rows.size()))
             q.addAll(newer)
             trimBuffer(q)
+            ok = false
             break
         }
         i = end
     }
     expireFiles(s, st)
     state.streams = streams
+    return ok
 }
 
 private boolean appendRows(String s, Map f, List<Map> rows) {
@@ -721,8 +737,8 @@ private List<String> nameOrder(Map<String, String> aliases) {
 @Field static final Pattern UUID_IN_TEXT = ~/(?<![\w•-])[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![\w-])/
 // [pattern, key group, value group, quoted]: "key": "value", key: 'value', key=value / key: value.
 @Field static final List<List> KEY_VALUE = [
-    [~/(["'])([A-Za-z_][A-Za-z0-9_.-]*)\1\s*:\s*(["'])((?:\\.|(?!\3).)*)\3/, 2, 4, true],
-    [~/(?<![A-Za-z0-9_"'])([A-Za-z_][A-Za-z0-9_.-]*)\s*[:=]\s*(["'])((?:\\.|(?!\2).)*)\2/, 1, 3, true],
+    [~/(["'])([A-Za-z_][A-Za-z0-9_.-]*)\1\s*:\s*(["'])((?:\\.|(?!\3)[^\\])*+)\3/, 2, 4, true],
+    [~/(?<![A-Za-z0-9_"'])([A-Za-z_][A-Za-z0-9_.-]*)\s*[:=]\s*(["'])((?:\\.|(?!\2)[^\\])*+)\2/, 1, 3, true],
     [~/(?<![A-Za-z0-9_"'])([A-Za-z_][A-Za-z0-9_.-]*)(?:=|:[ \t]*)([^\s"',;&\]\)}<>]+)/, 1, 2, false]
 ]
 
