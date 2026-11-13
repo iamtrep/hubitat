@@ -957,12 +957,21 @@ Map apiHpmImport() {
     Map h = findHpm()
     if (h == null) return jsonResponse([success: false, error: "HPM status unavailable"])
     Map r = importHpm(h)
+    if (r?.busy) return jsonResponse([success: false, error: "busy, try again"])
     if (r) reconcileNow()                                  // re-binds the imported packages' bundles/files to the hub
     return jsonResponse(r ? [success: true] + r : [success: false, error: "HPM not installed"])
 }
 
-// One-to-one copy of HPM's state.manifests into origin-hpm packages. Idempotent; nothing is written to HPM.
+// Takes the reconcile gate: the import rewrites all of state.pkgs, and a reconcile that read the old map before it must not
+// commit over it. Returns [busy: true] when the gate is not free in time.
 Map importHpm(Map h = null) {
+    Semaphore gate = gateFor("reconcile")
+    if (!gate.tryAcquire(BULK_WAIT_MS, TimeUnit.MILLISECONDS)) return [busy: true]
+    try { return importHpmLocked(h) } finally { gate.release() }
+}
+
+// One-to-one copy of HPM's state.manifests into origin-hpm packages. Idempotent; nothing is written to HPM.
+private Map importHpmLocked(Map h) {
     h = h ?: findHpm()
     if (!h?._statusJson) return null
     List appState = (h._statusJson.appState ?: []) as List
@@ -1251,6 +1260,12 @@ static boolean factNeedsRetry(long lm, long readAt, boolean alreadyRetried) {
 @CompileStatic
 static boolean factJobStale(long lastStep, long now) {
     return (now - lastStep) > 5 * FACT_GAP_MS + 2 * FACT_READ_TIMEOUT_MS   // margin: one read may take its full timeout
+}
+
+// Jobs that depend on scheduled steps: unschedule() in updated() ends them, so a running one can never finish.
+@CompileStatic
+static boolean jobLostOnReinit(String kind, String status) {
+    return status == 'running' && (kind in ['facts', 'drift', 'removecheck', 'libraries'])
 }
 
 private boolean writeOutstanding() { return WRITE.availablePermits() == 0 }
@@ -2173,7 +2188,8 @@ void updated() {
     if (settings.debugEnable) runIn(1800, 'logsOff')
     runIn(1, 'syncUIForced')
     // unschedule() above stopped any running reader's chain of steps; its job can never finish.
-    JOBS.each { String id, ConcurrentHashMap j -> if ((j.kind in ['facts', 'drift', 'removecheck']) && j.status == 'running') jobFail(id, 'Job lost: the app was re-initialized') }
+    JOBS.each { String id, ConcurrentHashMap j -> if (jobLostOnReinit(j.kind as String, j.status as String)) jobFail(id, 'Job lost: the app was re-initialized') }
+    LIB_JOB_ID = null                                          // unschedule() also dropped a pending libRefreshRun
     flushFacts()
     runIn(60, 'startFactReader')
     initialize()
