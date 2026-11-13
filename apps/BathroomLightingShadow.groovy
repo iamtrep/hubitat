@@ -4,7 +4,7 @@
 import groovy.transform.Field
 import com.hubitat.app.ChildDeviceWrapper
 
-@Field static final String CODE_VERSION = "0.2.7"
+@Field static final String CODE_VERSION = "0.2.8"
 @Field static final Integer SCORING_SCHEMA_VERSION = 1
 @Field static final Integer RESOLVER_MAX_PER_TICK = 10
 
@@ -123,8 +123,40 @@ void initialize() {
     if (wallSwitch)    subscribe(wallSwitch, "switch", "wallSwitchHandler")
     if (doorContact)   subscribe(doorContact, "contact", "doorHandler")
     if (hfcActive)     subscribe(hfcActive, "switch", "hfcHandler")
+    subscribe(location, "systemStart", "systemStartHandler")
 
     runIn((settings.wOn ?: 60) as Integer, "resolveUnresolvedOns")
+    rearmOffHolds()
+}
+
+void systemStartHandler(evt) {
+    checkVersion()
+    logInfo "Hub startup detected — re-arming off-hold timers"
+    rearmOffHolds()
+}
+
+// Seconds left of a hold that began when the sensors went quiet; at least 1. Without a quiet
+// time the full hold applies.
+static Integer remainingHoldSec(Integer holdSec, Long quietSinceMs, long nowMs) {
+    if (quietSinceMs == null) return holdSec
+    long left = holdSec - (nowMs - quietSinceMs).intdiv(1000L)
+    return (int) Math.max(1L, Math.min((long) holdSec, left))
+}
+
+// The off-hold timers are lost by unschedule() in updated() and by a reboot, and only a sensor
+// event arms them again. Re-arm one for each policy that is on while its condition says off,
+// so the virtual switch does not stay on until someone walks in.
+private void rearmOffHolds() {
+    Map snap = snapshot()
+    POLICIES.each { Map p ->
+        Boolean wantOn = (Boolean) this."${p.onMethod}"(snap)
+        if (wantOn == null || wantOn) return
+        if (syncDecision(p.key).decision != "on") return
+        Integer holdSec = (settings."policy_${p.key}_holdSec" ?: p.defaultHoldSec) as Integer
+        Integer inSec = remainingHoldSec(holdSec, state.tQuietSince as Long, now())
+        logSched "policy ${p.key}: on with sensors quiet — off-check in ${inSec}s"
+        runIn(inSec, p.offHandler as String)
+    }
 }
 
 private String childDni(String key) { "${app.id}-bls-${key}" }
