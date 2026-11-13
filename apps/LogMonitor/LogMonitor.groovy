@@ -18,7 +18,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.regex.Matcher
 import java.util.regex.Pattern
 
-@Field static final String CODE_VERSION = "1.2.2"
+@Field static final String CODE_VERSION = "1.2.3"
 @Field static final int MAX_BRIDGES = 5
 @Field static final int MAX_FILTERS = 10
 @Field static final int MAX_DEDUPE_HISTORY = 100
@@ -49,6 +49,10 @@ import java.util.regex.Pattern
 // The code version each instance has checked since the last push, so one log line runs checkVersion().
 @Field static final ConcurrentHashMap<String, String> VERSION_CHECKED = new ConcurrentHashMap<>()
 @Field static final int MAX_WORK_PER_PASS = 200
+// Last warn about a filter whose stored pattern no longer compiles, keyed "appId:filterId".
+// Loss costs one extra warn.
+@Field static final ConcurrentHashMap<String, Long> PATTERN_WARNED = new ConcurrentHashMap<>()
+@Field static final long PATTERN_WARN_INTERVAL_MS = 3600000L
 
 definition(
     name: "Log Monitor",
@@ -80,7 +84,15 @@ Map mainPage() {
     savePendingBridge()
     savePendingFilter()
 
+    String filterError = state.filterError as String
+    state.remove("filterError")
+
     dynamicPage(name: "mainPage", install: true, uninstall: true) {
+        if (filterError) {
+            section {
+                paragraph "<b style='color:#b00020'>${filterError}</b>"
+            }
+        }
         section("Bridges") {
             List<Map> bridges = state.bridges ?: []
             if (bridges.size() == 0) {
@@ -628,6 +640,16 @@ private void savePendingFilter() {
 
     int actualIdx = (idx >= 0) ? idx : filters.size()
     Map filter = buildFilterFromSettings(actualIdx)
+    // A pattern that does not compile would end the filter loop for every entry. Keep the old one.
+    List<String> patternErrors = []
+    ["includePattern": "Include", "excludePattern": "Exclude"].each { String key, String what ->
+        String err = patternError(filter[key] as String)
+        if (err) {
+            filter[key] = (idx >= 0 && idx < filters.size()) ? (filters[idx][key] ?: "") : ""
+            patternErrors << "${what} pattern not saved (${err}); the previous pattern was kept".toString()
+        }
+    }
+    if (patternErrors) state.filterError = "Filter \"${filter.label}\": ${patternErrors.join('; ')}".toString()
     if (settings.fHttpUrl) {
         filter.httpUrlEnc = encrypt(settings.fHttpUrl as String)
         filter.httpUrlShown = maskUrl(settings.fHttpUrl as String)
@@ -725,8 +747,9 @@ private void pushWanted() {
 
 void processLogEntry(String bridgeDni, Map logEntry) {
     if (state.version != CODE_VERSION && VERSION_CHECKED.put(app.id.toString(), CODE_VERSION) != CODE_VERSION) checkVersion()
-    // Self-monitoring guard: skip own app logs
-    if (logEntry.type == "app" && logEntry.id?.toString() == app.id.toString()) return
+    // Self-monitoring guard: skip own app logs. Ids repeat across hubs, so only a local bridge's entry is ours.
+    if (logEntry.type == "app" && logEntry.id?.toString() == app.id.toString() &&
+        isLocalBridge((state.bridges ?: []) as List<Map>, bridgeDni)) return
 
     List<Map> filters = state.filters
     if (!filters) return
@@ -736,7 +759,17 @@ void processLogEntry(String bridgeDni, Map logEntry) {
         // Check bridge source filter
         String filterBridge = filter.bridgeDni as String
         if (filterBridge && filterBridge != bridgeDni) continue
-        if (!matchesFilter(logEntry, filter)) continue
+        boolean matched
+        try {
+            matched = matchesFilter(logEntry, filter)
+        } catch (java.util.regex.PatternSyntaxException e) {
+            // Saved before patterns were checked on save. Skip this filter, not the rest of the loop.
+            if (warnDue(PATTERN_WARNED, "${app.id}:${filter.id}".toString(), now(), PATTERN_WARN_INTERVAL_MS)) {
+                logWarn "${filter.label}: include or exclude pattern is not a valid regex (${e.description}); the filter is skipped until it is edited"
+            }
+            continue
+        }
+        if (!matched) continue
         if (isDuplicate(logEntry, filter) || isRateLimited(filter)) continue
         filterIds << filter.id
     }
@@ -857,6 +890,32 @@ private void drainPass(ConcurrentLinkedQueue<Map> q) {
 // ============================================================================
 // Filter Matching
 // ============================================================================
+
+// Null when the pattern is blank or compiles, else the reason.
+static String patternError(String pattern) {
+    if (!pattern) return null
+    try {
+        java.util.regex.Pattern.compile(pattern)
+        return null
+    } catch (java.util.regex.PatternSyntaxException e) {
+        return e.description
+    }
+}
+
+// True when the bridge reads the hub this app runs on (blank hubAddress). Log ids are per hub, so
+// the loop guards on app and device ids apply only to such a bridge. An unknown bridge is not local.
+static boolean isLocalBridge(List<Map> bridges, String dni) {
+    Map br = bridges?.find { Map b -> b.dni == dni }
+    return br != null && !br.hubAddress
+}
+
+// True when key has not been warned about within intervalMs; records the warn.
+static boolean warnDue(ConcurrentHashMap<String, Long> warned, String key, long nowMs, long intervalMs) {
+    Long last = warned.get(key)
+    if (last != null && nowMs - last < intervalMs) return false
+    warned.put(key, nowMs)
+    return true
+}
 
 private static boolean matchesFilter(Map logEntry, Map filter) {
     String type = logEntry.type as String
@@ -986,7 +1045,8 @@ private void executeOutputs(Map item, Map filter, Map views, Map rt, Map<String,
     // error, which would match and re-notify, feeding itself into a storm. The
     // log/HTTP outputs below don't loop, so they still run for such entries.
     boolean fromNotifier = logEntry.type == "dev" &&
-        currentNotifyDeviceIds().contains(logEntry.id?.toString())
+        currentNotifyDeviceIds().contains(logEntry.id?.toString()) &&
+        isLocalBridge((state.bridges ?: []) as List<Map>, bridgeDni)
     if (filter.outputNotify && filter.notifySettingsKey && !fromNotifier) {
         try {
             List devices = settings[filter.notifySettingsKey] ?: []

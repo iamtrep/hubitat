@@ -31,7 +31,7 @@ The parent app (`Log Monitor`) does the filtering, deduplication, rate limiting,
 - Log types: any combination of device (`dev`), app (`app`) and system (`sys`) logs
 - Levels: any of `trace`, `debug`, `info`, `warn`, `error` (default `error`)
 - Device IDs and app IDs: comma-separated lists. When either list is set, a line matches only if it comes from a listed device or a listed app; lines of other types, system logs included, are dropped
-- Include and exclude patterns: regular expressions searched for anywhere in the log message
+- Include and exclude patterns: regular expressions searched for anywhere in the log message. A pattern that is not a valid regular expression is not saved: the previous pattern is kept and the main page shows the error
 - Dedupe window (0–300 s): drops a line identical to one already sent (same type, level, name and message) within the window
 - Rate limit (1–60 per minute): caps how many lines a filter sends each minute
 - Each filter counts the lines it sent (shown on its edit page)
@@ -220,6 +220,8 @@ LogMonitor/
   LogMonitor.groovy         # Parent app
   LogMonitorBridge.groovy   # Child bridge driver (websocket connection)
   tests/test-masking.groovy # Offline tests for the masking
+  tests/test-filters.groovy # Offline tests for pattern matching and the loop-guard decisions
+  tests/test-bridge-queue.groovy # Offline tests for the bridge's queue helpers
 ```
 
 ## License

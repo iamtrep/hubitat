@@ -19,7 +19,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "1.0.7"
+@Field static final String CODE_VERSION = "1.0.8"
 @Field static final int STARTUP_DELAY_SECS = 60
 // Set by disconnect() so the socket-closed callback doesn't reconnect. Not atomicState: in a
 // driver, a state write-back at method exit overwrites atomicState keys written after the
@@ -390,8 +390,9 @@ private void processFrame(String message) {
 
         if (!logEntry?.type) return
 
-        // Self-monitoring guard: skip own device logs
-        if (logEntry.type == "dev" && logEntry.id?.toString() == device.id.toString()) return
+        // Self-monitoring guard: skip own device logs. Ids repeat across hubs, so only a bridge on
+        // the local hub (no hubAddress) can be reading its own device.
+        if (logEntry.type == "dev" && logEntry.id?.toString() == device.id.toString() && !settings.hubAddress) return
 
         // Unescape HTML entities at the source — logsocket sends HTML-encoded text.
         // Remote hub connections via port 80 often double-encode entities (e.g. &amp;quot;).
