@@ -42,15 +42,22 @@ maker_api:
 # explicitly via `setup`; cases 2 and 3 use only `actions` and rely on the prior
 # case's terminal state. Re-running the script reverts to the baseline at case 1.
 cases:
+  # A run ends all closed, so the baseline starts with one sensor open and asserts
+  # the event that closes the output: a stopped app would leave no event.
   - name: all-closed-baseline
     setup:
       - { settings: { aggregationMethod: any, defaultStaysSeconds: 0 } }
-      - { device: test-sadc-in-1, command: close }
+      - { device: test-sadc-in-1, command: open }
       - { device: test-sadc-in-2, command: close }
       - { device: test-sadc-in-3, command: close }
+      - { await: { device: test-sadc-out, attribute: contact, value: "open", timeout_seconds: 10 } }
+    actions:
+      - { device: test-sadc-in-1, command: close }
     wait_seconds: 2
     assert:
       - { device: test-sadc-out, attribute: contact, value: closed }
+    assert_events:
+      - { attribute: contact, value: "closed", source: test-sadc-out }
 
   - name: single-open-propagation
     actions:

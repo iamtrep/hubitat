@@ -200,233 +200,48 @@ private Boolean isMmwaveOccupied() {
 
 // ==================== Fusion Dispatcher ====================
 
+// The decisions live in the pure core below; this side reads the inputs and carries out the plan.
 private void evaluateFusion(String trigger) {
     servicePending()
+    Map plan = fusionStep(fusionMode as String, trigger, isPirActive(), isMmwaveOccupied(),
+                          state.currentOutput as String, state.pendingInactive as boolean, modeSeconds())
+    if (plan.unknown) {
+        logWarn "Unknown fusion mode: ${fusionMode}"
+        return
+    }
+    applyPlan(plan)
+}
+
+// The mode's own timing setting: the inactive delay, the cooldown or the confirmation window.
+private Integer modeSeconds() {
     switch (fusionMode) {
-        case "pirOnly":
-            evaluatePirOnly()
-            break
-        case "mmwaveOnly":
-            evaluateMmwaveOnly(trigger)
-            break
-        case "either":
-            evaluateEither()
-            break
-        case "both":
-            evaluateBoth(trigger)
-            break
-        case "pirGated":
-            evaluatePirGated(trigger)
-            break
-        case "pirConfirmedMmwave":
-            evaluatePirConfirmedMmwave(trigger)
-            break
-        case "pirQuickMmwaveHold":
-            evaluatePirQuickMmwaveHold(trigger)
-            break
-        default:
-            logWarn "Unknown fusion mode: ${fusionMode}"
+        case "mmwaveOnly":         return (inactiveDelay ?: 0) as Integer
+        case "pirQuickMmwaveHold": return (cooldownTime ?: 30) as Integer
+        default:                   return (confirmationWindow ?: 5) as Integer
     }
 }
 
-// ==================== Mode: PIR Only ====================
-
-private void evaluatePirOnly() {
-    String output = isPirActive() ? "active" : "inactive"
-    setOutputState(output)
+private void applyPlan(Map plan) {
+    if (plan.note) logSched(plan.note as String)
+    if (plan.cancel) unschedule(plan.cancel as String)
+    if (plan.clear) clearPending()
+    if (plan.debug) logDebug(plan.debug as String)
+    if (plan.arm) armPending(plan.arm as String, plan.armSeconds as Integer)
+    if (plan.output) setOutputState(plan.output as String)
 }
 
-// ==================== Mode: mmWave Only ====================
+// ==================== Window Timers ====================
 
-private void evaluateMmwaveOnly(String trigger) {
-    if (isMmwaveOccupied()) {
-        unschedule("delayedInactive")
-        clearPending()
-        setOutputState("active")
-    } else {
-        Integer delay = (inactiveDelay ?: 0) as Integer
-        if (delay > 0) {
-            if (!state.pendingInactive) {
-                logSched "mmWave unoccupied — scheduling inactive in ${delay}s"
-                armPending("delayedInactive", delay)
-            }
-        } else {
-            setOutputState("inactive")
-        }
-    }
-}
+void delayedInactive()           { runTimeout("delayedInactive") }
+void confirmationTimeout()       { runTimeout("confirmationTimeout") }
+void mmwaveConfirmationTimeout() { runTimeout("mmwaveConfirmationTimeout") }
+void pirConfirmationTimeout()    { runTimeout("pirConfirmationTimeout") }
+void cooldownExpired()           { runTimeout("cooldownExpired") }
 
-void delayedInactive() {
+private void runTimeout(String handler) {
     checkVersion()
     clearPending()
-    if (isMmwaveOccupied()) {
-        logSched "delayedInactive: mmWave re-occupied, staying active"
-        return
-    }
-    setOutputState("inactive")
-}
-
-// ==================== Mode: Either (OR) ====================
-
-private void evaluateEither() {
-    String output = (isPirActive() || isMmwaveOccupied()) ? "active" : "inactive"
-    setOutputState(output)
-}
-
-// ==================== Mode: Both (AND) ====================
-
-private void evaluateBoth(String trigger) {
-    if (isPirActive() && isMmwaveOccupied()) {
-        unschedule("confirmationTimeout")
-        setOutputState("active")
-    } else if (isPirActive() || isMmwaveOccupied()) {
-        // One sensor active — start confirmation window if not already waiting
-        if (state.currentOutput != "active" && !state.pendingInactive) {
-            Integer window = (confirmationWindow ?: 5) as Integer
-            logSched "One sensor active — waiting ${window}s for confirmation"
-            armPending("confirmationTimeout", window)
-        }
-        // If currently active and one drops out, go inactive immediately
-        if (state.currentOutput == "active") {
-            setOutputState("inactive")
-        }
-    } else {
-        // Both inactive
-        unschedule("confirmationTimeout")
-        clearPending()
-        setOutputState("inactive")
-    }
-}
-
-void confirmationTimeout() {
-    checkVersion()
-    clearPending()
-    if (isPirActive() && isMmwaveOccupied()) {
-        setOutputState("active")
-    } else {
-        logSched "confirmationTimeout: sensors did not agree within window"
-        setOutputState("inactive")
-    }
-}
-
-// ==================== Mode: PIR-Gated mmWave ====================
-
-private void evaluatePirGated(String trigger) {
-    if (!isMmwaveOccupied()) {
-        // mmWave unoccupied — immediate inactive, regardless of PIR
-        unschedule("mmwaveConfirmationTimeout")
-        clearPending()
-        setOutputState("inactive")
-        return
-    }
-
-    // mmWave occupied
-    if (isPirActive() && isMmwaveOccupied()) {
-        // Both active — confirmed
-        unschedule("mmwaveConfirmationTimeout")
-        clearPending()
-        setOutputState("active")
-    } else if (trigger == "pir" && isPirActive() && state.currentOutput != "active") {
-        // PIR just fired, mmWave not yet occupied — start confirmation window
-        Integer window = (confirmationWindow ?: 5) as Integer
-        logSched "PIR active — waiting ${window}s for mmWave confirmation"
-        armPending("mmwaveConfirmationTimeout", window)
-    }
-    // If already active and PIR drops but mmWave still occupied, stay active
-}
-
-void mmwaveConfirmationTimeout() {
-    checkVersion()
-    clearPending()
-    if (isPirActive() && isMmwaveOccupied()) {
-        setOutputState("active")
-    } else {
-        logSched "mmwaveConfirmationTimeout: mmWave did not confirm within window"
-        if (state.currentOutput != "active") {
-            setOutputState("inactive")
-        }
-    }
-}
-
-// ==================== Mode: PIR-Confirmed mmWave ====================
-
-private void evaluatePirConfirmedMmwave(String trigger) {
-    if (!isMmwaveOccupied()) {
-        // mmWave unoccupied — immediate inactive
-        unschedule("pirConfirmationTimeout")
-        clearPending()
-        setOutputState("inactive")
-        return
-    }
-
-    // mmWave occupied
-    if (isPirActive()) {
-        // PIR confirms — active
-        unschedule("pirConfirmationTimeout")
-        clearPending()
-        setOutputState("active")
-    } else if (trigger == "mmwave" && state.currentOutput != "active") {
-        // mmWave just went occupied, PIR not yet active — start confirmation window
-        Integer window = (confirmationWindow ?: 5) as Integer
-        logSched "mmWave occupied — waiting ${window}s for PIR confirmation"
-        armPending("pirConfirmationTimeout", window)
-    }
-    // If already active and PIR goes inactive but mmWave still occupied, stay active
-}
-
-void pirConfirmationTimeout() {
-    checkVersion()
-    clearPending()
-    if (isPirActive() && isMmwaveOccupied()) {
-        setOutputState("active")
-    } else {
-        logSched "pirConfirmationTimeout: PIR did not confirm within window"
-        // Stay in current state — don't go inactive if already active (mmWave still holding)
-        if (state.currentOutput != "active") {
-            setOutputState("inactive")
-        }
-    }
-}
-
-// ==================== Mode: PIR-Quick + mmWave Hold ====================
-
-private void evaluatePirQuickMmwaveHold(String trigger) {
-    if (isPirActive()) {
-        // PIR active — immediate active
-        unschedule("cooldownExpired")
-        clearPending()
-        setOutputState("active")
-        return
-    }
-
-    if (isMmwaveOccupied()) {
-        // mmWave occupied — cancel cooldown, stay active
-        unschedule("cooldownExpired")
-        clearPending()
-        if (state.currentOutput == "active") {
-            // Already active, mmWave sustains it
-            logDebug "mmWave sustaining active state"
-        }
-        // Don't go active on mmWave alone without prior PIR trigger
-        return
-    }
-
-    // Both inactive — start cooldown if currently active
-    if (state.currentOutput == "active" && !state.pendingInactive) {
-        Integer cooldown = (cooldownTime ?: 30) as Integer
-        logSched "Both sensors inactive — starting ${cooldown}s cooldown"
-        armPending("cooldownExpired", cooldown)
-    }
-}
-
-void cooldownExpired() {
-    checkVersion()
-    clearPending()
-    if (isPirActive() || isMmwaveOccupied()) {
-        logSched "cooldownExpired: sensor re-activated, staying active"
-        return
-    }
-    setOutputState("inactive")
+    applyPlan(timeoutStep(handler, isPirActive(), isMmwaveOccupied(), state.currentOutput as String))
 }
 
 // ==================== Pending Windows ====================
@@ -528,6 +343,103 @@ private String getFusionModeDescription() {
             return ""
     }
 }
+
+// ── Core (pure) ───────────────────────────────────────────────────────
+// No settings, state, devices, logging or @Field here: tests/test_motion_fusion_core.groovy runs this block off-hub.
+//
+// A step returns a plan that applyPlan() carries out in this order: cancel (a timer to
+// unschedule), clear (drop the pending window), arm (a timer to start for armSeconds),
+// output ('active' or 'inactive'; absent means no change). note and debug are log lines.
+
+// One sensor event. seconds is the mode's timing setting (inactive delay, confirmation
+// window or cooldown); pending is true while a window timer is armed.
+Map fusionStep(String mode, String trigger, boolean pir, boolean mmwave, String output, boolean pending, Integer seconds) {
+    switch (mode) {
+        case "pirOnly":
+            return [output: pir ? "active" : "inactive"]
+
+        case "mmwaveOnly":
+            if (mmwave) return [cancel: "delayedInactive", clear: true, output: "active"]
+            if (seconds > 0) {
+                if (pending) return [:]
+                return [arm: "delayedInactive", armSeconds: seconds, note: "mmWave unoccupied — scheduling inactive in ${seconds}s"]
+            }
+            return [output: "inactive"]
+
+        case "either":
+            return [output: (pir || mmwave) ? "active" : "inactive"]
+
+        case "both":
+            if (pir && mmwave) return [cancel: "confirmationTimeout", output: "active"]
+            if (pir || mmwave) {
+                // One sensor active: start the confirmation window if not already waiting
+                if (output != "active" && !pending) {
+                    return [arm: "confirmationTimeout", armSeconds: seconds, note: "One sensor active — waiting ${seconds}s for confirmation"]
+                }
+                // If currently active and one drops out, go inactive immediately
+                return output == "active" ? [output: "inactive"] : [:]
+            }
+            return [cancel: "confirmationTimeout", clear: true, output: "inactive"]
+
+        case "pirGated":
+            // mmWave unoccupied: immediate inactive, regardless of PIR
+            if (!mmwave) return [cancel: "mmwaveConfirmationTimeout", clear: true, output: "inactive"]
+            if (pir && mmwave) return [cancel: "mmwaveConfirmationTimeout", clear: true, output: "active"]
+            if (trigger == "pir" && pir && output != "active") {
+                return [arm: "mmwaveConfirmationTimeout", armSeconds: seconds, note: "PIR active — waiting ${seconds}s for mmWave confirmation"]
+            }
+            // If already active and PIR drops but mmWave still occupied, stay active
+            return [:]
+
+        case "pirConfirmedMmwave":
+            if (!mmwave) return [cancel: "pirConfirmationTimeout", clear: true, output: "inactive"]
+            if (pir) return [cancel: "pirConfirmationTimeout", clear: true, output: "active"]
+            if (trigger == "mmwave" && output != "active") {
+                return [arm: "pirConfirmationTimeout", armSeconds: seconds, note: "mmWave occupied — waiting ${seconds}s for PIR confirmation"]
+            }
+            // If already active and PIR goes inactive but mmWave still occupied, stay active
+            return [:]
+
+        case "pirQuickMmwaveHold":
+            if (pir) return [cancel: "cooldownExpired", clear: true, output: "active"]
+            // mmWave sustains an active output but never starts one without a prior PIR trigger
+            if (mmwave) return [cancel: "cooldownExpired", clear: true, debug: output == "active" ? "mmWave sustaining active state" : null]
+            // Both inactive: start the cooldown if currently active
+            if (output == "active" && !pending) {
+                return [arm: "cooldownExpired", armSeconds: seconds, note: "Both sensors inactive — starting ${seconds}s cooldown"]
+            }
+            return [:]
+
+        default:
+            return [unknown: true]
+    }
+}
+
+// A window timer that fired; the pending window is already cleared.
+Map timeoutStep(String handler, boolean pir, boolean mmwave, String output) {
+    switch (handler) {
+        case "delayedInactive":
+            if (mmwave) return [note: "delayedInactive: mmWave re-occupied, staying active"]
+            return [output: "inactive"]
+        case "confirmationTimeout":
+            if (pir && mmwave) return [output: "active"]
+            return [note: "confirmationTimeout: sensors did not agree within window", output: "inactive"]
+        case "mmwaveConfirmationTimeout":
+            if (pir && mmwave) return [output: "active"]
+            return [note: "mmwaveConfirmationTimeout: mmWave did not confirm within window", output: output != "active" ? "inactive" : null]
+        case "pirConfirmationTimeout":
+            if (pir && mmwave) return [output: "active"]
+            // Stay in current state: don't go inactive if already active (mmWave still holding)
+            return [note: "pirConfirmationTimeout: PIR did not confirm within window", output: output != "active" ? "inactive" : null]
+        case "cooldownExpired":
+            if (pir || mmwave) return [note: "cooldownExpired: sensor re-activated, staying active"]
+            return [output: "inactive"]
+        default:
+            return [:]
+    }
+}
+
+// ── End core ──────────────────────────────────────────────────────────
 
 // ── Logging (app) ─────────────────────────────────────────────────────
 //   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace

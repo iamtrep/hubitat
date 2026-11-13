@@ -50,9 +50,17 @@ maker_api:
 # device events fired <1s apart, so without it the filter sees only
 # 2 of the 3 events per case and the assertion misses by ~3.
 cases:
+  # A run ends at 12, so the baseline first fills the window with 30, 32, 34
+  # (output 32) and asserts the event that brings it to 12: a stopped app
+  # would leave no event.
   - name: average-of-10-12-14
     command_spacing_seconds: 0.5
     setup:
+      - { device: test-filter-in, command: setTemperature, args: [30] }
+      - { device: test-filter-in, command: setTemperature, args: [32] }
+      - { device: test-filter-in, command: setTemperature, args: [34] }
+      - { await: { device: test-filter-out, attribute: temperature, value: "32", timeout_seconds: 10 } }
+    actions:
       - { device: test-filter-in, command: setTemperature, args: [10] }
       - { device: test-filter-in, command: setTemperature, args: [12] }
       - { device: test-filter-in, command: setTemperature, args: [14] }
@@ -60,6 +68,8 @@ cases:
     assert:
       # window = [10, 12, 14] → avg = 12
       - { device: test-filter-out, attribute: temperature, value: 12, tolerance: 0.5 }
+    assert_events:
+      - { attribute: temperature, value: "12", source: test-filter-out }
 
   - name: window-slides-to-20-22-24
     command_spacing_seconds: 0.5

@@ -45,14 +45,24 @@ maker_api:
 # floating-point drift while still catching real regressions (a swap to
 # `min`/`max`/`median` would shift the value by whole units).
 cases:
+  # A run ends at 20.0, so the baseline starts from 25.0 and asserts the event
+  # that brings the output back: a stopped app would leave no event.
   - name: all-equal-baseline
     setup:
+      - { settings: { aggregationMethod: average } }
+      - { device: test-sac-in-1, command: setTemperature, args: [25.0] }
+      - { device: test-sac-in-2, command: setTemperature, args: [25.0] }
+      - { device: test-sac-in-3, command: setTemperature, args: [25.0] }
+      - { await: { device: test-sac-out, attribute: temperature, value: "25.0", timeout_seconds: 10 } }
+    actions:
       - { device: test-sac-in-1, command: setTemperature, args: [20.0] }
       - { device: test-sac-in-2, command: setTemperature, args: [20.0] }
       - { device: test-sac-in-3, command: setTemperature, args: [20.0] }
     wait_seconds: 2
     assert:
       - { device: test-sac-out, attribute: temperature, value: 20.0, tolerance: 0.05 }
+    assert_events:
+      - { attribute: temperature, value: "20.0", source: test-sac-out }
 
   - name: single-input-raised
     # in1 → 30, in2 and in3 stay 20 ⇒ average = (30+20+20)/3 = 23.333…

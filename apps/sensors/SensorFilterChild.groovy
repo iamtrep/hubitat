@@ -187,6 +187,7 @@ void handleNewValue(evt) {
 Number updateFilteredValue() {
     Number filteredValue
 
+    logTrace "Values: ${state.valueWindow}"
     if (settings.filterType == "median") {
         filteredValue = calculateMedian(state.valueWindow)
         logTrace "Calculated median: ${filteredValue}"
@@ -217,10 +218,32 @@ void decayWindow() {
     if (state.valueWindow.size() > 1) runIn(settings.decay * 60, "decayWindow")
 }
 
+void logsOff() {
+    checkVersion()
+    app.updateSetting("debugEnable", [value: "false", type: "bool"])
+    app.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "debug and trace logging disabled"
+}
+
+boolean isNumeric(String value) {
+    return value ==~ /^-?\d+(\.\d+)?$/
+}
+
+boolean isInteger(String value) {
+    return value ==~ /^-?\d+$/
+}
+
+boolean isDecimal(String value) {
+    return value ==~ /^-?\d*\.\d+$/
+}
+
+// ── Core (pure) ───────────────────────────────────────────────────────
+// No settings, state, devices, logging or @Field here: tests/test_filter_core.groovy runs this block off-hub.
+// An all-Integer window gives an Integer; otherwise a BigDecimal with 2 places, rounded half up.
+
 Number calculateMedian(List values) {
     boolean allInteger = values.every { it instanceof Integer }
     List sortedValues = values.clone().sort()
-    logTrace "Sorted values: ${sortedValues} (isInteger=$allInteger)"
 
     int size = sortedValues.size()
     if (size == 0) return null
@@ -242,8 +265,6 @@ Number calculateMedian(List values) {
 }
 
 Number calculateAverage(List values) {
-    logTrace "Values: ${values}"
-
     BigDecimal sum = 0
     int count = values.size()
     boolean allInteger = values.every { it instanceof Integer }
@@ -267,24 +288,7 @@ Number calculateAverage(List values) {
     }
 }
 
-void logsOff() {
-    checkVersion()
-    app.updateSetting("debugEnable", [value: "false", type: "bool"])
-    app.updateSetting("traceEnable", [value: "false", type: "bool"])
-    logWarn "debug and trace logging disabled"
-}
-
-boolean isNumeric(String value) {
-    return value ==~ /^-?\d+(\.\d+)?$/
-}
-
-boolean isInteger(String value) {
-    return value ==~ /^-?\d+$/
-}
-
-boolean isDecimal(String value) {
-    return value ==~ /^-?\d*\.\d+$/
-}
+// ── End core ──────────────────────────────────────────────────────────
 
 // ── Logging (app) ─────────────────────────────────────────────────────
 //   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace

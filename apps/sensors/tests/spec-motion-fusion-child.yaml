@@ -50,18 +50,25 @@ maker_api:
   label: test-mfc-maker
 
 cases:
-  # Reset to baseline. Robust against interrupted previous runs: drives
-  # both inputs to their "inactive" values and the output device to
-  # inactive externally. wait_seconds=3 covers any pending cooldown
-  # (cooldownTime=2s) that a previous run might have left scheduled.
+  # Reset to baseline. Setup has the app turn the output active through
+  # PIR; the PIR release must then bring it to inactive after the 2s
+  # cooldown. Only the app sends that event, so a stopped app fails the
+  # case. The output is never commanded directly: the Virtual Motion
+  # Sensor's own auto-inactive (15s) would then fire during a later case.
   - name: baseline-inactive
     setup:
-      - { device: test-mfc-source, command: setPirDetection, args: [inactive] }
       - { device: test-mfc-source, command: setRoomState,    args: [unoccupied] }
-      - { device: test-mfc-out,    command: "inactive" }
-    wait_seconds: 3
+      - { device: test-mfc-source, command: setPirDetection, args: [inactive] }
+      - { device: test-mfc-source, command: setPirDetection, args: [active] }
+      - { await: { device: test-mfc-out, attribute: motion, value: "active", timeout_seconds: 5 } }
+    actions:
+      - { device: test-mfc-source, command: setPirDetection, args: [inactive] }
+    command_spacing_seconds: 1.0
+    wait_seconds: 4
     assert:
       - { device: test-mfc-out, attribute: motion, value: "inactive" }
+    assert_events:
+      - { attribute: "motion", value: "inactive", source: "test-mfc-out" }
 
   - name: pir-triggers-active
     actions:
@@ -124,4 +131,4 @@ cases:
     assert:
       - { device: test-mfc-out, attribute: motion, value: "inactive" }
 
-runtime_budget_seconds: 25
+runtime_budget_seconds: 30

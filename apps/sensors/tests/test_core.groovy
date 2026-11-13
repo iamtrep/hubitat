@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 //
 // Core unit tests for the Sensor Aggregator children. Parses the block between the
-// "Core (pure)" and "End core" markers of each shipped child file, and the discrete
-// child's "Discrete core" block, and runs them, so the tests bind to shipped code. Run under the pinned Groovy 2.4.21 jar:
+// "Core (pure)" and "End core" markers of each shipped child file, the continuous
+// child's "Continuous core" block and the discrete child's "Discrete core" block, and runs them, so the tests bind to shipped code. Run under the pinned Groovy 2.4.21 jar:
 //   java -cp groovy-all-2.4.21.jar groovy.ui.GroovyMain <this file>
 
 File here = new File(getClass().protectionDomain.codeSource.location.toURI()).parentFile
@@ -35,6 +35,9 @@ core = new GroovyShell().parse(cores[files[0]])
 String discrete = blockOf(new File(here.parentFile, files[1]), '// ── Discrete core (pure)', '// ── End discrete core')
 if (discrete == null) { println "[FAIL] ${files[1]}: discrete core markers not found"; System.exit(2) }
 dc = new GroovyShell().parse(discrete)
+String continuous = blockOf(new File(here.parentFile, files[0]), '// ── Continuous core (pure)', '// ── End continuous core')
+if (continuous == null) { println "[FAIL] ${files[0]}: continuous core markers not found"; System.exit(2) }
+cc = new GroovyShell().parse(cores[files[0]] + continuous)   // inclusionOf calls the core's isQuiet
 MIN = 60000L
 
 // ── activity ──
@@ -66,6 +69,43 @@ check('enters all quiet', core.noSensorChange(false, true), 'entered')
 check('stays all quiet: silent', core.noSensorChange(true, true), null)
 check('leaves all quiet', core.noSensorChange(true, false), 'left')
 check('stays reporting: silent', core.noSensorChange(false, false), null)
+
+// ── continuous statistics (SensorAggregatorChild) ──
+// Values compared as printed, so a change of scale or type (22 vs 22.0) fails too.
+Map stats(List vals) { cc.statsOf(vals)?.collectEntries { k, v -> [k, v?.toString()] } }
+check('stats: one value', stats([20.0]), [min: '20.0', max: '20.0', avg: '20.0', stdev: '0.0', median: '20.0'])
+check('stats: one integer', stats([5]), [min: '5.0', max: '5.0', avg: '5.0', stdev: '0.0', median: '5'])
+check('stats: odd count takes the middle value', stats([30.0, 20.0, 20.0]), [min: '20.0', max: '30.0', avg: '23.3', stdev: '4.7', median: '20.0'])
+check('stats: even count averages the two middle values', stats([20.0, 21.0]), [min: '20.0', max: '21.0', avg: '20.5', stdev: '0.5', median: '20.5'])
+check('stats: even count, unsorted integers', stats([30, 21, 23, 20]), [min: '20.0', max: '30.0', avg: '23.5', stdev: '3.9', median: '22'])
+check('stats: mixed Integer and BigDecimal, odd', stats([20, 21.5, 22]), [min: '20.0', max: '22.0', avg: '21.2', stdev: '0.9', median: '21.5'])
+check('stats: mixed Integer and BigDecimal, even', stats([21.5, 20]), [min: '20.0', max: '21.5', avg: '20.8', stdev: '0.8', median: '20.75'])
+check('stats: min and max round to 2 places, the median is not rounded', stats([22.456, 22.454]), [min: '22.45', max: '22.46', avg: '22.5', stdev: '0.0', median: '22.455'])
+// Around the exact mean (0.033) the deviation would round to 0.0.
+check('stats: deviation is taken around the rounded average', stats([0, 0, 0.1]).stdev, '0.1')
+check('stats: min, max, average and deviation are Doubles', cc.statsOf([20, 21.5]).subMap(['min', 'max', 'avg', 'stdev']).values()*.getClass().unique(), [Double])
+check('stats: input list unchanged', { List l = [3, 1, 2]; cc.statsOf(l); l }(), [3, 1, 2])
+check('stats: no values', cc.statsOf([]), null)
+check('stats: null list', cc.statsOf(null), null)
+
+Map s3 = cc.statsOf([10.0, 20.0, 60.0])
+check('method average', cc.aggregateFor(s3, 'average').toString(), '30.0')
+check('method median', cc.aggregateFor(s3, 'median').toString(), '20.0')
+check('method min', cc.aggregateFor(s3, 'min').toString(), '10.0')
+check('method max', cc.aggregateFor(s3, 'max').toString(), '60.0')
+check('unset method acts as average', cc.aggregateFor(s3, null).toString(), '30.0')
+
+// ── exclusion of quiet sensors ──
+check('recent with a value is included', cc.inclusionOf([last: 50 * MIN], 100 * MIN, 60 * MIN, 21.0), 'included')
+check('quiet is excluded, value or not', cc.inclusionOf([last: 39 * MIN], 100 * MIN, 60 * MIN, 21.0), 'excluded')
+check('never seen is excluded', cc.inclusionOf(null, 100 * MIN, 60 * MIN, 21.0), 'excluded')
+check('recent without a value is neither', cc.inclusionOf([last: 50 * MIN], 100 * MIN, 60 * MIN, null), null)
+check('a zero reading is included', cc.inclusionOf([last: 50 * MIN], 100 * MIN, 60 * MIN, 0), 'included')
+// Three sensors, the quiet one stuck at 100: only the two reporting ones reach the statistics.
+List<Map> readings = [[a: [last: 99 * MIN], v: 20.0], [a: [last: 98 * MIN], v: 22.0], [a: [last: 10 * MIN], v: 100.0]]
+List kept = readings.findAll { cc.inclusionOf(it.a, 100 * MIN, 60 * MIN, it.v) == 'included' }*.v
+check('a quiet sensor does not move the average', cc.statsOf(kept).avg.toString(), '21.0')
+check('a quiet sensor does not move the median of an even count', cc.statsOf(kept).median, 21.0)
 
 // ── discrete aggregation (contact, target open) ──
 List<String> v(int open, int closed) { (['open'] * open) + (['closed'] * closed) }

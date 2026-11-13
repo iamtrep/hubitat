@@ -290,12 +290,11 @@ private List<DeviceWrapper> refreshIncludedSensors() {
     inputSensors.each {
         String id = it.id.toString()
         Long limit = limitFor(id)
-        if (!isQuiet(all[id] as Map, t, limit)) {
-            if (it.currentValue(attributeName) != null) {
-                includedSensors << it
-                logTrace("Including sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - last activity ${it.getLastActivity()}")
-            }
-        } else {
+        String inclusion = inclusionOf(all[id] as Map, t, limit, it.currentValue(attributeName))
+        if (inclusion == 'included') {
+            includedSensors << it
+            logTrace("Including sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - last activity ${it.getLastActivity()}")
+        } else if (inclusion == 'excluded') {
             excludedSensors << it
             logTrace("Excluding sensor ${it.getLabel()} (${it.currentValue(attributeName)}) - no activity in ${limit.intdiv(60000L)} min (last active ${it.getLastActivity()})")
         }
@@ -394,44 +393,14 @@ private boolean computeAggregateSensorValue() {
     def before = state.aggregateValue
     String attributeName = CAPABILITY_ATTRIBUTES[selectedSensorCapability]?.attribute
     List sensorValues = includedSensors.collect { it.currentValue(attributeName) }
-    state.minSensorValue = roundToDecimalPlaces(sensorValues.min())
-    state.maxSensorValue = roundToDecimalPlaces(sensorValues.max())
-
-    Number sum = (Number) sensorValues.sum()
-    state.avgSensorValue = roundToDecimalPlaces(sum / sensorValues.size(),1)
-
-    Number variance = (Number) (sensorValues.collect { (it - state.avgSensorValue) ** 2 }.sum()) / n
-    state.standardDeviation = roundToDecimalPlaces(Math.sqrt(variance),1)
-
-    sensorValues.sort()
-    logDebug "sorted values: $sensorValues"
-    if (n % 2 == 0) {
-        // Even number of elements, average the two middle values
-        state.medianSensorValue = (sensorValues[n.intdiv(2) - 1] + sensorValues[n.intdiv(2)]) / 2.0
-    } else {
-        // Odd number of elements, take the middle value
-        state.medianSensorValue = sensorValues[n.intdiv(2)]
-    }
-
-    //aggregationMethod", type: "enum", options: ["average", "median", "min", "max"
-    switch (aggregationMethod) {
-        case "min":
-            state.aggregateValue = state.minSensorValue
-            break
-
-        case "max":
-            state.aggregateValue = state.maxSensorValue
-            break
-
-        case "median":
-            state.aggregateValue = state.medianSensorValue
-            break
-
-        case "average":
-        default:
-            state.aggregateValue = state.avgSensorValue
-            break
-    }
+    logDebug "sorted values: ${sensorValues.sort(false)}"
+    Map stats = statsOf(sensorValues)
+    state.minSensorValue = stats.min
+    state.maxSensorValue = stats.max
+    state.avgSensorValue = stats.avg
+    state.standardDeviation = stats.stdev
+    state.medianSensorValue = stats.median
+    state.aggregateValue = aggregateFor(stats, aggregationMethod as String)
 
     if (state.aggregateValue != before) logAggregateChange()
     logStatistics()
@@ -493,12 +462,46 @@ boolean isQuiet(Map s, Long now, Long limitMs) {
 
 // ── End core ──────────────────────────────────────────────────────────
 
+// ── Continuous core (pure) ────────────────────────────────────────────
+// Same rules as the core above; tests/test_core.groovy runs it off-hub with the core.
 
-@CompileStatic
-private double roundToDecimalPlaces(double decimalNumber, int decimalPlaces = 2) {
+// 'included', 'excluded' (quiet past its limit) or null (reporting, but no value yet).
+String inclusionOf(Map activity, Long now, Long limitMs, Object value) {
+    if (isQuiet(activity, now, limitMs)) return 'excluded'
+    return value != null ? 'included' : null
+}
+
+// min and max round to 2 places, the average to 1; the deviation is taken around the
+// rounded average, and the median keeps the inputs' own precision. null for no values.
+Map statsOf(List values) {
+    int n = values ? values.size() : 0
+    if (n < 1) return null
+    Number sum = (Number) values.sum()
+    double avg = roundToDecimalPlaces(sum / n, 1)
+    Number variance = (Number) (values.collect { (it - avg) ** 2 }.sum()) / n
+    List sorted = values.sort(false)
+    Number median = (n % 2 == 0) ? (sorted[n.intdiv(2) - 1] + sorted[n.intdiv(2)]) / 2.0 : sorted[n.intdiv(2)]
+    return [min: roundToDecimalPlaces(values.min()), max: roundToDecimalPlaces(values.max()),
+            avg: avg, stdev: roundToDecimalPlaces(Math.sqrt(variance), 1), median: median]
+}
+
+// The statistic the aggregation method publishes; average for an unknown method.
+Number aggregateFor(Map stats, String method) {
+    switch (method) {
+        case "min":    return stats.min
+        case "max":    return stats.max
+        case "median": return stats.median
+        default:       return stats.avg
+    }
+}
+
+@groovy.transform.CompileStatic
+double roundToDecimalPlaces(double decimalNumber, int decimalPlaces = 2) {
     double scale = Math.pow(10, decimalPlaces)
     return (Math.round(decimalNumber * scale) as double) / scale
 }
+
+// ── End continuous core ───────────────────────────────────────────────
 
 // ── Logging (app) ─────────────────────────────────────────────────────
 //   ⬇️ Evt  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
