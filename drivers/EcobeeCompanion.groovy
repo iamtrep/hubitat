@@ -328,9 +328,9 @@ void connect() {
             }
             Map data = response.data
             PIN_CODES.put(device.id.toString(), data.code as String)
-            state.pinExpires = now() + (data.expires_in * 1000)
+            state.pinExpires = pinExpiryMs(now(), data.expires_in)
 
-            logInfo "PIN: ${data.ecobeePin} (expires in ${data.expires_in / 60} min)"
+            logInfo "PIN: ${data.ecobeePin} (expires in ${data.expires_in} min)"
             logInfo "Authorize at ecobee.com, then run authorize() to complete setup"
 
             sendEvent(name: "connectionStatus", value: "pending", descriptionText: "${device.displayName} Waiting for PIN authorization: ${data.ecobeePin}")
@@ -998,17 +998,7 @@ private void applyPolledState(Map thermostat, String recovery) {
     sendEvent(name: "currentProgram", value: currentProgramValue, descriptionText: "${device.displayName} current program is ${currentProgramValue}")
 
     // Determine operating state
-    String operatingState = "idle"
-    if (thermostat.equipmentStatus) {
-        String status = thermostat.equipmentStatus.toLowerCase()
-        if (status.contains("heat")) {
-            operatingState = status.contains("aux") ? "pending heat" : "heating"
-        } else if (status.contains("cool")) {
-            operatingState = "cooling"
-        } else if (status.contains("fan")) {
-            operatingState = "fan only"
-        }
-    }
+    String operatingState = operatingStateFromEquipment(thermostat.equipmentStatus)
     sendEvent(name: "thermostatOperatingState", value: operatingState, descriptionText: "${device.displayName} thermostat operating state is ${operatingState}")
 
     // Update weather
@@ -1351,6 +1341,22 @@ private Map fetchThermostatData(String apiPath = "/1/thermostat", Map customSele
     Map data = callEcobeeApi("GET", apiPath, queryData, null, 0, err)
     if (data != null && !data.thermostatList && err != null) err.msg = "no thermostat in the response"
     return data?.thermostatList ? data.thermostatList[0] : null
+}
+
+// The PIN authorization response gives expires_in in minutes (the token response gives seconds).
+private static long pinExpiryMs(long nowMs, Object expiresInMinutes) {
+    return nowMs + ((expiresInMinutes as long) * 60000L)
+}
+
+// equipmentStatus is a CSV of running equipment (empty when idle). heatPump* and auxHeat* are space
+// heating (a furnace or boiler reports auxHeat*); compCool* is cooling; compHotWater and auxHotWater
+// are water heating and do not count. Tokens are matched whole, not as substrings.
+private static String operatingStateFromEquipment(Object equipmentStatus) {
+    List<String> tokens = (equipmentStatus?.toString() ?: "").split(",").collect { it.trim() }.findAll { it }
+    if (tokens.any { it ==~ /(?:heatPump[23]?|auxHeat[123])/ }) return "heating"
+    if (tokens.any { it ==~ /compCool[12]/ }) return "cooling"
+    if (tokens.contains("fan")) return "fan only"
+    return "idle"
 }
 
 // A move must stay inside the run being moved and the run before it. Past either end it would overwrite
