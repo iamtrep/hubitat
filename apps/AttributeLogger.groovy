@@ -4,7 +4,7 @@
 import groovy.transform.Field
 import groovy.transform.CompileStatic
 
-@Field static final String CODE_VERSION = "0.0.2"
+@Field static final String CODE_VERSION = "0.0.3"
 
 definition(
     name: "Attribute Logger",
@@ -56,6 +56,13 @@ void updated() {
 void initialize() {
     checkVersion(false)
     logDebug "Initializing Attribute Logger"
+}
+
+// Log file name of each child, keyed by app id, so a child can tell whether a sibling already owns its file.
+Map<String, String> logFileNames() {
+    Map<String, String> names = [:]
+    getChildApps().each { names[it.id.toString()] = it.getLogFileName() }
+    return names
 }
 
 void checkVersion(boolean reinit = true) {

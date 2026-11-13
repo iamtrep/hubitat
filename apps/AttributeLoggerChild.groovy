@@ -12,7 +12,7 @@ import com.hubitat.app.DeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.nio.file.NoSuchFileException
 
-@Field static final String CODE_VERSION = "0.1.2"
+@Field static final String CODE_VERSION = "0.1.3"
 @Field static final long WEEK_SECONDS = 604800L
 @Field static final long ROTATION_RETRY_MS = 3600000L
 
@@ -39,6 +39,9 @@ Map mainPage() {
         section("App Settings", hideable: true, hidden: false) {
             label title: "Set App Label", required: false
             input "logFileName", "text", title: "Log File Name", description: "Enter the name of the log file (e.g., log.csv)", defaultValue: "log.csv", required: true
+            if (logFileConflict()) {
+                paragraph "<b>Not logging:</b> another Attribute Logger already writes to ${logFileName}. Enter a different file name."
+            }
             input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
             input name: "debugEnable", type: "bool", title: "Enable debug logging", defaultValue: false, submitOnChange: true
             if (settings.debugEnable) {
@@ -111,8 +114,34 @@ void initialize() {
     checkVersion(false)
     app.removeSetting("logLevel")
     unsubscribe()
+    // Two instances on one file overwrite each other's rows and mix their columns. The older instance keeps the name.
+    if (logFileConflict()) {
+        logError "Log file ${logFileName} is already used by another Attribute Logger — not logging until the name is changed"
+        return
+    }
     selectedAttributes.each { attribute ->
         subscribe(selectedDevice, attribute, handleEvent)
+    }
+}
+
+String getLogFileName() {
+    return settings.logFileName as String
+}
+
+// The id of an older sibling that logs to the same file name, or null.
+static Long olderSiblingWithName(String name, long myId, Map<String, String> namesById) {
+    if (!name) return null
+    List<Long> ids = namesById.findAll { String id, String n -> n != null && n.trim() == name.trim() && (id as Long) < myId }
+        .keySet().collect { it as Long }.sort()
+    return ids ? ids[0] : null
+}
+
+private boolean logFileConflict() {
+    try {
+        return olderSiblingWithName(settings.logFileName as String, app.id as long, parent.logFileNames()) != null
+    } catch (Exception e) {
+        logWarn "Could not check the log file name against other loggers: ${e.message}"
+        return false
     }
 }
 
