@@ -88,7 +88,7 @@ Per [`TESTING.md`](TESTING.md) section 2.2, driver tests are not required by def
 | [`drivers/EcobeeCompanion.groovy`](drivers/EcobeeCompanion.groovy) | Cloud OAuth | — | N | — | Mock-service pattern would apply (parked). The OAuth state machine makes the mock non-trivial. |
 | [`drivers/EnvironmentCanada_AQHI.groovy`](drivers/EnvironmentCanada_AQHI.groovy) | HTTP polling (public XML) | — | N | — | Smallest-surface candidate for the parked mock-service pattern (no auth). |
 | [`drivers/IKEA-Blinds.groovy`](drivers/IKEA-Blinds.groovy) | Zigbee | — | N | — | `parse()`-injection pattern would apply (parked). |
-| [`drivers/IPReachabilitySensor.groovy`](drivers/IPReachabilitySensor.groovy) | HTTP polling | — | N | — | Mock-service pattern would apply (parked). |
+| [`drivers/IPReachabilitySensor.groovy`](drivers/IPReachabilitySensor.groovy) | HTTP polling | 4 | N | [`drivers/tests/test-ipreachability-retry-threshold.groovy`](drivers/tests/test-ipreachability-retry-threshold.groovy) | Mock-service pattern would apply (parked). The retry threshold from the preference, 0 included, is unit-tested. |
 | [`drivers/QuebecIQA.groovy`](drivers/QuebecIQA.groovy) | HTTP polling | — | N | — | Mock-service pattern would apply (parked). |
 | [`drivers/VirtualSwitchPowerSource.groovy`](drivers/VirtualSwitchPowerSource.groovy) | Virtual | — | N | — | Driven by direct command, no `parse()`. |
 | [`drivers/XfinityContactSensor.groovy`](drivers/XfinityContactSensor.groovy) | Zigbee | — | N | — | Smallest-surface candidate for the parked `parse()`-injection pattern (single attribute). |

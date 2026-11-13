@@ -57,7 +57,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.1.7"
+@Field static final String CODE_VERSION = "0.1.8"
 @Field static final int RESPONSE_HISTORY_SIZE = 21
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 @Field static final int INITIAL_PING_DELAY = 2
@@ -98,6 +98,8 @@ void installed() {
 
 void updated() {
     storeHttpUrl()
+    // the preference is authoritative on Save; state.retryThreshold is only a cache of it (and of setRetryThreshold)
+    state.retryThreshold = resolveRetryThreshold(settings.retryThreshold)
     logDebug "Updated with settings: ${redactSettings()}"
     initialize()
 }
@@ -278,7 +280,7 @@ private void initState() {
         storeHttpUrl()
     }
     if (state.currentRetryCount == null) state.currentRetryCount = 0
-    if (state.retryThreshold == null) state.retryThreshold = settings.retryThreshold ?: DEFAULT_RETRY_THRESHOLD
+    if (state.retryThreshold == null) state.retryThreshold = resolveRetryThreshold(settings.retryThreshold)
     if (state.pingHistory == null) state.pingHistory = []
     if (state.httpHistory == null) state.httpHistory = []
 }
@@ -546,6 +548,11 @@ void handleRetry() {
 void resetRetryCount() {
     state.currentRetryCount = 0
     logDebug "Reset retry count to 0"
+}
+
+// 0 is a valid threshold (go offline on the first miss), so test for null and not for falsy.
+private static int resolveRetryThreshold(Object setting) {
+    return setting != null ? (setting as BigDecimal).intValue() : DEFAULT_RETRY_THRESHOLD
 }
 
 void setRetryThreshold(Number threshold) {
