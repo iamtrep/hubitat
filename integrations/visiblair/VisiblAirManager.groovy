@@ -28,7 +28,7 @@ definition(
     iconX2Url: ""
 )
 
-@Field static final String CODE_VERSION = "2.1.9"
+@Field static final String CODE_VERSION = "2.1.10"
 @Field static final String VISIBLAIR_API = "https://api.visiblair.com/api/v1"
 @Field static final int HTTP_TIMEOUT = 15
 // Decrypted password, kept in memory only: decrypt() costs ~350 ms on a C-8 Pro, ~830 ms on a C-7.
@@ -124,6 +124,7 @@ void initialize() {
     checkVersion(false)
     // A changed email or password takes effect on Done.
     API_TOKEN.remove(app.id.toString())
+    state.remove("loginRejected")
     if (debugEnable || traceEnable) runIn(1800, turnOffDebugLogging)
     encryptPassword()
 
@@ -267,6 +268,15 @@ void handleLoginResponse(resp, data) {
             err = e.message
         }
     }
+    if (!token && resp.getStatus() in [400, 401, 403]) {
+        // The API refused the credentials: retrying at the poll rate cannot succeed and may lock the account.
+        // Saving the preferences again (initialize) resumes polling.
+        logError "VisiblAir rejected the email or password (HTTP ${resp.getStatus()}); polling stopped until the credentials are saved again"
+        state.loginRejected = true
+        unschedule()
+        setAllChildrenHealth("offline", "VisiblAir login rejected")
+        return
+    }
     if (!token) {
         if (data.next == "poll") {
             pollFailed("login: ${err}")
@@ -287,6 +297,10 @@ void handleLoginResponse(resp, data) {
 void pollSensors(boolean force = false) {
     checkVersion()
     if (!apiEmail || !hasApiPassword()) return
+    if (state.loginRejected) {
+        logDebug "poll skipped: the credentials were rejected, save them again"
+        return
+    }
     String appKey = app.id.toString()
     long t = now()
     Long last = LAST_POLL.put(appKey, t)
