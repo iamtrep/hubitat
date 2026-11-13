@@ -13,11 +13,12 @@
  lost callback or a code push resumes on the next check.
  */
 
+import groovy.transform.CompileStatic
 import groovy.transform.Field
 import groovy.json.JsonOutput
 import java.nio.file.NoSuchFileException
 
-@Field static final String CODE_VERSION = "0.2.0"
+@Field static final String CODE_VERSION = "0.2.1"
 @Field static final String BASE_URL = "http://127.0.0.1:8080"
 @Field static final String FILE_PREFIX = "zigbee-incident-"
 
@@ -164,13 +165,13 @@ void appButtonHandler(String btn) {
 void zigbeeOffHandler(evt) {
     checkVersion()
     logEvt "location event ${evt.name}: ${evt.descriptionText}"
-    radioOffline("location event ${evt.name}")
+    checkRadio("location event ${evt.name}")
 }
 
 void zigbeeStatusHandler(evt) {
     checkVersion()
     logEvt "location event ${evt.name} = ${evt.value}"
-    if (evt.value == "offline") radioOffline("zigbeeStatus offline")
+    if (evt.value == "offline") checkRadio("zigbeeStatus offline")
 }
 
 void systemStartHandler(evt) {
@@ -187,11 +188,32 @@ void systemStartHandler(evt) {
 
 void periodicCheck() {
     checkVersion()
-    asynchttpGet("radioStateCallback", [uri: BASE_URL, path: "/hub/zigbeeDetails/json", timeout: 30], [:])
+    checkRadio(null)
+}
+
+// Every trigger goes through a read of the radio's state: an offline event alone does not say
+// whether the radio failed or was turned off in the hub's settings.
+private void checkRadio(String reason) {
+    asynchttpGet("radioStateCallback", [uri: BASE_URL, path: "/hub/zigbeeDetails/json", timeout: 30], [reason: reason])
+}
+
+// "disabled" when Zigbee is turned off in the hub's settings (enabled false, networkState DISABLED):
+// that is a choice, not an outage, and a reboot would not change it.
+@CompileStatic
+static String radioVerdict(Map z) {
+    if (z.get("enabled") == false || z.get("networkState") == "DISABLED") return "disabled"
+    return (z.get("networkState") == "ONLINE" && z.get("healthy") != false) ? "online" : "offline"
+}
+
+// After an escalation that left the radio offline, no new incident opens until the radio has been
+// seen online, or the gap between hub reboots has passed and a reboot can be tried again.
+@CompileStatic
+static boolean mayOpenIncident(Long exhaustedAtMs, long nowMs, long gapMs) {
+    return exhaustedAtMs == null || nowMs - exhaustedAtMs >= gapMs
 }
 
 void radioStateCallback(resp, data) {
-    Boolean online = null
+    String verdict = null
     if (resp.hasError()) {
         logWarn "radio state read failed: ${resp.getErrorMessage()}"
     } else if (resp.getStatus() != 200) {
@@ -199,18 +221,32 @@ void radioStateCallback(resp, data) {
     } else {
         try {
             Map z = resp.getJson() as Map
-            online = z.networkState == "ONLINE" && z.healthy != false
+            verdict = radioVerdict(z)
             // showReboot is false on a C-7 and earlier, and also while the radio is disabled, so
             // only a reading taken while the radio is up says whether the hub can reboot the radio.
-            if (online) state.radioRebootSupported = (z.showReboot == true)
-            logTrace "radio networkState=${z.networkState} healthy=${z.healthy} showReboot=${z.showReboot}"
+            if (verdict == "online") state.radioRebootSupported = (z.showReboot == true)
+            logTrace "radio networkState=${z.networkState} enabled=${z.enabled} healthy=${z.healthy} showReboot=${z.showReboot}"
         } catch (Exception e) {
             logWarn "radio state unreadable: ${e.message}"
         }
     }
-    if (online == null) return
-    if (!online && !state.incident) radioOffline("networkState not ONLINE")
-    else if (state.incident) serviceIncident(online)
+    if (verdict == null) return
+    if (verdict != "offline" && state.exhaustedAt != null) state.remove("exhaustedAt")
+    if (verdict == "disabled") {
+        if (state.incident) closeIncident("Zigbee is disabled in the hub's settings; not an outage", false)
+        return
+    }
+    boolean online = verdict == "online"
+    if (state.incident) {
+        serviceIncident(online)
+    } else if (!online) {
+        long gapMs = ((settings.minRebootGapHrs ?: 6) as long) * 3600000L
+        if (mayOpenIncident(state.exhaustedAt as Long, now(), gapMs)) radioOffline((data?.reason ?: "networkState not ONLINE") as String)
+        else logDebug "radio still offline after the last incident; next attempt once ${settings.minRebootGapHrs ?: 6} h have passed"
+    } else if (data?.reason) {
+        // An offline event with the state still reading online: the state may lag the event.
+        runIn(30, "periodicCheck")
+    }
 }
 
 void radioOffline(String reason) {
@@ -231,7 +267,7 @@ void serviceIncident(boolean online) {
     Map inc = state.incident
     if (online) {
         String how = [radioReboot: "after a radio reboot", afterHubReboot: "after a hub reboot"][inc.step as String] ?: "on its own"
-        closeIncident("radio recovered ${how}")
+        closeIncident("radio recovered ${how}", false)
         return
     }
     long elapsedMin = (now() - (inc.stepAt as long)).intdiv(60000L)
@@ -258,10 +294,10 @@ void serviceIncident(boolean online) {
             break
         case "hubReboot":
             // The reboot request did not take, or the hub came back without a systemStart event.
-            if (elapsedMin >= 15) closeIncident("radio still offline; hub reboot did not happen")
+            if (elapsedMin >= 15) closeIncident("radio still offline; hub reboot did not happen", true)
             break
         case "afterHubReboot":
-            if (elapsedMin >= 10) closeIncident("radio still offline after a hub reboot")
+            if (elapsedMin >= 10) closeIncident("radio still offline after a hub reboot", true)
             break
     }
     if (state.incident) runIn(30, "periodicCheck")
@@ -275,12 +311,12 @@ void radioRebootCallback(resp, data) {
 
 void prepareHubReboot() {
     if (settings.hubRebootEnable == false) {
-        closeIncident("radio still offline; hub reboot disabled")
+        closeIncident("radio still offline; hub reboot disabled", true)
         return
     }
     long gapMs = ((settings.minRebootGapHrs ?: 6) as long) * 3600000L
     if (state.lastHubRebootMs && now() - (state.lastHubRebootMs as long) < gapMs) {
-        closeIncident("radio still offline; hub rebooted less than ${settings.minRebootGapHrs ?: 6} h ago, not rebooting again")
+        closeIncident("radio still offline; hub rebooted less than ${settings.minRebootGapHrs ?: 6} h ago, not rebooting again", true)
         return
     }
     setStep("finalCapture")
@@ -312,8 +348,9 @@ void setStep(String step) {
     state.incident = inc
 }
 
-void closeIncident(String outcome) {
+void closeIncident(String outcome, boolean stillOffline) {
     Map inc = state.incident
+    if (stillOffline) state.exhaustedAt = now()
     long mins = (now() - (inc.startMs as long)).intdiv(60000L)
     logInfo "incident ${inc.id} closed after ${mins} min: ${outcome}"
     notify("Zigbee incident closed after ${mins} min: ${outcome}")

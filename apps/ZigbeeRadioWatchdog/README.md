@@ -16,6 +16,8 @@ A Hubitat Elevation app for a Zigbee radio that goes offline and does not come b
 5. **Reboots the hub** if the radio is still offline. Before the reboot it saves a smaller final capture, `zigbee-incident-<yyyyMMdd-HHmmss>-final.txt`, and one more thread dump. Logs are kept across the reboot. It never reboots the hub more often than the configured gap (default 6 h).
 6. After the hub restarts, it checks the radio and closes the incident with the outcome.
 
+Zigbee turned off in the hub's settings is not an outage: no incident opens, and an open one is closed. When an incident ends with the radio still offline, the next one opens only after the radio has been online again, or after the hub reboot gap has passed.
+
 Each step can be turned off. Notifications go to any notification devices you pick. The app page lists past incidents with links to their files, and has a **Capture diagnostics now** button.
 
 ## What gets captured
