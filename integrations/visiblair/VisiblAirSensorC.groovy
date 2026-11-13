@@ -11,7 +11,7 @@
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.2.1"
+@Field static final String CODE_VERSION = "0.2.2"
 
 metadata {
     definition(
@@ -197,31 +197,31 @@ void updateSensorData(Map data) {
             // --- Config sync to preferences ---
             case "sampleRate":
                 state.sampleRate = value
-                device.updateSetting("sampleRatePref", [value: value as int, type: "number"])
+                setNumberPref("sampleRatePref", value)
                 break
             case "co2Offset":
-                device.updateSetting("co2Offset", [value: value as int, type: "number"])
+                setNumberPref("co2Offset", value)
                 break
             case "temperatureOffset":
-                device.updateSetting("temperatureOffset", [value: value as BigDecimal, type: "decimal"])
+                setDecimalPref("temperatureOffset", value)
                 break
             case "humidityOffset":
-                device.updateSetting("humidityOffset", [value: value as int, type: "number"])
+                setNumberPref("humidityOffset", value)
                 break
             case "description":
                 device.updateSetting("sensorDescription", [value: value as String, type: "text"])
                 break
             case "calibrationCO2Level":
-                device.updateSetting("calibrationCO2Level", [value: value as int, type: "number"])
+                setNumberPref("calibrationCO2Level", value)
                 break
             case "audibleAlertLevel":
-                device.updateSetting("audibleAlertLevel", [value: value as int, type: "number"])
+                setNumberPref("audibleAlertLevel", value)
                 break
             case "displayRefresh":
-                device.updateSetting("displayRefresh", [value: value as int, type: "number"])
+                setNumberPref("displayRefresh", value)
                 break
             case "displaySleepTimeout":
-                device.updateSetting("displaySleepTimeout", [value: value as int, type: "number"])
+                setNumberPref("displaySleepTimeout", value)
                 break
             case "temperatureUnit":
                 device.updateSetting("temperatureUnit", [value: value as String, type: "enum"])
@@ -283,3 +283,26 @@ void logError(String m) { log.error logp('🛑') + m }
 void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
 void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
 void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }
+
+// A configuration value from the cloud as a number, or null when it is missing or not numeric.
+// A bare cast throws on null, and an exception here would skip the rest of this sensor's update.
+static Integer configInt(Object v) {
+    BigDecimal d = configDecimal(v)
+    return d == null ? null : d.intValue()
+}
+
+static BigDecimal configDecimal(Object v) {
+    if (v == null) return null
+    if (v instanceof Number) return new BigDecimal(v.toString())
+    try { return new BigDecimal(v.toString().trim()) } catch (NumberFormatException e) { return null }
+}
+
+private void setNumberPref(String name, Object value) {
+    Integer n = configInt(value)
+    if (n != null) device.updateSetting(name, [value: n, type: "number"])
+}
+
+private void setDecimalPref(String name, Object value) {
+    BigDecimal d = configDecimal(value)
+    if (d != null) device.updateSetting(name, [value: d, type: "decimal"])
+}
