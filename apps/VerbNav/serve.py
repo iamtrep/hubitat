@@ -26,7 +26,15 @@ class ProxyHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=os.path.dirname(os.path.abspath(__file__)), **kwargs)
 
+    def host_ok(self):
+        # Only the page served from this machine may use the proxy: a Host check stops a DNS-rebinding
+        # page from reaching the hub's backup download through it.
+        return self.headers.get('Host', '') in (f'localhost:{PORT}', f'127.0.0.1:{PORT}')
+
     def do_GET(self):
+        if not self.host_ok():
+            self.send_error(403, 'Host not allowed')
+            return
         # WebSocket upgrade for /logsocket
         if self.path == '/logsocket':
             self.proxy_websocket()
@@ -53,7 +61,6 @@ class ProxyHandler(http.server.SimpleHTTPRequestHandler):
                 ct = resp.headers.get('Content-Type', 'application/octet-stream')
                 self.send_header('Content-Type', ct)
                 self.send_header('Content-Length', str(len(body)))
-                self.send_header('Access-Control-Allow-Origin', '*')
                 self.end_headers()
                 self.wfile.write(body)
         except urllib.error.HTTPError as e:
@@ -161,7 +168,9 @@ class ProxyHandler(http.server.SimpleHTTPRequestHandler):
 
     def log_message(self, format, *args):
         # Quieter logging - only show proxied requests
-        path = args[0].split()[1] if args else ''
+        # send_error passes an int first, so only a request line is split.
+        parts = args[0].split() if args and isinstance(args[0], str) else []
+        path = parts[1] if len(parts) > 1 else ''
         if any(path.startswith(p) for p in PROXY_PREFIXES) or 'logsocket' in path:
             print(f'  proxy → {path}')
 
@@ -174,7 +183,7 @@ if __name__ == '__main__':
     print(f'  Hub: {HUB_BASE}')
     print(f'  Open: http://localhost:{PORT}/verb_nav_prototype.html')
     print(f'  Press Ctrl+C to stop\n')
-    with ThreadedServer(('', PORT), ProxyHandler) as httpd:
+    with ThreadedServer(('127.0.0.1', PORT), ProxyHandler) as httpd:
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
