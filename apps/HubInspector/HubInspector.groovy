@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "6.2.5"
+@Field static final String CODE_VERSION = "6.2.6"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -944,9 +944,8 @@ Map apiPerformanceCompare() {
         // Will build zero baseline after resolving checkpoint
         baselineLabel = "Startup (0:00:00)"
     } else {
-        if (!baseline?.isInteger()) return jsonResponse([success: false, error: "Invalid baseline index"])
-        int bIdx = baseline.toInteger()
-        if (bIdx < 0 || bIdx >= idx.size()) return jsonResponse([success: false, error: "Invalid baseline index"])
+        int bIdx = findEntryIndexByKey(idx, baseline)
+        if (bIdx < 0) return jsonResponse([success: false, error: "Unknown baseline checkpoint"])
         Map bCp = loadCheckpointDetail(idx[bIdx].detailFile as String)
         if (!bCp) return jsonResponse([success: false, error: "Baseline detail file missing"])
         baselineStats = bCp.stats + [resources: bCp.resources, radioStats: bCp.radioStats, timestampMs: bCp.timestampMs, temperature: bCp.temperature, databaseSize: bCp.databaseSize]
@@ -974,9 +973,8 @@ Map apiPerformanceCompare() {
         checkpointStats.timestampMs = now()
         checkpointLabel = "Now (${new Date().format('yyyy-MM-dd HH:mm:ss')})"
     } else {
-        if (!checkpoint?.isInteger()) return jsonResponse([success: false, error: "Invalid checkpoint index"])
-        int cIdx = checkpoint.toInteger()
-        if (cIdx < 0 || cIdx >= idx.size()) return jsonResponse([success: false, error: "Invalid checkpoint index"])
+        int cIdx = findEntryIndexByKey(idx, checkpoint)
+        if (cIdx < 0) return jsonResponse([success: false, error: "Unknown checkpoint"])
         Map cCp = loadCheckpointDetail(idx[cIdx].detailFile as String)
         if (!cCp) return jsonResponse([success: false, error: "Checkpoint detail file missing"])
         checkpointStats = cCp.stats + [resources: cCp.resources, radioStats: cCp.radioStats, timestampMs: cCp.timestampMs, temperature: cCp.temperature, databaseSize: cCp.databaseSize]
@@ -1017,11 +1015,9 @@ Map apiSnapshots() {
 
 Map apiSnapshotView() {
     checkVersion()
-    String idxStr = params.index ?: "-1"
-    if (!idxStr.isInteger()) return jsonResponse([error: "Invalid snapshot index"])
-    int idx = idxStr.toInteger()
     List snapshots = loadSnapshots()
-    if (idx < 0 || idx >= snapshots.size()) return jsonResponse([error: "Invalid snapshot index"])
+    int idx = findEntryIndexByKey(snapshots, params.key)
+    if (idx < 0) return jsonResponse([error: "Unknown snapshot key"])
     Map snap = snapshots[idx]
 
     Map snapNet = snap.network ?: [:]
@@ -1083,16 +1079,13 @@ Map apiCreateSnapshot() {
         logWarn "apiCreateSnapshot: live snapshot did not persist (newest timestampMs unchanged) — creation failed"
         return jsonResponse([success: false, error: "Failed to create live snapshot — check hub logs", snapshotCount: snapshots?.size() ?: 0])
     }
-    return jsonResponse([success: true, snapshotCount: snapshots.size()])
+    return jsonResponse([success: true, snapshotCount: snapshots.size(), key: newestMs])
 }
 
 Map apiDeleteSnapshot() {
     checkVersion()
-    String idxStr = params.index ?: "-1"
-    if (!idxStr.isInteger()) return jsonResponse([success: false, error: "Invalid index"])
-    int idx = idxStr.toInteger()
-    if (idx < 0) return jsonResponse([success: false, error: "Invalid index"])
-    deleteSnapshot(idx)
+    String err = deleteSnapshot(params.key)
+    if (err) return jsonResponse([success: false, error: err])
     return jsonResponse([success: true])
 }
 
@@ -1104,11 +1097,8 @@ Map apiCreateCheckpoint() {
 
 Map apiDeleteCheckpoint() {
     checkVersion()
-    String idxStr = params.index ?: "-1"
-    if (!idxStr.isInteger()) return jsonResponse([success: false, error: "Invalid index"])
-    int idx = idxStr.toInteger()
-    if (idx < 0) return jsonResponse([success: false, error: "Invalid index"])
-    deleteCheckpoint(idx)
+    String err = deleteCheckpoint(params.key)
+    if (err) return jsonResponse([success: false, error: err])
     return jsonResponse([success: true])
 }
 
@@ -1539,7 +1529,7 @@ Map getPerformanceData(Map shared = [:]) {
         appParentTypeById: appParentTypeById,  // B2: id → parent label for CPU-by-app-type chart
         checkpointCount: indexEntries.size(),
         maxCheckpoints: (settings.maxCheckpoints ?: 10) as int,
-        checkpoints: indexEntries,
+        checkpoints: indexEntries.collect { Map c -> c + [key: c.timestampMs] },
         savedComparison: loadPerformanceComparisonPayload(),
         cloudCalls: fetchCloudCalls(),
         cloudHourly: loadHourly().findAll { List r -> r.size() > 6 }.collect { List r -> [r[0], r[6]] }
@@ -1552,7 +1542,7 @@ Map getSnapshotsData() {
         snapshotCount: snapshots?.size() ?: 0,
         maxSnapshots: (settings.maxSnapshots ?: 10) as int,
         snapshots: (snapshots ?: []).collect { Map snap -> [
-            timestamp: snap.timestamp, hubInfo: snap.hubInfo,
+            key: snap.timestampMs, timestamp: snap.timestamp, hubInfo: snap.hubInfo,
             devices: [totalDevices: snap.devices?.totalDevices ?: 0, activeDevices: snap.devices?.activeDevices ?: 0,
                       inactiveDevices: snap.devices?.inactiveDevices ?: 0, disabledDevices: snap.devices?.disabledDevices ?: 0],
             apps: [totalApps: snap.apps?.totalApps ?: 0, builtInApps: snap.apps?.builtInApps ?: 0, userApps: snap.apps?.userApps ?: 0],
@@ -1915,8 +1905,18 @@ List tempSamples() {
 }
 
 List loadHourly() {
-    Object data = readFile(HOURLY_FILE)
-    return (data instanceof List) ? (List) data : []
+    return loadHourlyChecked() ?: []
+}
+
+// The stored rollup rows, [] when the file is absent, null when it exists but cannot be read.
+// A caller that writes the file back must stop on null: a replacement built from nothing would
+// overwrite up to 30 days of rows.
+List loadHourlyChecked() {
+    Map r = readFileResult(HOURLY_FILE)
+    if (r.status == 'content' && r.data instanceof List) return (List) r.data
+    if (r.status == 'absent') return []
+    logWarn "Hourly rollup file ${HOURLY_FILE} exists but cannot be read (${r.reason ?: 'not a list'}); leaving it untouched"
+    return null
 }
 
 void sampleTemperature() {
@@ -1975,7 +1975,9 @@ void onHourlyDbSize(resp, data) {
     List rows = (List) data.rows
     try { rows[-1][5] = asyncText(resp, "database size")?.toInteger() } catch (Exception e) { }
     addCloudCalls(rows)
-    List all = new ArrayList(loadHourly()) + rows
+    List stored = loadHourlyChecked()
+    if (stored == null) return
+    List all = new ArrayList(stored) + rows
     if (all.size() > HOURLY_KEEP) all = all.subList(all.size() - HOURLY_KEEP, all.size())
     writeFile(HOURLY_FILE, groovy.json.JsonOutput.toJson(all))
 }
@@ -3822,14 +3824,34 @@ private boolean doCreateCheckpoint() {
     return true
 }
 
-void deleteCheckpoint(int index) {
-    List idx = new ArrayList(loadCheckpointIndex())
-    if (index >= 0 && index < idx.size()) {
-        Map dropped = (Map) idx.remove(index)
-        logInfo "Deleting checkpoint at index ${index} (${dropped?.timestamp})"
-        deleteCheckpointDetail(dropped?.detailFile as String)
-        saveCheckpointIndex(idx)
+// Position of the entry whose timestampMs equals key, or -1 when key is not a whole number or
+// matches nothing. Entries are addressed by this key, never by list position: both lists are
+// prepended to, so a position read earlier points at a different entry by the time it is used.
+static int findEntryIndexByKey(List entries, Object key) {
+    if (entries == null || key == null) return -1
+    String s = key.toString().trim()
+    if (!(s ==~ /\d{1,18}/)) return -1
+    long k = Long.parseLong(s)
+    for (int i = 0; i < entries.size(); i++) {
+        Object e = entries[i]
+        Object ts = (e instanceof Map) ? ((Map) e).get('timestampMs') : null
+        if (ts instanceof Number && ((Number) ts).longValue() == k) return i
     }
+    return -1
+}
+
+// Returns an error message, or null when the checkpoint was deleted.
+String deleteCheckpoint(Object key) {
+    List loaded = loadCheckpointIndexChecked()
+    if (loaded == null) return "Checkpoint index cannot be read; nothing deleted"
+    List idx = new ArrayList(loaded)
+    int pos = findEntryIndexByKey(idx, key)
+    if (pos < 0) return "Unknown checkpoint key"
+    Map dropped = (Map) idx.remove(pos)
+    logInfo "Deleting checkpoint ${dropped?.timestamp}"
+    deleteCheckpointDetail(dropped?.detailFile as String)
+    saveCheckpointIndex(idx)
+    return null
 }
 
 void clearAllCheckpoints() {
@@ -3913,7 +3935,12 @@ void createSnapshot() {
         }
     }
 
-    List snapshots = loadSnapshots()
+    List loadedSnaps = loadSnapshotsChecked()
+    if (loadedSnaps == null) {
+        logWarn "Config snapshot not saved: the stored snapshots cannot be read"
+        return
+    }
+    List snapshots = new ArrayList(loadedSnaps)
     snapshots.add(0, snapshot)
 
     int maxSnap = (settings.maxSnapshots ?: 10) as int
@@ -3925,13 +3952,17 @@ void createSnapshot() {
     logInfo "Config snapshot created successfully (${snapshots.size()} total)"
 }
 
-void deleteSnapshot(int index) {
-    List snapshots = loadSnapshots()
-    if (index >= 0 && index < snapshots.size()) {
-        logInfo "Deleting snapshot at index ${index}"
-        snapshots.remove(index)
-        saveSnapshots(snapshots)
-    }
+// Returns an error message, or null when the snapshot was deleted.
+String deleteSnapshot(Object key) {
+    List loaded = loadSnapshotsChecked()
+    if (loaded == null) return "Stored snapshots cannot be read; nothing deleted"
+    List snapshots = new ArrayList(loaded)
+    int pos = findEntryIndexByKey(snapshots, key)
+    if (pos < 0) return "Unknown snapshot key"
+    logInfo "Deleting snapshot ${snapshots[pos]?.timestamp}"
+    snapshots.remove(pos)
+    saveSnapshots(snapshots)
+    return null
 }
 
 void clearAllSnapshots() {
@@ -4145,20 +4176,27 @@ private String detailFilenameFor(Object timestampMs) {
 }
 
 List loadCheckpointIndex() {
+    return loadCheckpointIndexChecked() ?: []
+}
+
+// The stored index, [] when the file is absent (a new empty one is started), null when it exists
+// but cannot be read. A caller that writes the index back must stop on null: writing a fresh []
+// would orphan every checkpoint detail file.
+List loadCheckpointIndexChecked() {
     // Defensive copies both ways (N4): callers can never mutate the shared cache.
     if (cachedCheckpointIndex != null) return new ArrayList(cachedCheckpointIndex)
-    try {
-        List data = (List) readFile(CHECKPOINT_INDEX_FILE)
-        if (data != null) {
-            cachedCheckpointIndex = data
-            return new ArrayList(cachedCheckpointIndex)
-        }
-    } catch (Exception e) {
-        logDebug "No existing checkpoint index: ${e.message}"
+    Map r = readFileResult(CHECKPOINT_INDEX_FILE)
+    if (r.status == 'content' && r.data instanceof List) {
+        cachedCheckpointIndex = (List) r.data
+        return new ArrayList(cachedCheckpointIndex)
     }
-    // First run or index missing: start an empty index file so later reads short-circuit.
-    saveCheckpointIndex([])
-    return []
+    if (r.status == 'absent') {
+        // First run or index missing: start an empty index file so later reads short-circuit.
+        saveCheckpointIndex([])
+        return []
+    }
+    logWarn "Checkpoint index ${CHECKPOINT_INDEX_FILE} exists but cannot be read (${r.reason ?: 'not a list'}); leaving it untouched"
+    return null
 }
 
 void saveCheckpointIndex(List index) {
@@ -4217,7 +4255,12 @@ void persistCheckpoint(Map cp) {
         return
     }
     Map indexEntry = buildCheckpointIndexEntry(cp, filename)
-    List idx = new ArrayList(loadCheckpointIndex())
+    List loadedIdx = loadCheckpointIndexChecked()
+    if (loadedIdx == null) {
+        logWarn "persistCheckpoint: checkpoint index unreadable; index unchanged (detail file ${filename} kept)"
+        return
+    }
+    List idx = new ArrayList(loadedIdx)
     idx.add(0, indexEntry)
     int cap = (settings.maxCheckpoints ?: 10) as int
     if (idx.size() > cap) {
@@ -4229,13 +4272,18 @@ void persistCheckpoint(Map cp) {
 }
 
 List loadSnapshots() {
-    try {
-        List data = (List) readFile(SNAPSHOTS_FILE)
-        if (data) return data
-    } catch (Exception e) {
-        logDebug "No existing snapshots: ${e.message}"
-    }
-    return []
+    return loadSnapshotsChecked() ?: []
+}
+
+// The stored snapshots, [] when the file is absent, null when it exists but cannot be read.
+// A caller that writes the list back must stop on null: a list rebuilt from nothing would
+// overwrite every stored snapshot.
+List loadSnapshotsChecked() {
+    Map r = readFileResult(SNAPSHOTS_FILE)
+    if (r.status == 'content' && r.data instanceof List) return (List) r.data
+    if (r.status == 'absent') return []
+    logWarn "Snapshots file ${SNAPSHOTS_FILE} exists but cannot be read (${r.reason ?: 'not a list'}); leaving it untouched"
+    return null
 }
 
 void saveSnapshots(List snapshots) {
@@ -4269,17 +4317,43 @@ String loadUITemplate() {
     return null
 }
 
-def readFile(String fileName) {
+// Read-only callers use readFile (null on any failure). Callers that write the file back use
+// readFileResult and must not write unless the status is content or absent.
+Object readFile(String fileName) {
+    Map r = readFileResult(fileName)
+    if (r.status == 'failed') logDebug "Error reading ${fileName}: ${r.reason}"
+    return r.data
+}
+
+// Classifies a File Manager read: content (bytes), absent (nothing to lose, start a new file) or
+// failed (the file may exist, so nothing may be written over it). errorClass is the exception's
+// toString() (class name first), null when the call returned. A missing file throws
+// NoSuchFileException or returns null depending on firmware. An empty file counts as absent:
+// it holds nothing to lose and cannot be told from a missing one.
+static String classifyFileRead(String errorClass, byte[] bytes) {
+    if (errorClass == null) return (bytes == null || bytes.length == 0) ? "absent" : "content"
+    return errorClass.startsWith("java.nio.file.NoSuchFileException") ? "absent" : "failed"
+}
+
+// [status: content|absent|failed, data: parsed JSON (content only), reason: String (failed only)].
+// Bytes that are not valid JSON are failed, not absent: the file exists and may be repairable.
+Map readFileResult(String fileName) {
+    byte[] bytes = null
+    String errorClass = null
+    String errorMsg = null
     try {
-        byte[] fileData = downloadHubFile(fileName)
-        if (fileData) {
-            String jsonString = new String(fileData, "UTF-8")
-            return new groovy.json.JsonSlurper().parseText(jsonString)
-        }
+        bytes = downloadHubFile(fileName)
     } catch (Exception e) {
-        logDebug "File not found or error reading ${fileName}: ${e.message}"
+        errorClass = e.toString()
+        errorMsg = e.message
     }
-    return null
+    String status = classifyFileRead(errorClass, bytes)
+    if (status != "content") return [status: status, data: null, reason: errorMsg ?: errorClass]
+    try {
+        return [status: "content", data: new groovy.json.JsonSlurper().parseText(new String(bytes, "UTF-8")), reason: null]
+    } catch (Exception e) {
+        return [status: "failed", data: null, reason: "unparsable: ${e.message}"]
+    }
 }
 
 // ===== DEVICE USAGE AUDIT =====

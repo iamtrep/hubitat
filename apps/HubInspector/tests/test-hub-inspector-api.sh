@@ -886,7 +886,7 @@ else:
 section("GET /api/snapshot/view")
 
 if snaps.get("snapshotCount", 0) > 0:
-    sv = api_get("snapshot/view?index=0")
+    sv = api_get("snapshot/view?key=" + str(snaps["snapshots"][0]["key"]))
     if "_error" in sv:
         fail(f"Request failed: {sv['_error']}")
     elif sv.get("error"):
@@ -1177,11 +1177,28 @@ elif comp_valid.get("success"):
 else:
     fail(f"startup→now compare returned success=false: {comp_valid.get('error')}")
 
+# Entries are addressed by key (timestampMs). A list position must be refused, never resolved:
+# position 0 is always a valid index when anything is stored, and deleting it would lose data.
+for route, count_ep, count_key in (("checkpoint/delete", "performance", "checkpointCount"),
+                                   ("snapshot/delete", "snapshots", "snapshotCount")):
+    before = api_get(count_ep).get(count_key)
+    for body in ("key=0", "index=0", ""):
+        r = api_post(route, body)
+        if isinstance(r, dict) and r.get("success") is False:
+            ok(f"{route} with {body or 'no key'!r} refused: {r.get('error')}")
+        else:
+            fail(f"{route} with {body or 'no key'!r} was not refused: {r}")
+    after = api_get(count_ep).get(count_key)
+    if before == after:
+        ok(f"{route}: stored count unchanged ({after})")
+    else:
+        fail(f"{route}: stored count went from {before} to {after}")
+
 # Valid comparison: startup → saved checkpoint (if one exists)
 perf2 = api_get("performance")
 cp_count = perf2.get("checkpointCount", 0) if "_error" not in perf2 else 0
 if cp_count > 0:
-    comp_cp = api_post("performance/compare", "baseline=startup&checkpoint=0")
+    comp_cp = api_post("performance/compare", "baseline=startup&checkpoint=" + str(perf2["checkpoints"][0]["key"]))
     if "_error" in comp_cp:
         fail(f"startup→cp[0] request failed: {comp_cp['_error']}")
     elif comp_cp.get("success"):

@@ -72,7 +72,7 @@ Caching is how the app honours the guiding principle: every avoided hub fetch is
 
 - `CACHE_TTL_MS = 120000` (2 min) applies uniformly to all cached endpoints.
 - Two endpoints deliberately bypass it:
-  - `snapshot/view` — keyed by a positional index that shifts on every snapshot create/delete, so a cached entry would serve the wrong snapshot after a mutation.
+  - `snapshot/view` — a view must never serve a snapshot deleted since the list was cached. Snapshots and checkpoints are addressed by their `timestampMs` key, never by list position: both lists are prepended to.
   - `/api/live` — fetched via a raw `fetch()` in `refreshLive()`, never through `api()`, so the live tile's freshness is governed by the **server-side** TTLs below, not this cache.
 - Invalidation is mutation-driven, never time-pressured: the code that calls a mutating `post()` must `drop(ep)` every key the mutation affects (`post()` itself drops nothing), and `refreshPage()` drops the current tab's keys before re-rendering.
 
