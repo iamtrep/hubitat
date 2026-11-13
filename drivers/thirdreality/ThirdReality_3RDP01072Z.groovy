@@ -30,7 +30,7 @@ import com.hubitat.app.DeviceWrapper
 import hubitat.zigbee.zcl.DataType
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.4"
+@Field static final String CODE_VERSION = "0.0.5"
 
 // Both outlets. Kept as strings to match descMap.endpoint / child DNI suffixes.
 @Field static final List<String> ENDPOINTS = ["01", "02"]
@@ -427,13 +427,13 @@ private boolean consumePendingDigital(String ep) {
 void resetEnergy() {
     logCmd "resetEnergy (both outlets)"
     List<String> cmds = []
-    Map offsets = (state.energyOffset ?: [:]) as Map
     ENDPOINTS.each { String ep ->
         int e = epInt(ep)
         cmds += zigbee.writeAttribute(CLUSTER_MFG, ATTR_MFG_RESET_ENERGY, DataType.UINT8, 1, [mfgCode: MFG_CODE, destEndpoint: e])
         cmds += zigbee.readAttribute(zigbee.METERING_CLUSTER, ATTR_SUMMATION, [destEndpoint: e])
     }
-    state.captureEnergyOffset = true
+    state.remove("captureEnergyOffset")
+    state.captureEnergyPending = ENDPOINTS.collect()
     sendZigbeeCommands(cmds)
 }
 
@@ -636,6 +636,15 @@ private void handleElectricalCluster(String ep, Map descMap) {
     }
 }
 
+// Records the offset for one endpoint and returns the endpoints still waiting. Tracked per endpoint because
+// the offsets map already has both keys after the first reset, so its size says nothing about a later one.
+private static List<String> captureEnergyOffset(Map offsets, List<String> pending, String ep, long raw) {
+    offsets[ep] = raw
+    List<String> left = new ArrayList<String>(pending)
+    left.remove(ep)
+    return left
+}
+
 private void handleMeteringCluster(String ep, Map descMap) {
     if (descMap.value == null) return
     DeviceWrapper cd = childForEndpoint(ep)
@@ -644,11 +653,16 @@ private void handleMeteringCluster(String ep, Map descMap) {
         case "0000": // Summation delivered (UINT48)
             long raw = Long.parseLong(descMap.value, 16)
             Map offsets = (state.energyOffset ?: [:]) as Map
-            if (state.captureEnergyOffset) {
-                offsets[ep] = raw
+            List<String> pending = (state.captureEnergyPending ?: []) as List<String>
+            if (pending.contains(ep)) {
+                pending = captureEnergyOffset(offsets, pending, ep, raw)
                 logInfo "energy offset captured (EP${ep}): ${raw}"
-                // clear the capture flag only once both endpoints have reported
-                if (offsets.size() >= ENDPOINTS.size()) state.remove("captureEnergyOffset")
+                // each endpoint is captured once per reset; a second reset starts with both pending again
+                if (pending) {
+                    state.captureEnergyPending = pending
+                } else {
+                    state.remove("captureEnergyPending")
+                }
             }
             state.energyOffset = offsets
             long counter = raw - ((offsets[ep] ?: 0L) as long)

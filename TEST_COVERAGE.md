@@ -107,7 +107,7 @@ Per [`TESTING.md`](TESTING.md) section 2.2, driver tests are not required by def
 | [`drivers/stelpro/StelproAllia.groovy`](drivers/stelpro/StelproAllia.groovy) | Zigbee | — | N | — | Thermostat. |
 | [`drivers/stelpro/StelproKi.groovy`](drivers/stelpro/StelproKi.groovy) | Zigbee | — | N | — | Thermostat. |
 | [`drivers/stelpro/Stelpro_orleans_specs.groovy`](drivers/stelpro/Stelpro_orleans_specs.groovy) | (reference) | — | exempt | — | Comment-only device descriptor dump; no code. |
-| [`drivers/thirdreality/ThirdReality_3RDP01072Z.groovy`](drivers/thirdreality/ThirdReality_3RDP01072Z.groovy) | Zigbee | — | N | — | Dual smart plug. Coordinator for two Outlet (Component) children. |
+| [`drivers/thirdreality/ThirdReality_3RDP01072Z.groovy`](drivers/thirdreality/ThirdReality_3RDP01072Z.groovy) | Zigbee | 4 | N | [`drivers/thirdreality/tests/test-3rdp-energy-capture.groovy`](drivers/thirdreality/tests/test-3rdp-energy-capture.groovy) | Dual smart plug. Coordinator for two Outlet (Component) children. The energy-offset capture after a second reset is unit-tested. |
 | [`drivers/thirdreality/ThirdReality_3RPL01084Z.groovy`](drivers/thirdreality/ThirdReality_3RPL01084Z.groovy) | Zigbee | — | N | — | Presence Sensor R3: 60 GHz mmWave presence, RGB night light, illuminance and TVOC. |
 | [`drivers/thirdreality/ThirdReality_3RSP02028BZ.groovy`](drivers/thirdreality/ThirdReality_3RSP02028BZ.groovy) | Zigbee | — | N | — | Energy-monitoring smart plug, two metering generations. |
 | [`drivers/thirdreality/ThirdReality_Outlet_Component.groovy`](drivers/thirdreality/ThirdReality_Outlet_Component.groovy) | Component child | — | exempt | — | Child of the dual smart plug driver; relays commands to the parent. |
