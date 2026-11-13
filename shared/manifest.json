@@ -250,22 +250,6 @@
             ]
         }
     },
-    "apps/HubDiagnostics/HubDiagnostics.groovy": {
-        "github-version": {
-            "version": 1,
-            "items": [
-                "checkGithubVersion",
-                "githubVersionCallback"
-            ]
-        },
-        "oauth-self-enable": {
-            "version": 1,
-            "items": [
-                "checkOAuth",
-                "autoEnableOAuth"
-            ]
-        }
-    },
     "apps/HubInspector/HubInspector.groovy": {
         "github-version": {
             "version": 1,
