@@ -89,7 +89,7 @@ TTLs are proportional to how fast the underlying metric actually moves, sized so
 | Constant | TTL | Cached data | Why this TTL |
 |---|---|---|---|
 | `SYSTEM_RESOURCES_CACHE_TTL_MS` | 10 s | free mem, CPU load, JVM memory | Fastest-moving; short TTL still coalesces a request's duplicate reads. |
-| `RADIO_CACHE_TTL_MS` | 60 s | Z-Wave + Zigbee details (`/hub/zwaveDetails`, `/hub/zigbeeDetails`) | Slow, bounded no-retry fetches (8 s timeout on checkpoint and alert paths); 60 s avoids paying them per tab load. `/hub/zwaveTopology` is not cached. |
+| `RADIO_CACHE_TTL_MS` | 60 s | Z-Wave + Zigbee details (`/hub/zwaveDetails`, `/hub/zigbeeDetails`) | Slow fetches (the checkpoint and alert paths use an 8 s timeout and do not retry); 60 s avoids paying them per tab load. `/hub/zwaveTopology` is not cached. |
 | `TEMPERATURE_CACHE_TTL_MS` | 60 s | hub temperature | Slow-changing. |
 | `DATABASE_SIZE_CACHE_TTL_MS` | 60 s | database size | Grows over hours, not seconds. |
 | `HUB_LIST_CACHE_TTL_MS` | 2 min | apps list (every path, via `fetchAppsList()`); devices list (Performance path only) | Large payloads; topology only changes on install/remove. One dashboard load or snapshot reads the apps list once. The device and audit paths fetch the devices list uncached. |
@@ -99,7 +99,7 @@ TTLs are proportional to how fast the underlying metric actually moves, sized so
 | `LOAD_THRESHOLD_CACHE_TTL_MS` (key `reliability`) | 5 min | `/hub/reliability/checkins` (Troubleshooting Center findings, Health payload only; firmware 2.5.3.104+) | Every read runs a hub scan of 0.5-1 s, so the slot bounds it to one scan per 5 min however many tabs, reports or exports ask. A failed read is cached as `[unavailable: true]`, the one slot that caches a miss: an uncached failure logs an error on every Health load. |
 | `NETWORK_CONFIG_CACHE_TTL_MS` | 5 min | `/hub2/networkConfiguration` as read by `getAlertSignals()` (Ethernet + Wi-Fi, scheduled Bonjour restarts) | Changes only when the user edits Network Setup. The Network tab reads it uncached and refreshes the slot. |
 | `INTEGRATION_OVERRIDES_CACHE_TTL_MS` | 5 min | File Manager overrides config | Picks up a re-uploaded config without a full Done; `updated()`/`apiClearCache()` reset it immediately. |
-| `FW_UPDATE_CACHE_TTL_MS` | 1 hr | firmware-update check, Diagnostic Tool version list | Slow-moving; no value polling more often. A failed tool read is cached as empty so a down tool costs no timeout per load; `apiFirmwareRefresh()` drops the list after a platform download. |
+| `FW_UPDATE_CACHE_TTL_MS` | 1 hr | firmware-update check, Diagnostic Tool version list | Slow-moving; no value polling more often. A failed tool read is cached as empty, and a failed firmware check is remembered for 5 min (key `fwUpdateFailed`), so a down tool or endpoint costs no timeout per load; `apiFirmwareRefresh()` drops the list after a platform download. |
 | *(none)* | process life | `@Field static volatile` fields `uiVersionCache`, `zwaveStackCache`, `hubModelCache` | Install-constant. `uiVersionCache` is refreshed on UI sync, `zwaveStackCache` is reset by `updated()`, and all three are re-derived after a code push. |
 
 ### Tier 3 — Persistent cache (`state` / File Manager)

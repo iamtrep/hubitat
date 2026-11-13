@@ -230,7 +230,7 @@ const MOCK_DATA = {
   'reports': {"lastReport":"hub_diagnostics_report_20260328_142000.html","reports":[{"name":"hub_diagnostics_report_20260328_142000.html","size":"498717","date":"1774722000536"}]}
 };
 
-const T='${access_token}', B='${api_base}', REPORT=window.REPORT_DATA||null, cache={};
+const T='${access_token}', B='${api_base}', REPORT=window.REPORT_DATA||null, cache={}, inflight={};
 // Token in the Authorization header, not the URL — keeps it out of hub and proxy
 // access logs. The platform matches the scheme case-sensitively: exactly "Bearer".
 const AUTH=(x)=>Object.assign({'Authorization':'Bearer '+T},x||{});
@@ -257,14 +257,29 @@ async function api(ep){
   // deleted or replaced since the list cache was filled.
   const noCache=ep.startsWith('snapshot/view');
   const hit=noCache?null:cache[ep];if(hit&&(Date.now()-hit.ts<CACHE_TTL_MS))return hit.d;
-  const r=await fetch(B+'/api/'+ep,{headers:AUTH()});
-  if(!r.ok)throw new Error('API '+r.status);
-  const d=await r.json();
-  if(!noCache)cache[ep]={d,ts:Date.now()};
-  return d
+  // Concurrent callers share one request: startup and the first tab render both ask for 'dashboard',
+  // and the hub builds each payload at full cost. A rejection is not kept, so the next call retries.
+  if(!noCache&&inflight[ep])return inflight[ep];
+  // drop() removes the slot, so a response that was in flight across a write is not cached.
+  const p=apiFetch(ep).then(d=>{if(!noCache&&inflight[ep]===p)cache[ep]={d,ts:Date.now()};return d}).finally(()=>{if(inflight[ep]===p)delete inflight[ep]});
+  if(!noCache)inflight[ep]=p;
+  return p
+}
+// A stalled hub request would otherwise leave its panel on "Loading..." forever.
+const API_TIMEOUT_MS=90000;
+async function apiFetch(ep){
+  const ac=new AbortController(),tm=setTimeout(()=>ac.abort(),API_TIMEOUT_MS);
+  try{
+    const r=await fetch(B+'/api/'+ep,{headers:AUTH(),signal:ac.signal});
+    if(!r.ok)throw new Error('API '+r.status);
+    return await r.json()
+  }catch(e){
+    if(e&&e.name==='AbortError')throw new Error('API timeout');
+    throw e
+  }finally{clearTimeout(tm)}
 }
 async function post(ep,p){if(REPORT)return{};const q=new URLSearchParams(p||{});const qs=q.toString();const r=await fetch(B+'/api/'+ep+(qs?'?'+qs:''),{method:'POST',headers:AUTH()});if(!r.ok)throw new Error('API '+r.status);return r.json()}
-function drop(ep){if(ep)delete cache[ep];else Object.keys(cache).forEach(k=>delete cache[k])}
+function drop(ep){if(ep){delete cache[ep];delete inflight[ep]}else{Object.keys(cache).forEach(k=>delete cache[k]);Object.keys(inflight).forEach(k=>delete inflight[k])}}
 
 // ===== HELPERS =====
 function parseRuntimeMs(v){
@@ -1153,15 +1168,20 @@ function zbAttrName(cluster,attr){const cl=ZB_ATTRS[zb4(cluster)];const k=zb4(at
 function zbAttrLabel(cluster,attr){const cl=ZB_ATTRS[zb4(cluster)];const k=zb4(attr);const n=cl&&cl[k];return n?n+' (0x'+k+')':'0x'+k}
 
 // Format a typed value. valBytes are little-endian hex-string bytes (length prefix already stripped for strings).
+// A truncated or malformed value gives '?': the display rows are rebuilt from the whole recording
+// buffer on every render, so a throw here would break every render until the buffer is cleared.
 function rcZbFormatValue(kind,valBytes){
   if(!valBytes.length)return'';
+  try{return rcZbFormatValueUnsafe(kind,valBytes)}catch(e){return'?'}
+}
+function rcZbFormatValueUnsafe(kind,valBytes){
   let be='';for(let i=valBytes.length-1;i>=0;i--)be+=valBytes[i];   // LE -> BE hex
   switch(kind){
     case'bool':{const v=parseInt(valBytes[0],16);return v===0?'false':v===1?'true':'0x'+valBytes[0]}
     case'uint':return BigInt('0x'+be).toString();
     case'int':{const bits=valBytes.length*8;let v=BigInt('0x'+be);const half=1n<<BigInt(bits-1);if(v>=half)v-=(1n<<BigInt(bits));return v.toString()}
     case'enum':case'map':case'hex':return'0x'+be;
-    case'float':{const buf=new ArrayBuffer(valBytes.length),dv=new DataView(buf);for(let i=0;i<valBytes.length;i++)dv.setUint8(i,parseInt(valBytes[i],16));return String(valBytes.length===4?dv.getFloat32(0,true):dv.getFloat64(0,true))}
+    case'float':{if(valBytes.length!==4&&valBytes.length!==8)return'?';const buf=new ArrayBuffer(valBytes.length),dv=new DataView(buf);for(let i=0;i<valBytes.length;i++)dv.setUint8(i,parseInt(valBytes[i],16));return String(valBytes.length===4?dv.getFloat32(0,true):dv.getFloat64(0,true))}
     case'string':{let s='';for(const x of valBytes){const c=parseInt(x,16);s+=(c>=32&&c<127)?String.fromCharCode(c):'.'}return JSON.stringify(s)}
     case'octstr':return'0x'+valBytes.join('');
     default:return'0x'+be;
@@ -1591,7 +1611,6 @@ function forumMarkdownBody(d){
   const dnsList=networkConfig.dnsServers||[];
   if(dnsList.length)                 L(`| DNS        | ${dnsList.join(', ')} |`);
   if(networkConfig.hasWiFi&&networkConfig.wifiNetwork) L(`| WiFi SSID  | ${networkConfig.wifiNetwork} |`);
-  if(bothActive){L('');L('**Warning:** Both Ethernet and WiFi are active. This is known to cause connectivity issues. Disable WiFi when using Ethernet.');L('');}
   L(`| CPU Load (5m) | ${resources?Number(resources.cpuAvg5min).toFixed(2):'N/A'} |`);
   L(`| Free OS Memory | ${resources?fmem(resources.freeOSMemory):'N/A'} |`);
   if(resources&&resources.freeJavaMemory)  L(`| Free Java Heap  | ${fmem(resources.freeJavaMemory)} |`);
@@ -1605,6 +1624,8 @@ function forumMarkdownBody(d){
     if(esl.maxEventAgeDays)  L(`| Max Event Age | ${esl.maxEventAgeDays} days |`);
     if(esl.maxStateAgeDays)  L(`| Max State Age | ${esl.maxStateAgeDays} days |`);
   }
+  // After the last table row: a blank line inside the table would end it.
+  if(bothActive){L('');L('**Warning:** Both Ethernet and WiFi are active. This is known to cause connectivity issues. Disable WiFi when using Ethernet.');L('');}
 
   // Alerts
   if(alerts&&alerts.length){
@@ -3805,9 +3826,10 @@ function computeSnapshotDiff(older, newer){
     networkChanges.zwaveRegion={from:oNet.zwave&&oNet.zwave.region,to:nNet.zwave&&nNet.zwave.region};
   if((oNet.matter&&oNet.matter.enabled)!==(nNet.matter&&nNet.matter.enabled))
     networkChanges.matterEnabled={from:oNet.matter&&oNet.matter.enabled,to:nNet.matter&&nNet.matter.enabled};
-  const peerName=p=>p.name||p.ipAddress;
-  const oPeers=((oNet.hubMesh&&oNet.hubMesh.hubList)||[]).map(peerName);
-  const nPeers=((nNet.hubMesh&&nNet.hubMesh.hubList)||[]).map(peerName);
+  // The stored snapshot keeps peers as {name, ip} under hubMesh.peers (see createSnapshot).
+  const peerName=p=>p.name||p.ip;
+  const oPeers=((oNet.hubMesh&&oNet.hubMesh.peers)||[]).map(peerName);
+  const nPeers=((nNet.hubMesh&&nNet.hubMesh.peers)||[]).map(peerName);
   const oPeerSet=new Set(oPeers),nPeerSet=new Set(nPeers);
   const peersAdded=nPeers.filter(p=>!oPeerSet.has(p));
   const peersRemoved=oPeers.filter(p=>!nPeerSet.has(p));

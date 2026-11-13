@@ -83,6 +83,7 @@ import java.util.concurrent.atomic.AtomicInteger
 // updateSelfFromUrl() first appears in this build; older hubs keep the Apps Code Import link.
 @Field static final String SELF_UPDATE_MIN_FW = "2.5.3.103"
 @Field static final long   FW_UPDATE_CACHE_TTL_MS = 3600_000L
+@Field static final long   FW_UPDATE_FAIL_TTL_MS = 300_000L   // a failed firmware check is not repeated on every load
 
 // ===== Device Usage Audit constants =====
 @Field static final String FULL_JSON_PATH_PREFIX = "/device/fullJson/"
@@ -1157,13 +1158,21 @@ Map apiSaveReport() {
     String filename = (body.filename ?: "") as String
     String html = (body.html ?: "") as String
     if (!filename || !html) return jsonResponse([success: false, error: "filename and html are required"])
-    if (!filename.endsWith('.html')) return jsonResponse([success: false, error: "filename must end with .html"])
-    if (filename.contains('/') || filename.contains('..')) return jsonResponse([success: false, error: "invalid filename"])
+    String nameError = reportSaveError(filename, html)
+    if (nameError) return jsonResponse([success: false, error: nameError])
 
     writeFile(filename, html)
     state.lastReportFile = filename
     logInfo "Report saved: ${filename} (${html.length().intdiv(1024)} KB)"
     return jsonResponse([success: true, filename: filename])
+}
+
+// Only the report name the SPA generates is accepted, so this route cannot overwrite the UI file or
+// another app's .html in File Manager. The size cap (a report is about 500 KB) guards the quota.
+static String reportSaveError(String filename, String html) {
+    if (!(filename ==~ /^hub_diagnostics_report_[0-9]{8}_[0-9]{6}\.html$/)) return "invalid filename"
+    if (html.length() > 5_000_000) return "report too large"
+    return null
 }
 
 Map apiGetSettings() {
@@ -1589,7 +1598,8 @@ Map getAlertSignals(Map shared = [:]) {
     // Dashboard/Health loads never pay a cold 8s fetch more than once per window.
     // state.cachedZwaveSignals persists the last computed signals across reboots.
     Map zwRaw = (Map) cachedFetch('zwaveDetails', RADIO_CACHE_TTL_MS) {
-        Map zwWrap = hubMapRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", 8)
+        // No retry: this runs on every Dashboard/Health build, and a retry doubles the worst case to 16 s.
+        Map zwWrap = hubMapRequest(ZWAVE_DETAILS_PATH, "Z-Wave details", 8, false)
         return (zwWrap.ok && zwWrap.data) ? zwWrap.data : null
     }
     Map zwSignals = zwRaw ? computeZwaveSignals(zwRaw) : ((state.cachedZwaveSignals as Map) ?: [:])
@@ -1947,14 +1957,32 @@ void onTempSample(resp, data) {
     rollupHours(next, ms)
 }
 
+// True when completed hours are unwritten and no write was started in the current hour.
+// doneMs is the start of the last hour written; it moves only once the file write has landed,
+// so a lost callback or a failed write is made up for at the next hour. One attempt per hour
+// keeps a file that stays unreadable from being retried at every 5-minute sample.
+static boolean rollupDue(Long doneMs, Long attemptMs, long nowMs) {
+    long hourStart = nowMs.intdiv(3_600_000L) * 3_600_000L
+    if (doneMs != null && doneMs + 3_600_000L >= hourStart) return false
+    return attemptMs == null || attemptMs < hourStart
+}
+
+// The rows not yet in the file: those for hours after doneMs. Guards against a late callback
+// from an earlier attempt appending the same hours twice.
+static List rowsAfter(List rows, Long doneMs) {
+    if (doneMs == null) return rows ?: []
+    return (rows ?: []).findAll { Object r -> (((List) r)[0] as long) > doneMs }
+}
+
 // Append rows for completed hours not yet written. Hours whose samples were lost to a reboot
 // or push get no temperature; a partly sampled hour carries its real sample count.
 private void rollupHours(List samples, long nowMs) {
     long hourStart = nowMs.intdiv(3_600_000L) * 3_600_000L
     long lastHour = hourStart - 3_600_000L
     Long done = state.hourlyDoneMs as Long           // start of the last hour written
+    if (!rollupDue(done, state.hourlyTryMs as Long, nowMs)) return
+    state.hourlyTryMs = nowMs
     long fromMs = done != null ? done + 3_600_000L : 0L
-    if (fromMs >= hourStart) return
     Map<Long, List> byHour = [:]
     samples.each { List smp ->
         long ts = smp[0] as long
@@ -1964,14 +1992,13 @@ private void rollupHours(List samples, long nowMs) {
             byHour[h] << (smp[1] as BigDecimal)
         }
     }
-    state.hourlyDoneMs = lastHour
     if (!byHour.containsKey(lastHour)) byHour[lastHour] = []
     List rows = byHour.keySet().sort().collect { Long h ->
         List v = byHour[h]
         v ? [h, v.min(), (v.sum() / v.size()).setScale(1, BigDecimal.ROUND_HALF_UP), v.max(), v.size(), null]
           : [h, null, null, null, 0, null]
     }
-    asynchttpGet('onHourlyDbSize', [uri: HUB_BASE, path: DATABASE_SIZE_PATH, contentType: "text/plain", timeout: 10], [rows: rows])
+    asynchttpGet('onHourlyDbSize', [uri: HUB_BASE, path: DATABASE_SIZE_PATH, contentType: "text/plain", timeout: 10], [rows: rows, doneMs: lastHour])
 }
 
 // The database size goes on the last (just completed) hour's row.
@@ -1981,9 +2008,9 @@ void onHourlyDbSize(resp, data) {
     addCloudCalls(rows)
     List stored = loadHourlyChecked()
     if (stored == null) return
-    List all = new ArrayList(stored) + rows
+    List all = new ArrayList(stored) + rowsAfter(rows, state.hourlyDoneMs as Long)
     if (all.size() > HOURLY_KEEP) all = all.subList(all.size() - HOURLY_KEEP, all.size())
-    writeFile(HOURLY_FILE, groovy.json.JsonOutput.toJson(all))
+    if (writeFile(HOURLY_FILE, groovy.json.JsonOutput.toJson(all))) state.hourlyDoneMs = data.doneMs as Long
 }
 
 // The hub's cloud-call buckets reset at boot, so each completed hour's counts are copied into
@@ -2252,9 +2279,12 @@ String fetchNtpServer() {
 }
 
 Map fetchFirmwareUpdate() {
-    Map fu = (Map) cachedFetch('fwUpdate', FW_UPDATE_CACHE_TTL_MS) {
+    Map fu = cachePeek('fwUpdateFailed', FW_UPDATE_FAIL_TTL_MS) ? null : (Map) cachedFetch('fwUpdate', FW_UPDATE_CACHE_TTL_MS) {
         Map wrap = hubMapRequest(FIRMWARE_UPDATE_PATH, "firmware update check", 15)
-        if (!wrap.ok) return null
+        if (!wrap.ok) {
+            cachePut('fwUpdateFailed', [failed: true])
+            return null
+        }
         Map resp = wrap.data
         return [currentVersion: getHubFirmwareVersion(), availableVersion: resp.version,
                 updateAvailable: resp.upgrade == true, status: resp.status,
@@ -2768,7 +2798,7 @@ Map analyzeDevices(boolean deep = true, Map prefetchedDevices = null) {
 
     if (!respWrap.ok || !respWrap.data.devices) {
         logWarn "Failed to fetch devices list"
-        return getEmptyDeviceStats()
+        return getEmptyDeviceStats() + [fetchFailed: true]   // createSnapshot refuses to store this
     }
 
     // includeParentContext=true (not just deep) so child devices carry their parentDeviceId in
@@ -2964,7 +2994,7 @@ Map analyzeApps(boolean deep = true) {
     List appsList = (fetchAppsList()?.apps ?: []) as List
 
     if (!appsList) {
-        return deep ? getEmptyAppStats() : [totalApps: 0, userApps: 0, builtInApps: 0]
+        return deep ? (getEmptyAppStats() + [fetchFailed: true]) : [totalApps: 0, userApps: 0, builtInApps: 0]
     }
 
     // Quick mode: just count apps
@@ -3524,7 +3554,13 @@ Map enrichDevices(Map uncertainDevices, Set communityAppTypeNames = [] as Set) {
         if (!cachedEntry) {
             try {
                 Map fullWrap = hubMapRequest("${FULL_JSON_PATH_PREFIX}${idStr}", "device ${idStr} full", 10)
-                Map full = fullWrap.ok ? fullWrap.data : null
+                // A failed read must not be cached: a "device" entry is trusted forever, so an empty one
+                // would pin a device with a parent app to "no integration" until the cache is cleared.
+                if (!fullWrap.ok) {
+                    logNet "enrichDevices: device ${idStr} full read failed, not cached"
+                    return
+                }
+                Map full = fullWrap.data
                 Map parentApp = full ? (Map) full.parentApp : null
                 if (parentApp) {
                     Map appTypeObj = parentApp.appType instanceof Map ? (Map) parentApp.appType : [:]
@@ -3924,11 +3960,21 @@ void createSnapshot() {
     Map hvRaw = fetchHubVariables() ?: [:]
     List hvSlim = ((hvRaw.variables as List) ?: []).collect { Map v -> [name: v.name, type: v.type] }
 
+    // A failed devices or apps fetch returns an empty result; storing it would show every device as
+    // removed in the diff and push the oldest good snapshot out at the retention cap.
+    Map snapDevices = analyzeDevices()
+    Map snapApps = analyzeApps()
+    String fetchFailure = snapshotFetchFailure(snapDevices, snapApps)
+    if (fetchFailure) {
+        logWarn "Config snapshot not saved: ${fetchFailure}"
+        return
+    }
+
     Map snapshot = [
         timestamp: new Date().format("yyyy-MM-dd HH:mm:ss"),
         timestampMs: now(),
-        devices: analyzeDevices(),
-        apps: analyzeApps(),
+        devices: snapDevices,
+        apps: snapApps,
         network: analyzeNetwork(true),
         systemHealth: analyzeSystemHealth(),
         hubInfo: getHubInfo(),
@@ -4027,6 +4073,13 @@ Map getHubInfo(Map prefetchedHubData = null) {
         info.hardware = hubData.model
     }
     return info
+}
+
+// Names the input whose fetch failed (analyzeDevices / analyzeApps flag it), or null when both are real.
+static String snapshotFetchFailure(Map devices, Map apps) {
+    if (devices == null || devices.fetchFailed == true) return "the devices list could not be read"
+    if (apps == null || apps.fetchFailed == true) return "the apps list could not be read"
+    return null
 }
 
 Map getEmptyDeviceStats() {
@@ -5089,11 +5142,14 @@ Map apiAuditData() {
     return jsonResponse(lastAuditResult)
 }
 
-void writeFile(String fileName, String data) {
+// True when the file was written.
+boolean writeFile(String fileName, String data) {
     try {
         uploadHubFile(fileName, data.getBytes("UTF-8"))
+        return true
     } catch (Exception e) {
         logError "Error writing file ${fileName}: ${e}"
+        return false
     }
 }
 

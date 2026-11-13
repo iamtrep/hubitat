@@ -5,117 +5,32 @@
 // Unit tests for diffStats (hub_inspector_ui.html)
 // Run: node tests/test-diffStats.js
 //
-// These tests exercise the comparison/diff logic in isolation.
-// Update the function body below whenever diffStats changes in the HTML.
+// These tests run the shipped comparison/diff functions, loaded from the HTML by name.
 
 let passed = 0, failed = 0;
 function ok(msg)   { passed++; console.log(`  [PASS] ${msg}`); }
 function fail(msg) { failed++; console.error(`  [FAIL] ${msg}`); }
 function section(msg) { console.log(`\n--- ${msg} ---`); }
 
-// ── Copy from hub_inspector_ui.html (keep in sync) ──────────────────
-
-function parseRuntimeMs(v){
-  if(v==null)return 0;if(typeof v==='number')return v;
-  const s=String(v);if(s.endsWith('ms'))return parseInt(s)||0;
-  let ms=0;
-  const hr=s.match(/(\d+)h/);if(hr)ms+=parseInt(hr[1])*3600000;
-  const mn=s.match(/(\d+)m(?!s)/);if(mn)ms+=parseInt(mn[1])*60000;
-  const sc=s.match(/([\d.]+)s/);if(sc)ms+=parseFloat(sc[1])*1000;
-  return ms||(parseInt(s)||0);
-}
-function fmsDuration(ms){
-  if(ms==null)return'N/A';
-  const neg=ms<0;ms=Math.abs(ms);
-  const h=Math.floor(ms/3600000);ms%=3600000;
-  const m=Math.floor(ms/60000);ms%=60000;
-  const s=(ms/1000).toFixed(1);
-  const r=h>0?h+'h '+m+'m '+s+'s':m>0?m+'m '+s+'s':s+'s';
-  return neg?'-'+r:r;
-}
-function diffStats(base, comp) {
-  if (!base || !comp) return comp;
-  const res = JSON.parse(JSON.stringify(comp));
-  // base.timestampMs is 0 for "startup" baseline (falsy) — fall back to comp's uptimeSeconds.
-  const elapsedMs = (comp.timestampMs && base.timestampMs)
-    ? comp.timestampMs - base.timestampMs
-    : (comp.uptimeSeconds ? comp.uptimeSeconds * 1000 : 0);
-  ['deviceStats', 'appStats'].forEach(key => {
-    if (comp[key] && base[key]) {
-      const baseMap = {};
-      base[key].forEach(item => { if (item.id) baseMap[item.id] = item; });
-      res[key] = comp[key].map(item => {
-        const bItem = baseMap[item.id];
-        if (!bItem) return item;
-        const diffed = JSON.parse(JSON.stringify(item));
-        ['total', 'count', 'hubActionCount', 'cloudCallCount', 'stateSize'].forEach(field => {
-          if (typeof item[field] === 'number' && typeof bItem[field] === 'number') {
-            diffed[field] = item[field] - bItem[field];
-          }
-        });
-        diffed.average = diffed.count > 0 ? (diffed.total / diffed.count) : 0;
-        diffed.pctTotal = null;
-        diffed.pct = elapsedMs > 0 ? (diffed.total / elapsedMs * 100) : null;
-        return diffed;
-      });
-    }
-  });
-  const devMs = parseRuntimeMs(comp.totalDevicesRuntime) - parseRuntimeMs(base.totalDevicesRuntime);
-  const appMs = parseRuntimeMs(comp.totalAppsRuntime) - parseRuntimeMs(base.totalAppsRuntime);
-  res.totalDevicesRuntime = devMs;
-  res.totalAppsRuntime = appMs;
-  if (elapsedMs > 0) {
-    res.uptime = fmsDuration(elapsedMs);
-    res.uptimeSeconds = elapsedMs / 1000;
-    res.devicePct = (devMs / elapsedMs * 100).toFixed(3) + '%';
-    res.appPct = (appMs / elapsedMs * 100).toFixed(3) + '%';
-  } else {
-    res.uptime = 'N/A (missing timestamp)';
-    res.devicePct = null;
-    res.appPct = null;
+// ── Shipped functions, extracted from hub_inspector_ui.html (no copy to keep in sync) ──
+const fs = require('fs'), os = require('os'), path = require('path');
+const src = fs.readFileSync(path.join(__dirname, '..', 'hub_inspector_ui.html'), 'utf8');
+function extractFn(name) {
+  const start = src.indexOf('function ' + name + '(');
+  if (start < 0) throw new Error('function not found: ' + name);
+  const open = src.indexOf('{', start);
+  let depth = 0, i = open;
+  for (; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}') { depth--; if (depth === 0) { i++; break; } }
   }
-  if (comp.radioStats && base.radioStats) {
-    const elapsedMin = elapsedMs / 60000;
-    res.radioStats = {};
-    ['zwave', 'zigbee'].forEach(proto => {
-      if (comp.radioStats[proto] && base.radioStats[proto]) {
-        const baseMap = {};
-        base.radioStats[proto].forEach(d => { baseMap[d.id] = d; });
-        res.radioStats[proto] = comp.radioStats[proto].map(d => {
-          const bd = baseMap[d.id];
-          const diffMsgs = (d.msgCount || 0) - (bd ? (bd.msgCount || 0) : 0);
-          const r = { ...d, msgCount: diffMsgs, msgPerMin: elapsedMin > 0 ? diffMsgs / elapsedMin : 0 };
-          if (d.routeChanges != null && bd) r.routeChanges = (d.routeChanges || 0) - (bd.routeChanges || 0);
-          return r;
-        });
-      }
-    });
-    res.radioElapsedMin = elapsedMin;
-  }
-  return res;
+  return src.slice(start, i);
 }
-
-// ── zeroBaseline: copied from hub_inspector_ui.html — keep in sync ──
-// Field-for-field port of the old Groovy buildZeroBaseline(); the SPA now synthesizes the
-// startup baseline client-side instead of the hub shipping it.
-function zeroBaseline(comp){
-  if(!comp)return null;
-  const rs=comp.radioStats||{};
-  return {
-    timestampMs:0,uptime:"0h 0m 0s",uptimeSeconds:0,
-    devicesUptime:"0h 0m 0s",appsUptime:"0h 0m 0s",
-    totalDevicesRuntime:"0ms",totalAppsRuntime:"0ms",
-    devicePct:"0.000%",appPct:"0.000%",
-    temperature:null,databaseSize:null,
-    resources:comp.resources?{timestamp:"0:00:00",freeOSMemory:0,cpuAvg5min:0,totalJavaMemory:0,freeJavaMemory:0,directJavaMemory:0}:null,
-    deviceStats:(comp.deviceStats||[]).map(d=>({id:d.id,name:d.name,total:0,pct:0,count:0,average:0,stateSize:0,hubActionCount:0,cloudCallCount:0})),
-    appStats:(comp.appStats||[]).map(a=>({id:a.id,name:a.name,total:0,pct:0,count:0,average:0,stateSize:0,hubActionCount:0,cloudCallCount:0})),
-    radioStats:{
-      zwave:(rs.zwave||[]).map(n=>({id:n.id,deviceId:n.deviceId,name:n.name,msgCount:0,routeChanges:0})),
-      zigbee:(rs.zigbee||[]).map(d=>({id:d.id,name:d.name,msgCount:0}))
-    }
-  };
-}
+const tmp = path.join(os.tmpdir(), 'hd_diffstats_' + process.pid + '.js');
+fs.writeFileSync(tmp, ['parseRuntimeMs', 'fmsDuration', 'diffStats', 'zeroBaseline'].map(extractFn).join('\n') +
+  '\nmodule.exports = { parseRuntimeMs, fmsDuration, diffStats, zeroBaseline };');
+const { parseRuntimeMs, fmsDuration, diffStats, zeroBaseline } = require(tmp);
+process.on('exit', () => { try { fs.unlinkSync(tmp); } catch (e) {} });
 
 // ── Tests ─────────────────────────────────────────────────────────────
 
@@ -239,8 +154,8 @@ if (rStartup.deviceStats[0].pct !== null && Math.abs(rStartup.deviceStats[0].pct
 else fail(`startup device pct expected 10, got ${rStartup.deviceStats[0].pct}`);
 if (rStartup.radioStats.zwave[0].msgCount === 120) ok('startup diff: radio msgCount = full count (comp - 0)');
 else fail(`startup radio msgCount expected 120, got ${rStartup.radioStats.zwave[0].msgCount}`);
-if (rStartup.uptime === '1m 0.0s') ok(`startup diff: uptime = interval from uptimeSeconds (${rStartup.uptime})`);
-else fail(`startup uptime expected '1m 0.0s', got '${rStartup.uptime}'`);
+if (rStartup.uptime === '1m 0s') ok(`startup diff: uptime = interval from uptimeSeconds (${rStartup.uptime})`);
+else fail(`startup uptime expected '1m 0s', got '${rStartup.uptime}'`);
 
 // ── Summary ───────────────────────────────────────────────────────────
 console.log(`\n=== Results: ${passed}/${passed + failed} passed${failed ? `, ${failed} failed` : ''} ===`);
