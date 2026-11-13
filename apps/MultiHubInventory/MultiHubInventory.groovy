@@ -6,7 +6,7 @@ import groovy.transform.Field
 import java.util.concurrent.ConcurrentHashMap
 import java.nio.file.NoSuchFileException
 
-@Field static final String CODE_VERSION = "0.9.0"
+@Field static final String CODE_VERSION = "0.9.1"
 @Field static final String UI_FILE = "multi_hub_inventory_ui.html"
 @Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/MultiHubInventory.groovy"
 @Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/multi_hub_inventory_ui.html"
@@ -193,6 +193,13 @@ void uninstalled() {
     TOKEN_CACHE.keySet().removeIf { String k -> k.startsWith(keyPrefix) }
 }
 void updated()   { uiVersionCache = null; runIn(1, 'syncUIForced'); initialize() }
+// True when webBase (scheme://host[:port]) names hubIp exactly. A substring test would take
+// 192.168.1.80 for hub 192.168.1.8 and route the peer's calls to this hub with the peer's token.
+static boolean isSelfHost(String webBase, String hubIp) {
+    if (!hubIp || !webBase) return false
+    String host = webBase.replaceFirst(/^https?:\/\//, '').replaceFirst(/[:\/].*$/, '')
+    return host == hubIp
+}
 void initialize() {
     checkVersion(false)
     if (!state.accessToken) checkOAuth()
@@ -225,7 +232,7 @@ void initialize() {
         // A loopback URL is this hub too; give the browser its LAN address so device links and
         // Hub Mesh source matching (remote URLs carry the LAN IP) resolve.
         if (hubIp && webBase ==~ /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/) webBase = "http://${hubIp}"
-        boolean isSelf = (hubIp && webBase.contains(hubIp))
+        boolean isSelf = isSelfHost(webBase, hubIp)
         String callBase = isSelf ? parsed.baseUrl.replaceFirst(/^https?:\/\/[^\/]+/, 'http://127.0.0.1:8080') : parsed.baseUrl
         if (isSelf) logCfg "peer ${p} is this hub — routing API calls via loopback"
         peerList << [pid: p, label: label, baseUrl: callBase, webBase: webBase, self: isSelf]
