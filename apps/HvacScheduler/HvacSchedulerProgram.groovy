@@ -1307,8 +1307,7 @@ Map buildCtx(Map cfg) {
     TimeZone tz = location.timeZone
     String today = isoDate(t, tz)
     Map sun = [:]
-    [-1, 0, 1].each { int d ->
-        String iso = addDays(today, d, tz)
+    sunDates(today, tz).each { String iso ->
         Map s = getSunriseAndSunset(date: new Date(atLocal(iso, "12:00", tz)))
         sun[iso] = [rise: (s.sunrise as Date)?.getTime(), set: (s.sunset as Date)?.getTime()]
     }
@@ -1450,19 +1449,23 @@ void applyTarget(Map cfg, Map rt, Map target, boolean force, String onlyId) {
         rt.pausedApplied = true
         if ((cfg.options as Map).whilePaused == 'off') {
             rt.recordedModes = [:]
+            // Through sendWrites so the mode writes are verified and set lastApply like every other write.
+            List<Map> offs = []
             thermostats.each { d ->
                 String m = d.currentValue("thermostatMode") as String
-                if (m != 'off' && send(d, 'setThermostatMode', 'off')) { rt.recordedModes[d.id as String] = m; remember(rt, d.id as String, 'thermostatMode', 'off') }
+                if (m != 'off') { rt.recordedModes[d.id as String] = m; offs << [id: d.id as String, command: 'setThermostatMode', value: 'off'] }
             }
+            sendWrites(offs, rt, cfg)
             logCmd "paused: thermostats off"
         } else logCfg "paused"
     } else if (target.layer != 'paused' && rt.pausedApplied) {
         rt.pausedApplied = false
         if ((cfg.options as Map).onResume == 'restore') {
+            List<Map> restores = []
             (rt.recordedModes as Map).each { String id, String m ->
-                DeviceWrapper d = thermostats.find { (it.id as String) == id }
-                if (d && send(d, 'setThermostatMode', m)) { remember(rt, id, 'thermostatMode', m); modeOverride[id] = m }
+                if (thermostats.find { (it.id as String) == id }) { restores << [id: id, command: 'setThermostatMode', value: m]; modeOverride[id] = m }
             }
+            sendWrites(restores, rt, cfg)
             logCmd "resumed: modes restored"
         } else {
             noModeIds = thermostats.findAll { it.currentValue("thermostatMode") == 'off' }.collect { it.id as String }
@@ -1869,12 +1872,23 @@ List<Map> transitionsForDay(Map sched, String iso, Map ctx) {
     return out.sort { Map t -> t.at as Long }
 }
 
+// currentTransition looks this many days back; ctx.sun must cover them or a sun-based period there is skipped.
+@CompileStatic
+int sunLookbackDays() { return 7 }
+
+@CompileStatic
+List<String> sunDates(String today, TimeZone tz) {
+    List<String> out = []
+    for (int d = -sunLookbackDays(); d <= 1; d++) out << addDays(today, d, tz)
+    return out
+}
+
 @CompileStatic
 Map currentTransition(Map sched, Map ctx) {
     long now = ctx.now as long
     TimeZone tz = ctx.tz as TimeZone
     String today = isoDate(now, tz)
-    for (int back = 0; back <= 7; back++) {
+    for (int back = 0; back <= sunLookbackDays(); back++) {
         List<Map> past = transitionsForDay(sched, addDays(today, -back, tz), ctx).findAll { Map t -> (t.at as long) <= now }
         if (past) return past.last()
     }

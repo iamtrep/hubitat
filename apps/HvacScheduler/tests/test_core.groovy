@@ -46,6 +46,19 @@ Map ctxAt(String iso, String hhmm, Map extra = [:]) {
   Map sun = [:]; [-1, 0, 1].each { sun += sunFor(core.addDays(iso, it, TZ)) }
   [now: T(iso, hhmm), tz: TZ, modeId: 1L, sun: sun, vars: [nightTime: T('2026-01-01', '23:00')]] + extra
 }
+// A sun-based period more than a day back must still be found: Sunday noon, empty weekend group,
+// the Friday evening period starts at sunset. ctx.sun is built the way buildCtx builds it.
+sunEve = [name: 'SunEve', type: 'time', groups: [
+  [name: 'Weekdays', days: [1, 2, 3, 4, 5], periods: [
+    [name: 'Wake', start: [kind: 'time', at: '06:30'], profile: 'Home'],
+    [name: 'Eve', start: [kind: 'sunset', offset: 0], profile: 'Sleep']]],
+  [name: 'Weekend', days: [6, 7], periods: []]]]
+sunSpan = core.metaClass.respondsTo(core, 'sunDates') ? core.sunDates('2026-10-04', TZ) : (-1..1).collect { core.addDays('2026-10-04', it, TZ) }
+sunWide = [:]; sunSpan.each { sunWide += sunFor(it) }
+check('sun period two days back is current on Sunday', core.currentTransition(sunEve, [now: T('2026-10-04', '12:00'), tz: TZ, modeId: 1L, sun: sunWide, vars: [:]]).period, 'Eve')
+sunSpan = core.metaClass.respondsTo(core, 'sunDates') ? core.sunDates('2026-10-05', TZ) : (-1..1).collect { core.addDays('2026-10-05', it, TZ) }
+sunWide = [:]; sunSpan.each { sunWide += sunFor(it) }
+check('sun period three days back is current on Monday before Wake', core.currentTransition(sunEve, [now: T('2026-10-05', '05:00'), tz: TZ, modeId: 1L, sun: sunWide, vars: [:]]).period, 'Eve')
 check('weekday current', core.currentTransition(normal, ctxAt('2026-10-05', '09:00')).period, 'Leave')
 check('weekday next', core.nextTransitionOf(normal, ctxAt('2026-10-05', '09:00')).period, 'Night')
 check('exact start is current', core.currentTransition(normal, ctxAt('2026-10-05', '06:30')).period, 'Wake')
