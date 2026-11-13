@@ -15,7 +15,7 @@ import com.hubitat.hub.domain.State
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.5.0"
+@Field static final String CODE_VERSION = "0.5.1"
 
 definition(
     name: "HVAC Scheduler Program",
@@ -124,7 +124,7 @@ Map uiCfg() { return (state.config ?: newConfig()) as Map }
 // The occupied profile's name, when a sensor and a profile are both set.
 String occupiedProfile(Map cfg) { return occupancySensor ? ((cfg.occupancy as Map)?.profile as String) : null }
 
-Map newConfig() { return seedOverrides(defaultConfig(), location.modes.collect { [id: it.id as Long, name: it.name as String] }) }
+Map newConfig() { return seedOverrides(defaultConfig(location.temperatureScale as String), location.modes.collect { [id: it.id as Long, name: it.name as String] }) }
 
 Map cfgCopy() { return parseJson(groovy.json.JsonOutput.toJson(uiCfg())) as Map }
 
@@ -2105,9 +2105,12 @@ long nextWake(Map cfg, Map rt, Map ctx) {
 }
 
 @CompileStatic
-Map defaultConfig() {
+Map defaultConfig(String scale) {
+    // Whole-degree values in the hub's scale: validateConfig rejects Celsius numbers on a Fahrenheit hub.
+    boolean f = scale == 'F'
     return [v: 1,
-        profiles: [[name: 'Home', heat: 21.0, cool: 24.0], [name: 'Sleep', heat: 18.0, cool: 26.0], [name: 'Away', heat: 16.0, cool: 29.0]],
+        profiles: f ? [[name: 'Home', heat: 70.0, cool: 75.0], [name: 'Sleep', heat: 65.0, cool: 78.0], [name: 'Away', heat: 61.0, cool: 84.0]]
+                    : [[name: 'Home', heat: 21.0, cool: 24.0], [name: 'Sleep', heat: 18.0, cool: 26.0], [name: 'Away', heat: 16.0, cool: 29.0]],
         schedules: [[name: 'Normal', type: 'time', groups: [[name: 'Every day', days: [1, 2, 3, 4, 5, 6, 7], periods: [
             [name: 'Wake', start: [kind: 'time', at: '06:30'], profile: 'Home', custom: null],
             [name: 'Night', start: [kind: 'time', at: '22:00'], profile: 'Sleep', custom: null]]]]]],

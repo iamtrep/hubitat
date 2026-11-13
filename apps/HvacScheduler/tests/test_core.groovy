@@ -153,7 +153,9 @@ check('nextWake never in the past', core.nextWake(cfgBase, rt0 + [hold: [end: 'a
 
 // ── validation and commands ──
 env = [scale: 'C', vars: ['comfort', 'nightTime'], modeIds: [1L, 2L, 3L, 4L]]
-check('default config is valid', core.validateConfig(core.defaultConfig(), env), [])
+check('default config is valid', core.validateConfig(core.defaultConfig('C'), env), [])
+check('default config is valid on a Fahrenheit hub', core.validateConfig(core.defaultConfig('F'), env + [scale: 'F']), [])
+check('default config is valid on a Fahrenheit hub, seeded', core.validateConfig(core.seedOverrides(core.defaultConfig('F'), [[id: 4L, name: 'Away']]), env + [scale: 'F']), [])
 check('cfgBase is valid', core.validateConfig(cfgBase + [v: 1], env), [])
 check('unknown profile', core.validateConfig(cfgBase + [overrides: [[modeId: 4, profile: 'Gone']]], env).size(), 1)
 check('duplicate profile names', core.validateConfig(cfgBase + [profiles: cfgBase.profiles + [[name: 'Home', heat: 20.0]]], env).size(), 1)
@@ -164,9 +166,9 @@ check('same time twice in a group', core.validateConfig(cfgBase + [schedules: [[
 check('out of range setpoint', core.validateConfig(cfgBase + [profiles: cfgBase.profiles + [[name: 'Hot', heat: 60.0]]], env).size(), 1)
 fenv = env + [scale: 'F']
 fProfiles = [[name: 'Home', heat: 70.0, cool: 75.0], [name: 'Sleep', heat: 65.0, cool: 78.0]]
-check('F heat 31 rejected', core.validateConfig(core.defaultConfig() + [profiles: fProfiles + [[name: 'F1', heat: 31.0]]], fenv).size(), 1)
-check('F heat 32 accepted', core.validateConfig(core.defaultConfig() + [profiles: fProfiles + [[name: 'F2', heat: 32.0]]], fenv), [])
-check('F heat 104 accepted', core.validateConfig(core.defaultConfig() + [profiles: fProfiles + [[name: 'F3', heat: 104.0]]], fenv), [])
+check('F heat 31 rejected', core.validateConfig(core.defaultConfig('F') + [profiles: fProfiles + [[name: 'F1', heat: 31.0]]], fenv).size(), 1)
+check('F heat 32 accepted', core.validateConfig(core.defaultConfig('F') + [profiles: fProfiles + [[name: 'F2', heat: 32.0]]], fenv), [])
+check('F heat 104 accepted', core.validateConfig(core.defaultConfig('F') + [profiles: fProfiles + [[name: 'F3', heat: 104.0]]], fenv), [])
 check('unknown variable', core.validateConfig(cfgBase + [profiles: cfgBase.profiles + [[name: 'V', heatVar: 'nope']]], env).size(), 1)
 check('unknown active schedule', core.validateConfig(cfgBase + [active: 'Nope'], env).isEmpty(), false)
 check('end default next', core.parseEnd(null).end, 'next')
@@ -195,12 +197,12 @@ check('empty batch is ok', core.applyOutcome([], []), 'ok')
 
 // ── new program seeding ──
 seedModes = [[id: 1L, name: 'Day'], [id: 4L, name: 'Away']]
-check('new program maps Away mode to Away profile', core.seedOverrides(core.defaultConfig(), seedModes).overrides, [[modeId: 4L, profile: 'Away']])
-check('Away matched by name, any case', core.seedOverrides(core.defaultConfig(), [[id: 7L, name: 'away']]).overrides, [[modeId: 7L, profile: 'Away']])
-check('no Away mode leaves overrides empty', core.seedOverrides(core.defaultConfig(), [[id: 1L, name: 'Day']]).overrides, [])
-check('no Away profile leaves overrides empty', core.seedOverrides(core.defaultConfig() + [profiles: [[name: 'Home', heat: 21.0]]], seedModes).overrides, [])
-check('existing overrides are kept', core.seedOverrides(core.defaultConfig() + [overrides: [[modeId: 1L, profile: 'Home']]], seedModes).overrides, [[modeId: 1L, profile: 'Home']])
-check('seeded default config validates', core.validateConfig(core.seedOverrides(core.defaultConfig(), seedModes), [scale: 'C', vars: [], modeIds: [1L, 4L]]), [])
+check('new program maps Away mode to Away profile', core.seedOverrides(core.defaultConfig('C'), seedModes).overrides, [[modeId: 4L, profile: 'Away']])
+check('Away matched by name, any case', core.seedOverrides(core.defaultConfig('C'), [[id: 7L, name: 'away']]).overrides, [[modeId: 7L, profile: 'Away']])
+check('no Away mode leaves overrides empty', core.seedOverrides(core.defaultConfig('C'), [[id: 1L, name: 'Day']]).overrides, [])
+check('no Away profile leaves overrides empty', core.seedOverrides(core.defaultConfig('C') + [profiles: [[name: 'Home', heat: 21.0]]], seedModes).overrides, [])
+check('existing overrides are kept', core.seedOverrides(core.defaultConfig('C') + [overrides: [[modeId: 1L, profile: 'Home']]], seedModes).overrides, [[modeId: 1L, profile: 'Home']])
+check('seeded default config validates', core.validateConfig(core.seedOverrides(core.defaultConfig('C'), seedModes), [scale: 'C', vars: [], modeIds: [1L, 4L]]), [])
 
 // ── overdue write check ──
 check('no pending check is not overdue', core.verifyOverdue(null, 100000L), false)
