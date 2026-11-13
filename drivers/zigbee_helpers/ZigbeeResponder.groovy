@@ -18,7 +18,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = '0.3.8'
+@Field static final String CODE_VERSION = '0.3.9'
 
 // Sub-second WS re-delivery dedup, keyed by hub device id, value = [sig, ts].
 // In-JVM only — lost on hub reboot, which is fine for sub-second dedup. Bounded
@@ -120,7 +120,13 @@ void initialize() {
     logCfg "OTA responder:  ${settings?.enableOtaResponder ? 'ENABLED' : 'disabled'}, " +
             "allowedIds=${c.ota}"
 
-    runIn(2, 'connectZigbeeLogSocket', [overwrite: true])
+    if (responderActive(settings?.enableTimeResponder != false, (List) c.time, settings?.enableOtaResponder != false, (List) c.ota)) {
+        runIn(2, 'connectZigbeeLogSocket', [overwrite: true])
+    } else {
+        // Nothing to answer: keep off the hub's Zigbee message stream.
+        logCfg "no responder has devices listed; not connecting"
+        sendEvent(name: 'wsStatus', value: 'idle')
+    }
 }
 
 void uninstalled() {
@@ -247,6 +253,27 @@ void webSocketStatus(String status) {
 // FRAME INGEST & ROUTING
 // ══════════════════════════════════════════════════════════════════════════
 
+// ==== Frame filter begin ====
+// Whether a /zigbeeLogsocket message can be one this driver answers: its clusterId is Time
+// (000A) or OTA (0019). A text scan, so the JSON is parsed only for those. Case and spacing
+// around the value are not assumed; a false positive only costs a parse.
+@CompileStatic
+static boolean wantsFrame(String json) {
+    if (json == null) return false
+    int i = json.indexOf('"clusterId"')
+    if (i < 0) return false
+    int from = i + 11
+    String window = json.substring(from, Math.min(json.length(), from + 10)).toUpperCase()
+    return window.contains('000A') || window.contains('0019')
+}
+
+// A responder is worth a socket when it is on and has at least one device listed.
+@CompileStatic
+static boolean responderActive(boolean timeOn, List timeIds, boolean otaOn, List otaIds) {
+    return (timeOn && timeIds != null && !timeIds.isEmpty()) || (otaOn && otaIds != null && !otaIds.isEmpty())
+}
+// ==== Frame filter end ====
+
 void parse(String description) {
 
     // The only thing reaching parse() on this virtual device is the WebSocket
@@ -256,6 +283,9 @@ void parse(String description) {
         logDebug "parse: ignored non-JSON: ${trimmed?.take(80)}"
         return
     }
+
+    // The hub sends every Zigbee frame; parsing each one costs the hub even when none is answered.
+    if (!wantsFrame(trimmed)) return
 
     Map entry
     try {
