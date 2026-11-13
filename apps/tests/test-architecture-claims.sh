@@ -663,10 +663,10 @@ if DO_REBOOT:
     info(f"last heartbeat before the reboot: {down_at / 1000:.0f} s after arming; one-shot due at {DUE_SECS} s")
     if down_at / 1000 >= DUE_SECS:
         warn("the hub was still up when the one-shot fell due, so this run did not test an overdue job")
-    elif one_shot:
-        ok(f"a one-shot runIn that fell due while the hub was down ran after it returned ({len(one_shot)} time(s))")
     else:
-        ok("a one-shot runIn that fell due while the hub was down was dropped: it never ran and left the job list")
+        # ARCHITECTURE.md documents that an overdue one-shot is dropped; a run after the reboot contradicts it.
+        check(not one_shot, "a one-shot runIn that fell due while the hub was down was dropped: it never ran and left the job list",
+              f"a one-shot runIn that fell due while the hub was down ran after it returned ({len(one_shot)} time(s)); ARCHITECTURE.md says it is dropped")
     check(any(f["what"] == "everyMinute" and f["uptime"] < 600 for f in fired), "the cron schedule resumes after the reboot",
           "the cron schedule did not fire after the reboot")
     check(any(f["what"] == "systemStart" for f in fired), "the systemStart subscription fires", "no systemStart event seen")

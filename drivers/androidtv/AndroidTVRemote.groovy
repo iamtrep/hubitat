@@ -498,12 +498,7 @@ void submitPairingCode(String code) {
     def cf = CertificateFactory.getInstance("X.509")
     def client = cf.generateCertificate(new ByteArrayInputStream(state.cert.getBytes("US-ASCII"))).publicKey
     def server = cf.generateCertificate(new ByteArrayInputStream(state.tvCert.getBytes("US-ASCII"))).publicKey
-    MessageDigest md = MessageDigest.getInstance("SHA-256")
-    [client.modulus, client.publicExponent, server.modulus, server.publicExponent].each { BigInteger v ->
-        md.update(HexUtils.hexStringToByteArray(evenHex(v.toString(16))))
-    }
-    md.update(HexUtils.hexStringToByteArray(code.substring(2)))
-    byte[] secret = md.digest()
+    byte[] secret = pairingSecret([client.modulus, client.publicExponent, server.modulus, server.publicExponent], code)
     logTrace "pairing hash: client modulus ${client.modulus.bitLength()} bits ${client.modulus.toString(16).take(16)}…, exponent ${client.publicExponent}; " +
              "TV modulus ${server.modulus.bitLength()} bits ${server.modulus.toString(16).take(16)}…, exponent ${server.publicExponent}; " +
              "digest[0] ${(secret[0] & 0xFF) == Integer.parseInt(code.substring(0, 2), 16) ? 'matches' : 'does not match'} the code"
@@ -514,6 +509,17 @@ void submitPairingCode(String code) {
     logCmd "Sending pairing secret"
     // Not traced: this frame is the pairing secret.
     sendFrame(outer(pMsg(40, pBytes(1, hexOf(secret)))), false)
+}
+
+// SHA-256 over the client modulus and exponent, the TV modulus and exponent (each as even-length hex), then the
+// last four characters of the code. Pure so a test can run it.
+private byte[] pairingSecret(List<BigInteger> numbers, String code) {
+    MessageDigest md = MessageDigest.getInstance("SHA-256")
+    numbers.each { BigInteger v ->
+        md.update(HexUtils.hexStringToByteArray(evenHex(v.toString(16))))
+    }
+    md.update(HexUtils.hexStringToByteArray(code.substring(2)))
+    return md.digest()
 }
 
 void forgetPairing() {

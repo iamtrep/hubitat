@@ -49,20 +49,12 @@ maker_api:
   label: test-bls-maker
 
 cases:
-  - name: smoke-rig-boots
-    setup:
-      - { device: test-bls-wall, command: "off" }
-      - { device: test-bls-hue,        command: "inactive" }
-      - { device: test-bls-fp300-pir,  command: "inactive" }
-      - { device: test-bls-fp300-mm,   command: "inactive" }
-    wait_seconds: 2
-    assert:
-      - { device: test-bls-wall, attribute: switch, value: "off" }
-
   - name: walkin-hue-fires-output
     setup:
       - { device: test-bls-wall, command: "off" }
       - { device: test-bls-hue,  command: "inactive" }
+      - { device: test-bls-fp300-pir,  command: "inactive" }
+      - { device: test-bls-fp300-mm,   command: "inactive" }
       - { device: test-bls-app hueOnly, command: "off" }
     actions:
       - { device: test-bls-hue, command: "active" }
@@ -195,6 +187,8 @@ cases:
     assert:
       - { device: test-bls-wall, attribute: switch, value: "on" }
 
+  # Not standalone: needs the quiet period user-forgot-arm-quiet just aged
+  # (the harness has no delay step), so a failure here may start there.
   - name: user-forgot-trigger-off
     actions:
       - { device: test-bls-wall, command: "off" }
@@ -211,8 +205,10 @@ cases:
     # Let tLastActivity from prior cases age past the tManualOverride (5s test override).
     wait_seconds: 6
     assert:
-      - { device: test-bls-wall, attribute: switch, value: "off" }
+      # App-side: the hueOnly output the app drives has timed out (holdSec=8).
+      - { device: test-bls-app hueOnly, attribute: switch, value: "off" }
 
+  # Not standalone: relies on the override window manual-override-arm-quiet aged.
   - name: manual-override-fires
     actions:
       - { device: test-bls-wall, command: "on" }

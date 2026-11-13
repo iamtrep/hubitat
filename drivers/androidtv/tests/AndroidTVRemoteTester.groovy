@@ -915,7 +915,7 @@ List<Map> stepsFor(int test, Map run) {
                         [name: "launch", label: "Waiting for the box to open YouTube", cmd: "launchApp", args: ["com.google.android.youtube.tv"], wait: '^rx 20:|^TV rejected', timeout: 20, after: 5]]
         case 7: return [[name: "badLink", label: "Sending a link the box refuses", cmd: "launchApp", args: ["market://launch?id=invalid.tester.nosuchapp"], wait: '^TV rejected|^rx 20:', timeout: 15],
                         [name: "reconnect", label: "Waiting for the session to come back", wait: '^rx 40:', timeout: 20, sinceTest: true, after: 2],
-                        [name: "home", label: "Pressing HOME", cmd: "sendKey", args: ["HOME"], wait: '^tx 10:\\{1:3 ', timeout: 10, after: 3]]
+                        [name: "home", label: "Pressing HOME", cmd: "sendKey", args: ["HOME"], wait: '^tx 10:\\x7B1:3 ', timeout: 10, after: 3]]
         case 8: return [[name: "launch", label: "Waiting for the box to open YouTube", cmd: "launchApp", args: ["https://www.youtube.com"], wait: '^rx 20:', timeout: 20, after: 5],
                         [name: "home", label: "Pressing HOME", cmd: "sendKey", args: ["HOME"], wait: '^rx 20:', timeout: 15, after: 2, quiet: true],
                         [name: "homeSeen", label: "Waiting for your answer", prompt: "home", onlyIf: "homeUnchanged", timeout: 30]]

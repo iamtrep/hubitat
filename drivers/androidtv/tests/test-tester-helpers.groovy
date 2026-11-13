@@ -73,6 +73,7 @@ List<String> SIGNATURES = [
     'String textNote(Map f, Map prompts = [:]) {',
     'String mediaNote(Map prompts) {',
     'boolean choseReady(Map prompts, String kind) {',
+    'List<Map> stepsFor(int test, Map run) {',
     'boolean answeredAny(Map prompts, List kinds) {',
     'List<Map> textSteps(Map run) {',
     'List<Map> mediaSteps(Map run) {',
@@ -95,8 +96,11 @@ List<String> SIGNATURES = [
     'Map profileFields(List<Map> results) {',
 ]
 String IMPORTS = "import java.security.MessageDigest\nimport java.security.cert.CertificateFactory\nimport java.text.SimpleDateFormat\n"
-String GAP = "long getPING_GAP_MS() { 12000L }\n"
-String DROP = "String getDROP_RE() { '^(remote connect returned|Socket \\\\(|No message from the TV|Connect failed)' }\n"
+// The two constants come from the shipped source text, never a copy: a changed value changes what the evaluators do.
+String gapLine = (text =~ /(?m)^@Field static final long PING_GAP_MS = (\d+L)\s*$/)[0][1]
+String dropLine = (text =~ /(?m)^@Field static final String DROP_RE = ('.*')\s*$/)[0][1]
+String GAP = "long getPING_GAP_MS() { ${gapLine} }\n"
+String DROP = "String getDROP_RE() { ${dropLine} }\n"
 def h = new GroovyShell().parse(IMPORTS + GAP + DROP + SIGNATURES.collect { extract(text, it) }.join("\n") + "\nreturn this\n").run()
 
 int pass = 0, fail = 0
@@ -659,6 +663,66 @@ check 'other messages merged as numbers', pf.extraMessages == [24, 51]
 check 'recovery error code when the package launch gave none', h.profileFields([[test: 7, observed: [boxError: '3']]]).errorCode == 3
 check 'nothing measured: no profile', h.profileFields([]) == [:] && h.profileFields([[test: 2, observed: [firstPingMs: 100L]]]) == [:]
 check 'unmeasured fields left out', !pf.containsKey('closeAfterErrorS') && !pf.containsKey('pingIntervalS')
+
+println 'step table and driver text (the tester matches the driver log lines)'
+File driverFile = new File(scriptFile.parentFile.parentFile, 'AndroidTVRemote.groovy')
+if (System.getenv('ANDROIDTV_DRIVER_SOURCE')) driverFile = new File(System.getenv('ANDROIDTV_DRIVER_SOURCE'))
+String driverText = driverFile.text
+// Alternatives of a regex at its top level, descending into a group that spans a whole alternative.
+List<String> alternatives(String re) {
+    List<String> parts = []; StringBuilder cur = new StringBuilder(); int depth = 0
+    for (int i = 0; i < re.length(); i++) {
+        char c = re.charAt(i)
+        if (c == (char) '\\') { cur.append(c); if (i + 1 < re.length()) cur.append(re.charAt(++i)); continue }
+        if (c == (char) '(') depth++
+        if (c == (char) ')') depth--
+        if (c == (char) '|' && depth == 0) { parts << cur.toString(); cur = new StringBuilder() } else cur.append(c)
+    }
+    parts << cur.toString()
+    return parts.collectMany { String p ->
+        String q = p.startsWith('^') ? p.substring(1) : p
+        q.startsWith('(') && q.endsWith(')') ? alternatives(q.substring(1, q.length() - 1)) : [q]
+    }
+}
+// The fixed text a regex alternative starts with, up to its first metacharacter.
+String literalHead(String alt) {
+    StringBuilder b = new StringBuilder()
+    for (int i = 0; i < alt.length(); i++) {
+        char c = alt.charAt(i)
+        if (c == (char) '\\') {
+            char n = alt.charAt(i + 1)
+            if ('(){}.[]'.indexOf((int) n) >= 0) { b.append(n); i++; continue }
+            break
+        }
+        if ('([.*+?{'.indexOf((int) c) >= 0) break
+        b.append(c)
+    }
+    return b.toString()
+}
+check 'alternatives helper', alternatives('^(a|b \\(|c)|Exc') == ['a', 'b \\(', 'c', 'Exc'] && literalHead('Socket \\(') == 'Socket (' && literalHead('rx 40:\\{1:1\\}') == 'rx 40:{1:1}' && literalHead('tx 10:\\x7B1:3 ') == 'tx 10:'
+List<String> regexes = []
+Map<String, Object> run = [ctx: [startSwitch: 'off'], needConnect: true, pairingOnly: false, prompts: [:], standbyMin: 2]
+(0..15).each { int t ->
+    [run, run + [prompts: [field: [choice: 'ready'], playing: [choice: 'ready']], ctx: [startSwitch: 'on'], needConnect: false]].each { Map r ->
+        h.stepsFor(t, r).each { Map s ->
+            ['wait', 'fail'].each { k -> if (s[k]) regexes << (s[k] as String) }
+            // every wait pattern compiles, and a step that waits has a timeout
+            if (s.wait) { java.util.regex.Pattern.compile(s.wait as String); assert s.timeout : "step ${s.name} of test ${t} waits with no timeout" }
+        }
+    }
+}
+check 'the step table has wait patterns', regexes.toSet().size() >= 10
+Set<String> heads = regexes.toSet().collectMany { alternatives(it) }.collect { literalHead(it) }.findAll { it }.toSet()
+Set<String> missing = heads.findAll { String hd ->
+    String needle = hd =~ /^(rx|tx) \d/ ? "\"${hd.take(3)}" : hd =~ /^ping #/ ? 'ping #' : hd
+    !driverText.contains(needle)
+}
+check "every fixed text a step waits on appears in the driver (${heads.size()} checked)${missing ? ', missing: ' + missing : ''}", !missing
+check 'the heads include the pairing and discovery lines', ['Enter the code shown', 'Pairing failed with status', 'Paired', 'Found ', 'No Android TV', 'TV rejected'].every { heads.contains(it) }
+// DROP_RE names the driver's drop lines; each alternative must still be text the driver logs.
+List<String> dropHeads = alternatives(h.getDROP_RE()).collect { literalHead(it) }
+check 'DROP_RE alternatives are driver log text', dropHeads.size() == 4 && dropHeads.every { driverText.contains(it) }
+check 'DROP_RE and PING_GAP_MS are the tester source values', h.getPING_GAP_MS() == (new GroovyShell().evaluate(gapLine) as long) && h.getDROP_RE() == (new GroovyShell().evaluate(dropLine) as String)
 
 println "\n${pass} passed, ${fail} failed"
 System.exit(fail ? 1 : 0)
