@@ -33,7 +33,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import groovy.json.JsonOutput
 
-@Field static final String CODE_VERSION = "0.0.12"
+@Field static final String CODE_VERSION = "0.0.13"
 
 metadata {
     definition (name: "Stelpro Allia Zigbee Thermostat",
@@ -269,9 +269,19 @@ void setThermostatMode(String thermostatMode) {
             if (state.thermostatIsOn == false) {
                 state.thermostatIsOn = true
 
-                Integer setpoint = state.lastHeatingSetpoint ?: device.currentValue("temperature") as int
-                logDebug("heat() setpoint will be ${setpoint}")
-                setHeatingSetpoint(setpoint)
+                // state.lastHeatingSetpoint is always degrees Celsius. The write goes straight to the device in Celsius,
+                // so the hub-scale range check in setHeatingSetpoint() cannot reject it.
+                BigDecimal room = device.currentValue("temperature") as BigDecimal
+                BigDecimal roomCelsius = (room == null) ? null : celsiusFromScale(room, getTemperatureScale())
+                Map celsiusRange = constSetpointRange["C"]
+                BigDecimal setpoint = restoreSetpointCelsius(state.lastHeatingSetpoint, roomCelsius, celsiusRange.min as BigDecimal, celsiusRange.max as BigDecimal)
+                if (setpoint == null) {
+                    logWarn("heat(): no remembered setpoint and no room temperature, thermostat left off")
+                    state.thermostatIsOn = false
+                    break
+                }
+                logDebug("heat() setpoint will be ${setpoint} C")
+                writeSetpointCelsius(setpoint)
 
                 sendEvent(name:"thermostatMode", value:thermostatMode, descriptionText: "Thermostat mode set to ${thermostatMode}")
 
@@ -281,8 +291,10 @@ void setThermostatMode(String thermostatMode) {
         case "off":
             // This model does not appear to honor cluster 0x0201 attribute 0x001C for setting the system mode.
             if (state.thermostatIsOn) {
-                logDebug("off() setpoint will be ${constHeatOffSetpoint}")
-                setHeatingSetpoint(constHeatOffSetpoint)
+                // Written in Celsius directly: setHeatingSetpoint() reads its argument in the hub's scale and would reject 5 on a Fahrenheit hub.
+                // state.lastHeatingSetpoint is left alone, it holds the setpoint heat() restores.
+                logDebug("off() setpoint will be ${constHeatOffSetpoint} C")
+                writeSetpointCelsius(constHeatOffSetpoint as BigDecimal)
 
                 state.thermostatIsOn = false
                 sendEvent(name:"thermostatMode", value:thermostatMode, descriptionText: "Thermostat mode set to ${thermostatMode}")
@@ -326,8 +338,15 @@ void setHeatingSetpoint(BigDecimal preciseDegrees) {
         sendZigbeeCommands(cmds)
     } else {
         // Thermostat is "off".  Remember requested setpoint, will be used when heat mode is turned back on.
-        state.lastHeatingSetpoint = celsius
+        state.lastHeatingSetpoint = celsius as BigDecimal
     }
+}
+
+private void writeSetpointCelsius(BigDecimal celsius) {
+    List<String> cmds = []
+    cmds += zigbee.writeAttribute(0x201, 0x0012, 0x29, setpointHundredths(celsius))
+    cmds += zigbee.readAttribute(0x201, 0x0012)
+    sendZigbeeCommands(cmds)
 }
 
 // Custom commands
@@ -504,8 +523,10 @@ private void parseAttributeReport(Map descMap) {
                     sendEvent(name:"thermostatSetpoint", value:map.value, unit:map.unit, descriptionText: "Thermostat setpoint is ${map.value}${map.unit}")
 
                     // remember last heating setpoint
-                    if (descMap.value != "01F4") {
-                        state.lastHeatingSetpoint = map.value
+                    // (stored in Celsius; the 5 C "off" value and the 0x8000 sentinel are not user setpoints)
+                    BigDecimal reportedCelsius = reportedSetpointCelsius(descMap.value)
+                    if (reportedCelsius != null) {
+                        state.lastHeatingSetpoint = reportedCelsius
                     }
                     break
 
@@ -677,6 +698,41 @@ private BigDecimal getTemperature(String value) {
         BigDecimal fahrenheit = celsiusToFahrenheit(celsius)
         return fahrenheit.setScale(1, BigDecimal.ROUND_HALF_UP)
     }
+}
+
+// Pure helpers for the remembered setpoint, which is always degrees Celsius.
+@CompileStatic
+private static int setpointHundredths(BigDecimal celsius) {
+    return celsius.multiply(100.0G).setScale(0, BigDecimal.ROUND_HALF_UP).intValue()
+}
+
+@CompileStatic
+private static BigDecimal celsiusFromScale(BigDecimal degrees, String scale) {
+    if (scale == "C") return degrees
+    return degrees.subtract(32.0G).multiply(5.0G).divide(9.0G, 2, BigDecimal.ROUND_HALF_UP)
+}
+
+// A 0x0012 report as a user setpoint in Celsius, or null for the "off" value (5 C) and the 0x8000 sentinel.
+@CompileStatic
+private static BigDecimal reportedSetpointCelsius(String hex) {
+    if (hex == null || hex.equalsIgnoreCase("8000")) return null
+    int hundredths = hexToSignedInt16(hex)
+    if (hundredths == 500) return null
+    return new BigDecimal(hundredths).divide(100.0G).setScale(2, BigDecimal.ROUND_HALF_UP)
+}
+
+// What heat() writes: the remembered Celsius setpoint (half degrees kept) when it is a plausible one, else the room
+// temperature to the nearest half degree, clamped to the range; null when neither exists. A value outside the range
+// is ignored: drivers before 0.0.13 stored hub-scale values on a Fahrenheit hub.
+@CompileStatic
+private static BigDecimal restoreSetpointCelsius(Object stored, BigDecimal roomCelsius, BigDecimal min, BigDecimal max) {
+    if (stored != null) {
+        BigDecimal s = new BigDecimal(stored.toString())
+        if (s >= min && s <= max) return s
+    }
+    if (roomCelsius == null) return null
+    BigDecimal half = roomCelsius.multiply(2.0G).setScale(0, BigDecimal.ROUND_HALF_UP).divide(2.0G)
+    return half.max(min).min(max)
 }
 
 @CompileStatic
