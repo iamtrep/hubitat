@@ -54,7 +54,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Switch Monitor"
-@Field static final String CODE_VERSION = "3.0.6"
+@Field static final String CODE_VERSION = "3.0.7"
 
 @Field static final Integer DEFAULT_GRACE_MINUTES = 5
 @Field static final Integer DEFAULT_GRACE_SECONDS = 0
@@ -328,6 +328,7 @@ void initialize() {
             Map gs = (Map) allGroupState[key]
             gs.recoveryActive = false
             gs.retryCount = 0
+            gs.loadCheckDueAt = null    // unschedule() in updated() dropped the pending check
             // Prune low-load devices no longer monitored
             String targetState = getGroupTargetState(groupNum)
             if (targetState == "on" && getBoolGroupSetting(groupNum, "enableLoadMonitoring")
@@ -530,6 +531,26 @@ void postOutageCheck() {
 
 // ── Recovery Logic (Unified) ─────────────────────────────────────────────────
 
+// True once a switch has been in its wrong state for the full grace period. A switch with no
+// recorded change time counts as due. The slack absorbs the gap between the event date and the
+// moment its job was scheduled.
+static boolean graceElapsed(Long sinceMs, long nowMs, long graceMs) {
+    return sinceMs == null || nowMs - sinceMs + 1000L >= graceMs
+}
+
+// When to schedule the next low-load check, or null when a check due no later than wantAtMs is
+// already pending. One live job per group; a recorded time in the past is a job that already ran.
+static Long nextLoadCheckAt(Long pendingDueAtMs, long nowMs, long wantAtMs) {
+    if (pendingDueAtMs != null && pendingDueAtMs > nowMs && pendingDueAtMs <= wantAtMs) return null
+    return wantAtMs
+}
+
+// A check that fires before the time recorded for the group's live job is a leftover of an
+// earlier schedule and does nothing; the live job reports.
+static boolean isOrphanLoadCheck(Long dueAtMs, long nowMs) {
+    return dueAtMs != null && dueAtMs > nowMs + 1000L
+}
+
 void startRecovery(Map data) {
     checkVersion()
     int groupNum = data.groupNum as int
@@ -552,13 +573,29 @@ void startRecovery(Map data) {
         return
     }
 
-    String names = actionable.collect { it.displayName }.join(", ")
+    // One recovery chain per group: a second job (another switch, or a manual check) must not start a
+    // parallel chain that shares the retry counter.
+    Map gs = getGroupState(groupNum)
+    if (gs.recoveryActive) {
+        logDebug "[${groupLabel}] Recovery already running — nothing to start"
+        return
+    }
+
+    // A switch that was restored and deviated again has its own job; skip it until its own grace has run.
+    long graceMs = getGroupGracePeriodSeconds(groupNum) * 1000L
+    long nowMs = now()
+    List due = actionable.findAll { graceElapsed(it.currentState("switch")?.date?.time as Long, nowMs, graceMs) }
+    if (due.isEmpty()) {
+        logDebug "[${groupLabel}] No switch has been ${targetState == 'on' ? 'off' : 'on'} for the full grace period yet"
+        return
+    }
+
+    String names = due.collect { it.displayName }.join(", ")
     logInfo "[${groupLabel}] ${names} stayed ${targetState == 'on' ? 'off' : 'on'} for ${getGroupGracePeriodLabel(groupNum)} — starting recovery"
     if (getBoolGroupSetting(groupNum, "notifyOnRecovery", true)) {
         sendGroupNotification(groupNum, "${names} turned ${targetState == 'on' ? 'off' : 'on'} — turning back ${targetState}")
     }
 
-    Map gs = getGroupState(groupNum)
     gs.recoveryActive = true
     gs.retryCount = 0
     saveGroupState(groupNum, gs)
@@ -675,7 +712,7 @@ void powerHandler(evt) {
                 gs.lowLoadDevices = lowLoad
                 saveGroupState(groupNum, gs)
                 int graceMinutes = getIntGroupSetting(groupNum, "loadGraceMinutes", DEFAULT_LOAD_GRACE_MINUTES)
-                runIn(graceMinutes * 60, "checkLowLoad", [data: [groupNum: groupNum], overwrite: false])
+                scheduleLoadCheck(groupNum, graceMinutes * 60000L)
             }
         } else {
             if (lowLoad.containsKey(devId)) {
@@ -718,8 +755,20 @@ private void evaluateGroupLoad(int groupNum) {
     if (!lowLoad.isEmpty()) {
         int delaySecs = getIntGroupSetting(groupNum, "loadGraceMinutes", DEFAULT_LOAD_GRACE_MINUTES) * 60
         logTrace "[${getGroupLabel(groupNum)}] Scheduling low-load check — ${lowLoad.size()} device(s) tracked"
-        runIn(delaySecs, "checkLowLoad", [data: [groupNum: groupNum], overwrite: false])
+        scheduleLoadCheck(groupNum, delaySecs * 1000L)
     }
+}
+
+// One pending checkLowLoad per group. overwrite: false keeps the other groups' jobs, so the group's
+// live job time is recorded in its state and a new one is added only when it would fire sooner.
+private void scheduleLoadCheck(int groupNum, long delayMs) {
+    Map gs = getGroupState(groupNum)
+    long nowMs = now()
+    Long at = nextLoadCheckAt(gs.loadCheckDueAt as Long, nowMs, nowMs + delayMs)
+    if (at == null) return
+    gs.loadCheckDueAt = at
+    saveGroupState(groupNum, gs)
+    runIn(Math.max(1, (int) Math.ceil((at - nowMs) / 1000.0)), "checkLowLoad", [data: [groupNum: groupNum], overwrite: false])
 }
 
 void checkLowLoad(Map data) {
@@ -736,13 +785,20 @@ void checkLowLoad(Map data) {
     if (!getBoolGroupSetting(groupNum, "enableLoadMonitoring")) return
 
     Map gs = getGroupState(groupNum)
+    long nowMs = now()
+    if (isOrphanLoadCheck(gs.loadCheckDueAt as Long, nowMs)) {
+        logTrace "[${groupLabel}] Low-load check superseded by a sooner one — skipping"
+        return
+    }
     Map lowLoadDevices = (Map)(gs.lowLoadDevices ?: [:])
     if (lowLoadDevices.isEmpty()) return
 
     List devices = getGroupDevices(groupNum)
     BigDecimal threshold = getDecimalGroupSetting(groupNum, "minLoadWatts", 0)
+    long graceMs = getIntGroupSetting(groupNum, "loadGraceMinutes", DEFAULT_LOAD_GRACE_MINUTES) * 60000L
     List lowNames = []
     List recovered = []
+    long soonestRemainingMs = Long.MAX_VALUE
 
     lowLoadDevices.each { String devId, timestamp ->
         DeviceWrapper dev = (DeviceWrapper) devices?.find { it.id.toString() == devId }
@@ -758,6 +814,11 @@ void checkLowLoad(Map data) {
 
         BigDecimal currentPower = dev.currentValue("power") as BigDecimal
         if (currentPower != null && currentPower < threshold) {
+            // Low for less than its own grace period: its own check will report it.
+            if (!graceElapsed(timestamp as Long, nowMs, graceMs)) {
+                soonestRemainingMs = Math.min(soonestRemainingMs, graceMs - (nowMs - (timestamp as Long)))
+                return
+            }
             lowNames << "${dev.displayName} (${currentPower}W < ${threshold}W)"
         } else {
             logTrace "[${groupLabel}] ${dev.displayName} load recovered to ${currentPower}W"
@@ -776,7 +837,9 @@ void checkLowLoad(Map data) {
             sendGroupNotification(groupNum, msg)
         }
         int reminderMinutes = getIntGroupSetting(groupNum, "loadReminderMinutes", DEFAULT_LOAD_REMINDER_MINUTES)
-        runIn(reminderMinutes * 60, "checkLowLoad", [data: [groupNum: groupNum], overwrite: false])
+        scheduleLoadCheck(groupNum, Math.min(reminderMinutes * 60000L, soonestRemainingMs))
+    } else if (soonestRemainingMs != Long.MAX_VALUE) {
+        scheduleLoadCheck(groupNum, soonestRemainingMs)
     } else if (lowLoadDevices.isEmpty()) {
         logTrace "[${groupLabel}] All loads recovered — load monitoring clear"
     }
