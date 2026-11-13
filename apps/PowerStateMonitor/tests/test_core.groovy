@@ -123,5 +123,13 @@ check('turbo with switch off', core.sourceOf('turbo', 'turbo', 'off'), 'other')
 check('other state', core.sourceOf('normal', 'turbo', 'on'), 'none')
 check('no source switch', core.sourceOf('turbo', null, null), 'none')
 
+// ── refresh schedule ──
+check('below an hour: minute step', core.refreshCron(15, 7, 33), '7 */15 * ? * *')
+check('59 minutes stays a minute step', core.refreshCron(59, 0, 0), '0 */59 * ? * *')
+check('60 minutes: every hour, never a minute step of 60', core.refreshCron(60, 7, 33), '7 33 */1 ? * *')
+check('90 minutes rounds up to 2 hours', core.refreshCron(90, 7, 33), '7 33 */2 ? * *')
+check('23 hours', core.refreshCron(1380, 1, 2), '1 2 */23 ? * *')
+check('a day: once, at midnight plus the minute', core.refreshCron(1440, 7, 33), '7 33 0 ? * *')
+
 println "\n${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)

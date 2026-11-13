@@ -45,7 +45,7 @@ Saving creates the Power State device. Its label follows the app's: an app named
 | Hysteresis (W) | 5 | |
 | Settle time (seconds) | 20 | 1 to 3600 |
 | Unknown time (seconds) | 120 | How long a reading above the ceiling holds before the state is `unknown` |
-| Refresh every (minutes) | 0 (never) | Calls the meter's `refresh()` |
+| Refresh every (minutes) | 0 (never) | Calls the meter's `refresh()`. From 60 minutes up it runs on whole hours, rounded up (90 becomes every 2 hours) |
 | Source switch, the state it commands | | Optional; sets `stateSource` |
 
 Example, a ventilator on a plug that reports in 10 W steps: off from 0, normal from 20, turbo from 60, ceiling 90 W. Its steady levels are about 47 W and 75 W, and its surges reach 135 W for up to 7 s.

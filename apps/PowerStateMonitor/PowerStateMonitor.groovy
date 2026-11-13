@@ -15,7 +15,7 @@ import com.hubitat.hub.domain.State
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 
 definition(
     name: "Power State Monitor",
@@ -71,7 +71,7 @@ Map mainPage() {
                   defaultValue: 20, range: "1..3600", required: true
             input "unknownSeconds", "number", title: "A surge reading that holds this long sets the state to unknown (seconds)",
                   defaultValue: 120, range: "1..86400", required: true
-            input "refreshMinutes", "number", title: "Ask the meter for a reading every (minutes, 0: never)",
+            input "refreshMinutes", "number", title: "Ask the meter for a reading every (minutes, 0: never; from 60 up, whole hours rounded up)",
                   defaultValue: 0, range: "0..1440", required: true
         }
         section("Source") {
@@ -119,7 +119,7 @@ void initialize() {
     if (sourceSwitch) subscribe(sourceSwitch, "switch", "sourceHandler")
     subscribe(location, "systemStart", "systemStartHandler")
     int rm = (refreshMinutes ?: 0) as int
-    if (rm > 0) schedule("${new Random().nextInt(60)} */${rm} * ? * *", "refreshMeter")
+    if (rm > 0) schedule(refreshCron(rm, new Random().nextInt(60), new Random().nextInt(60)), "refreshMeter")
     if (state.last == null) seedFromMeter()
     evaluatePower("settings saved")
 }
@@ -307,6 +307,18 @@ Map stepState(String cur, Map last, Map cfg, long now) {
 String sourceOf(String cur, String sourceState, String switchValue) {
     if (sourceState == null || cur != sourceState) return 'none'
     return switchValue == 'on' ? 'switch' : 'other'
+}
+
+// Cron for a meter refresh every rm minutes. A cron minute step above 59 is invalid and
+// schedule() throws on it, so from 60 minutes up the refresh runs on whole hours, rounded up
+// (90 minutes becomes every 2 hours, 1440 once a day), at a fixed minute. Below 60, a value
+// that does not divide 60 restarts at the top of each hour, so the last gap is shorter.
+@CompileStatic
+static String refreshCron(int rm, int sec, int minute) {
+    if (rm < 60) return "${sec} */${rm} * ? * *".toString()
+    int hours = (int) Math.ceil(rm / 60.0d)
+    if (hours >= 24) return "${sec} ${minute} 0 ? * *".toString()
+    return "${sec} ${minute} */${hours} ? * *".toString()
 }
 
 // ── End core ──────────────────────────────────────────────────────────
