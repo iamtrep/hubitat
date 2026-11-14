@@ -176,6 +176,7 @@ node tests/test-radio-derivations.js    # topRadioTalkers (Performance top-N ran
 node tests/test-network-derivations.js  # zwProblemNodes / zbWeakNeighbors / zbStaleNeighbors
 node tests/test-forum-export.js         # assembleForumData (client-side forum-export data assembly)
 node tests/test-forum-render.js         # full forum-export render (buildForumMarkdown end-to-end)
+node tests/test-help.js                 # help popups: every key has an entry, README anchors, thresholds
 node tests/test-reliability.js          # relSummary / relLabel / relLinks (Troubleshooting Center card derivation)
 node tests/test-temp-scale.js           # temperature-scale helpers
 node tests/test-zwave-render.js         # routeChangesCell (Route Changes null -> em-dash), splitGhostNodes

@@ -30,7 +30,7 @@ A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-t
 13. [Radio Capture Tab](#radio-capture-tab)
 14. [Device Usage Audit](#device-usage-audit)
 15. [Settings Tab](#settings-tab)
-16. [Forum Export](#forum-export)
+16. [AI and Forum Export](#ai-and-forum-export)
 17. [Alerts & Warnings Reference](#alerts--warnings-reference)
 18. [REST API](#rest-api)
 
@@ -71,6 +71,8 @@ http://{hub-ip}/apps/api/{app-id}/ui.html?access_token={token}
 ```
 
 Bookmark this URL for direct access. The access token is tied to the app instance and does not expire unless OAuth is re-configured.
+
+An **ⓘ** next to a label or an alert explains it: what the figure is, where it comes from, and the threshold Hub Inspector colours it by. Click or tap it, or focus it and press Enter; Esc or a click outside closes it. The explanation links to the matching section of this document.
 
 ---
 
@@ -140,7 +142,7 @@ Post in the [Hub Inspector forum thread](https://community.hubitat.com/t/beta-hu
 3. What you did, what you expected, and what happened. A screenshot helps.
 4. Any Hub Inspector errors from **Logs**.
 
-The **Copy for Forum** button on the Dashboard copies a summary of your hub that you can paste into your post. Device, app and hub names are replaced with aliases; to post real names, turn off **Obfuscate device/app names in the forum export** in the Settings tab.
+The **Copy for AI or Forum** button on the Dashboard copies a summary of your hub that you can paste into your post. Device, app and hub names are replaced with aliases; to post real names, turn off **Obfuscate device/app names in the AI/forum export** in the Settings tab.
 
 For Z-Wave problems, also open `http://<hub-ip>/hub/zwaveDetails/json` in a browser, save the page, and send it by private message. It lists your devices, so don't post it publicly.
 
@@ -166,7 +168,7 @@ The header bar contains a **Docs ↗** link (this document), a **Diagnostic Tool
 
 **Hub Firmware** — When `/hub/cloud/checkForUpdate` reports an upgrade is available, an orange badge appears with the current version, the available version, and a link to the release notes. A beta release is tagged **(beta)** and raised as an info alert, not a warning. The card also lists the platform versions stored on the hub that the Diagnostic Tool can restore, and the stable fallback version, read from the Diagnostic Tool on port 8081. A **Download stable** button fetches the latest stable release of a version line (for example 2.5.1) so it becomes restorable; the download takes 1–2 minutes and temporarily uses several hundred MB of the hub's free memory. A link opens the Diagnostic Tool, which asks for the hub's MAC address (shown under Settings → Hub Details). The update check and the version list are cached for 1 hour; a download refreshes the list.
 
-**Reports** — Buttons to generate a full HTML report or open a forum-ready Markdown export to copy (see [Forum Export](#forum-export)).
+**Reports** — Buttons to generate a full HTML report or open a Markdown export to paste into a forum post or an AI chat (see [AI and Forum Export](#ai-and-forum-export)).
 
 ---
 
@@ -562,7 +564,7 @@ The scan crawls every device via `/device/fullJson/{id}` — one call per device
 
 ## Settings Tab
 
-Most settings are accessible from the Hubitat admin UI under **Apps → Hub Inspector → Settings**. Four settings are available only through the dashboard's Settings tab and are not shown in the Hubitat admin UI: **Auto-refresh interval** (Live Data section), **Obfuscate device/app names in the dashboard** and **Obfuscate device/app names in the forum export** (Privacy section), and **Clear Enrichment Cache** (Maintenance section).
+Most settings are accessible from the Hubitat admin UI under **Apps → Hub Inspector → Settings**. Four settings are available only through the dashboard's Settings tab and are not shown in the Hubitat admin UI: **Auto-refresh interval** (Live Data section), **Obfuscate device/app names in the dashboard** and **Obfuscate device/app names in the AI/forum export** (Privacy section), and **Clear Enrichment Cache** (Maintenance section).
 
 ### Config Snapshot Scheduling
 - Enable automatic snapshots: on/off
@@ -610,18 +612,18 @@ Debug and trace logging switch off after 30 minutes.
 
 ### Privacy
 - **Obfuscate device/app names in the dashboard** — Off by default. Replaces every device, app and file name throughout the dashboard with a stable adjective-noun alias (for example `amber-otter`). The same name always gets the same alias on a given hub, so a screenshot and a forum post still line up. Aliases are mixed with a random value generated on each install, so they can't be worked out from guessed names. The CSV export keeps real names, since it is for local use.
-- **Obfuscate device/app names in the forum export** — On by default. Replaces device, app and hub names in the forum export with the same aliases, including names inside alert text.
+- **Obfuscate device/app names in the AI/forum export** — On by default. Replaces device, app and hub names in the forum export with the same aliases, including names inside alert text.
 
 ### Maintenance
 - **Clear Enrichment Cache** — Clears the cached per-device classification data (controller type, parent app). The next analysis re-fetches this from the hub. Use this if device classifications appear stale after adding or re-pairing devices.
 
 ---
 
-## Forum Export
+## AI and Forum Export
 
-The forum export generates a concise Markdown-formatted summary suitable for pasting into a community forum post when seeking help.
+The export generates a concise Markdown summary of the hub to paste into a community forum post when seeking help, or into an AI chat to ask what a finding means.
 
-**Access:** Dashboard tab → **Copy for Forum**. This opens a dialog with the Markdown text pre-selected. Press Ctrl+C (or Cmd+C) and close.
+**Access:** Dashboard tab → **Copy for AI or Forum**. This opens a dialog with the Markdown text pre-selected. Press Ctrl+C (or Cmd+C) and close.
 
 **Contents of the export:**
 
@@ -634,7 +636,7 @@ The forum export generates a concise Markdown-formatted summary suitable for pas
 - Hub Mesh and Matter status
 - Performance: device and app runtime, top devices and apps by CPU, top talkers
 
-**Obfuscation:** The forum export replaces device, app and hub names with stable aliases unless "Obfuscate device/app names in the forum export" is turned off. Enable "Obfuscate device/app names in the dashboard" in Settings to use the same aliases across the dashboard, for screenshots.
+**Obfuscation:** The export replaces device, app and hub names with stable aliases unless "Obfuscate device/app names in the AI/forum export" is turned off. Enable "Obfuscate device/app names in the dashboard" in Settings to use the same aliases across the dashboard, for screenshots.
 
 ---
 

@@ -149,6 +149,11 @@ input[type=number].cfg-n{width:64px;padding:4px 6px;border:1px solid var(--borde
 
 .ng{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px}
 .ni{padding:7px 10px;background:var(--alt);border-radius:4px}
+.hlp{border:0;background:none;color:var(--link);cursor:pointer;padding:0 0 0 3px;margin:0;font:inherit;line-height:1;vertical-align:baseline}
+.hlp:focus-visible{outline:2px solid var(--link);outline-offset:1px;border-radius:50%}
+.hlp-pop{position:fixed;z-index:300;width:320px;max-width:calc(100vw - 32px);box-sizing:border-box;background:var(--card);color:var(--text);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 14px var(--shadow-strong);padding:10px 30px 10px 12px;font-size:13px;font-weight:400;line-height:1.45;text-align:left;white-space:normal;text-transform:none}
+.hlp-pop>div{margin-bottom:6px} .hlp-pop .hlp-t{font-weight:600} .hlp-pop .hlp-th{color:var(--muted)} .hlp-pop a{color:var(--link)}
+.hlp-x{position:absolute;top:4px;right:6px;border:0;background:none;color:var(--muted);font-size:18px;line-height:1;cursor:pointer;padding:2px 4px}
 .ni .nl{font-size:11px;color:var(--muted)} .ni .nv{font-size:13px;font-weight:500;overflow-wrap:anywhere}
 
 .chart-wrap{overflow-x:auto;margin:8px 0}
@@ -614,10 +619,10 @@ function zwTopoTip(m,i,j){
 }
 function zwTopoHtml(m){
   const n=m.N.length,sz=n<=30?22:n<=60?16:12,s=m.summary,nm=x=>Obf.nm(x);let o='<div class="ng">';
-  o+=ni('Direct to hub',s.direct+' of '+s.routed);
-  o+=ni('Most repeaters',s.deepest?s.deepest.repeaters+' ('+nm(s.deepest.name)+')':'none');
-  o+=ni('At 9.6 kbps',s.slow,s.slow?'var(--warn)':'');
-  o+=ni('Busiest repeater',s.busiest?nm(s.busiest.name)+' ('+s.busiest.routes+' route'+(s.busiest.routes===1?'':'s')+')':'none');
+  o+=ni('Direct to hub',s.direct+' of '+s.routed,null,false,'zt.direct');
+  o+=ni('Most repeaters',s.deepest?s.deepest.repeaters+' ('+nm(s.deepest.name)+')':'none',null,false,'zt.deepest');
+  o+=ni('At 9.6 kbps',s.slow,s.slow?'var(--warn)':'',false,'zt.slow');
+  o+=ni('Busiest repeater',s.busiest?nm(s.busiest.name)+' ('+s.busiest.routes+' route'+(s.busiest.routes===1?'':'s')+')':'none',null,false,'zt.busiest');
   o+='</div><div class="muted zt-intro">Each square says whether two nodes are neighbours, i.e. hear each other directly. A row is that node\'s own neighbour list. Hover or tap a square for the pair and for the row node\'s route to the hub.</div>';
   o+='<div class="zt-wrap" id="ztWrap"><div class="zt-scroll"><div class="zt-grid" id="ztGrid" style="--zt:'+sz+'px;grid-template-columns:150px repeat('+n+',var(--zt))">';
   o+='<div class="zt-corner"></div>'+m.N.map(x=>'<div class="zt-ch"><span>'+h(nm(x.name))+'</span></div>').join('');
@@ -634,7 +639,7 @@ function zwTopoHtml(m){
   const score=x=>(x.path.length-2)*10+(x.rate!=null&&x.rate<40?15:0)+((x.per||0)>0?8:0)+(n>=8&&x.nb<=2?6:0);
   const routed=m.N.filter(x=>x.path).sort((a,b)=>score(b)-score(a));
   const pathTxt=x=>x.path.map(id=>{const y=m.idx[id]!=null?m.N[m.idx[id]]:null;return h(y?nm(y.name):id.toString(16).toUpperCase())}).join(' → ');
-  o+='<details class="zt-routes"><summary>Routes <span class="muted">'+routed.length+' nodes, worst first</span></summary><div class="tbl-wrap"><table><thead><tr><th>Node</th><th>Route in use</th><th>Speed</th><th>LWR RSSI</th><th>PER</th><th>Neighbours</th></tr></thead><tbody>';
+  o+='<details class="zt-routes"><summary>Routes <span class="muted">'+routed.length+' nodes, worst first</span></summary><div class="tbl-wrap"><table><thead><tr><th>Node</th><th>Route in use'+helpBtn('zw.route')+'</th><th>Speed'+helpBtn('zt.speed')+'</th><th>LWR RSSI'+helpBtn('zw.rssi')+'</th><th>PER'+helpBtn('zw.per')+'</th><th>Neighbours'+helpBtn('zw.neighbors')+'</th></tr></thead><tbody>';
   routed.forEach(x=>{const f=zwTopoFlags(x,n);
     o+='<tr><td>'+(x.deviceId?dlink(x.deviceId,x.name):h(nm(x.name)))+'</td><td>'+pathTxt(x)+(f.length?' '+f.map(v=>'<span class="badge b-warn">'+h(v)+'</span>').join(' '):'')+'</td><td>'+zwRateBadge(x.rate)+'</td><td>'+zwRssiTxt(x.rssi)+'</td><td>'+(x.per??'–')+'</td><td>'+x.nb+'</td></tr>'});
   return o+'</tbody></table></div></details>';
@@ -1348,8 +1353,156 @@ function downloadRecording(buf, meta, filenameProtocol){
   return filename;
 }
 
-function mc(l,v,c){const s=c?' style="color:'+c+'"':'';return'<div class="m"><div class="m-l">'+h(l)+'</div><div class="m-v"'+s+'>'+(v??'N/A')+'</div></div>'}
-function ni(l,v,c,wide){const s=c?' style="color:'+c+';font-weight:600"':'';return'<div class="ni"'+(wide?' style="grid-column:1/-1"':'')+'><div class="nl">'+h(l)+'</div><div class="nv"'+s+'>'+h(String(v??'N/A'))+'</div></div>'}
+function mc(l,v,c,k){const s=c?' style="color:'+c+'"':'';return'<div class="m"><div class="m-l">'+h(l)+helpBtn(k)+'</div><div class="m-v"'+s+'>'+(v??'N/A')+'</div></div>'}
+// ===== HELP POPUPS =====
+// One entry per jargon label, keyed by a stable id (labels such as "State" or "Age" mean different
+// things in different tables). Fields: t title, d definition, th threshold or what's normal (a
+// string, or a function so configurable thresholds show their current value), js / zip a line
+// for the Z-Wave JS or Z/IP stack, doc the README section. helpBtn(k) prints an ⓘ button, or ''
+// when there is no entry. Every fact here comes from the code or the README; keep it that way.
+const HELP_DOC='https://github.com/hubitrep/hubitat/blob/main/HubInspector/README.md';
+let HELP_ZWJS=null; // Z-Wave stack of the hub on screen: true = Z-Wave JS, false = Z/IP, null = unknown
+const HELP={
+  // Network configuration
+  'net.limited':{t:'Limited Access',d:'When on, only the listed IP addresses and subnets can open the hub\'s web interface. When off, any device on the LAN can.',doc:'network-configuration'},
+  'net.subnets':{t:'Extra Allowed Subnets',d:'Subnets outside the private address ranges that the hub also accepts connections from. The private ranges are always allowed.',doc:'network-configuration'},
+  'net.cloud':{t:'Hubitat Cloud',d:'Disabled means the hub is set up for local-only operation.',doc:'network-configuration'},
+  'net.ntp':{t:'NTP Server',d:'The time server the hub sets its clock from, or "(not configured)" when none is set.',doc:'network-configuration'},
+  // Zigbee
+  'zb.healthy':{t:'Healthy (Zigbee)',d:'The hub\'s own health flag for its Zigbee radio. Hub Inspector shows it as reported.',doc:'zigbee'},
+  'zb.channel':{t:'Zigbee channel',d:'The 2.4 GHz channel the hub\'s Zigbee network uses. Channels 15, 20 and 25 sit between WiFi channels 1, 6 and 11, which do not overlap each other, so they are shown in green; other channels in orange. The spectrum chart below shows which WiFi channels overlap.',doc:'zigbee'},
+  'zb.panId':{t:'PAN ID / Extended PAN ID',d:'The identifiers of the hub\'s Zigbee network: a short 16-bit one and a long 64-bit one. The channel scan uses the PAN ID to tell the hub\'s own network from neighbouring ones.',doc:'zigbee'},
+  'zb.join':{t:'Join Mode',d:'Active while the hub is accepting new Zigbee devices (pairing).',doc:'zigbee'},
+  'zb.power':{t:'Power Level',d:'The transmit power setting of the hub\'s Zigbee radio, as the hub reports it.',doc:'zigbee'},
+  'zb.neighbors':{t:'Neighbors (Zigbee)',d:'Entries in the hub\'s neighbour table: Zigbee devices the hub hears directly.',doc:'zigbee'},
+  'zb.routes':{t:'Routes (Zigbee)',d:'Entries in the hub\'s route table: destinations the hub reaches through another device.',doc:'zigbee'},
+  'zb.children':{t:'End Devices',d:'Devices joined to the hub itself as its children, rather than to a router.',doc:'zigbee'},
+  'zb.lqi':{t:'LQI (link quality indicator)',d:'The quality of messages received from this neighbour, from 0 to 255, as the hub\'s radio measures it. Higher is better.',th:'Below 30 poor, below 70 marginal, below 130 acceptable, below 200 good, 200 and up excellent. Below 150 counts as a weak neighbour.',doc:'zigbee'},
+  'zb.avgLqi':{t:'Avg LQI',d:'The average LQI over the hub\'s neighbours, with the lowest and highest.',th:'Below 150 red, below 200 orange.',doc:'zigbee'},
+  'zb.weak':{t:'Weak Neighbors',d:'Neighbours whose LQI is below 150.',th:'LQI below 150.',doc:'zigbee'},
+  'zb.stale':{t:'Stale Neighbors',d:'Neighbours the hub has not heard from for more than 6 rounds of its neighbour table (Age above 6).',th:'Age 7 or more.',doc:'zigbee'},
+  'zb.age':{t:'Age',d:'How many rounds of the hub\'s neighbour table have passed since the hub last heard from this neighbour. Above 6 is marked stale.',doc:'zigbee'},
+  'zb.cost':{t:'In Cost / Out Cost',d:'The link cost of this neighbour, in each direction, as the hub\'s neighbour table reports it. Zigbee link costs run from 1 (best) to 7 (worst).',doc:'zigbee'},
+  'zb.shortId':{t:'Short ID',d:'The 16-bit network address a Zigbee device gets when it joins. It can change when the device rejoins; the device\'s long (IEEE) address does not.',doc:'zigbee'},
+  'zb.routeStatus':{t:'Status (route)',d:'The state of the route-table entry, as the hub reports it. Active means the route is in use.',doc:'zigbee'},
+  // Z-Wave radio
+  'zw.healthy':{t:'Healthy (Z-Wave)',d:'The hub\'s own health flag for its Z-Wave radio. Hub Inspector shows it as reported.',doc:'z-wave'},
+  'zw.firmware':{t:'Radio Firmware',d:'The firmware version of the hub\'s Z-Wave radio chip, separate from the hub\'s own firmware. An alert appears when the hub reports an update for it.',doc:'z-wave'},
+  'zw.region':{t:'Region',d:'The frequency region the Z-Wave radio is set to. Z-Wave devices are built for one region and only work with a radio set to it.',doc:'z-wave'},
+  'zw.stack':{t:'Stack',d:'The Z-Wave software the hub runs: Z/IP Gateway, the original stack, or Z-Wave JS. Some figures differ between the two, such as RSSI units.',doc:'z-wave'},
+  'zw.ghost':{t:'Ghost nodes',d:'Nodes the Z-Wave radio still lists that have no Hubitat device, usually because the device was deleted without excluding it. They are safe to force-remove from the radio.',doc:'z-wave'},
+  'zw.failed':{t:'Failed nodes',d:'Nodes that have a Hubitat device, but the radio reports them FAILED, or they have no route and an unknown name. The device may only be out of range or out of battery: try a battery swap or moving it closer to the hub before excluding it.',doc:'z-wave'},
+  'zw.unlisted':{t:'Not in radio list',d:'Hubitat Z-Wave devices that the radio does not report. Check that they still respond.',doc:'z-wave'},
+  'zw.problem':{t:'Problem nodes',d:'Nodes whose state is not OK, or whose PER is above 1%. Each line says which. A device can still work with packet errors, because Z-Wave retries failed messages, but the retries add traffic on the mesh.',th:'State not OK, or PER above 1%.',doc:'z-wave'},
+  'zw.state':{t:'State (Z-Wave node)',d:'The node state the hub reports, the same as on Settings → Z-Wave Details. Anything other than OK puts the node on Problem Nodes.',doc:'z-wave'},
+  'zw.per':{t:'PER (packet error rate)',d:'The percentage of messages to this node that failed, as the hub counts it: the same figure as the PER column of Settings → Z-Wave Details. Z-Wave retries failed messages, so a device with some errors can still work, at the cost of extra traffic. Disabling a device does not remove its node from the radio, so a disabled device can still show a PER.',th:'0% green, above 0% orange, above 1% red and listed under Problem Nodes.',doc:'z-wave'},
+  'zw.avgPer':{t:'Avg PER',d:'The average PER over all nodes.',th:'Above 1% red, above 0% orange.',doc:'z-wave'},
+  'zw.nodesErr':{t:'Nodes w/ Errors',d:'How many nodes have a PER above 0%.',doc:'z-wave'},
+  'zw.routeChanges':{t:'Route Changes',d:'How many times the hub has changed this node\'s route, as the hub counts it. Shown as — when the hub reports no count: Z-Wave Long Range nodes, which talk to the hub directly, and nodes with no traffic yet. Those are left out of the total.',doc:'z-wave'},
+  'zw.rssi':{t:'RSSI',d:'The signal strength of the node\'s last working route (LWR), as the hub reports it.',js:'Z-Wave JS reports dBm: negative, and closer to 0 is stronger. Below −60 is orange, below −80 red.',zip:'Z/IP reports a positive value in dB, not dBm, so it cannot be compared with Z-Wave JS figures and is not colour-coded.',doc:'z-wave'},
+  'zw.avgRssi':{t:'Avg RSSI',d:'The average RSSI over the nodes that report one.',js:'In dBm. Below −60 is orange, below −80 red.',zip:'Z/IP reports RSSI in dB, not dBm, so the average is not colour-coded.',doc:'z-wave'},
+  'zw.rtt':{t:'RTT (round-trip time)',d:'The average time for a message to this node and its answer, in milliseconds, as the hub reports it. Lower is faster.',doc:'z-wave'},
+  'zw.neighbors':{t:'Neighbors (Z-Wave)',d:'How many nodes this node lists as neighbours, i.e. hears directly. On a network of 8 or more nodes, 2 or fewer is flagged as "few neighbours" on the topology card.',doc:'z-wave-topology'},
+  'zw.route':{t:'Route',d:'The path the hub currently uses to reach this node, through any repeaters.',doc:'z-wave-topology'},
+  'zw.security':{t:'Security',d:'The security the node was included with: S2, S0 or None. S0 generates about three times the mesh traffic of S2; ⚠ marks S0 on a device that is not a lock or garage door, where re-pairing with S2 reduces traffic.',doc:'z-wave'},
+  'zw.msgs':{t:'Msgs',d:'Messages the hub has counted for this node, from Settings → Z-Wave Details.',doc:'z-wave'},
+  'zw.msgsMin':{t:'Msgs/Min',d:'Messages per minute over the measurement window.',th:()=>'Red at '+TH.chattyDeviceThreshold+' or more (the chatty device threshold in Settings), orange from '+(TH.chattyDeviceThreshold*0.6)+'.',doc:'z-wave'},
+  'zw.driver':{t:'Driver',d:'Built-in: one of Hubitat\'s own drivers. User: a community or custom driver installed on the hub.',doc:'z-wave'},
+  // Z-Wave topology
+  'zt.direct':{t:'Direct to hub',d:'Nodes whose current route reaches the hub with no repeater, out of all nodes with a route.',doc:'z-wave-topology'},
+  'zt.deepest':{t:'Most repeaters',d:'The longest current route, counted in repeaters, and its node. A route through 2 or more repeaters is flagged.',doc:'z-wave-topology'},
+  'zt.slow':{t:'At 9.6 kbps',d:'Nodes whose route runs at 9.6 kbps, the slowest Z-Wave rate, used as a fallback. 100 kbps is normal; 40 kbps is normal for door locks and older nodes.',doc:'z-wave-topology'},
+  'zt.busiest':{t:'Busiest repeater',d:'The node that relays the most other nodes\' current routes. If it fails or is unplugged, all of those routes have to change.',doc:'z-wave-topology'},
+  'zt.speed':{t:'Speed',d:'The data rate of the node\'s current route: 100 kbps, 40 kbps, or 9.6 kbps, the fallback rate.',doc:'z-wave-topology'},
+  // Z-Wave JS controller
+  'zj.homeId':{t:'Home ID',d:'The identifier of the hub\'s Z-Wave network, shared by every node in it.',doc:'z-wave-js-controller-z-wave-js-hubs-only'},
+  'zj.ownNode':{t:'Own Node',d:'The hub\'s own node ID in its Z-Wave network.',doc:'z-wave-js-controller-z-wave-js-hubs-only'},
+  'zj.suc':{t:'SUC / SIS',d:'Static Update Controller and SUC ID Server: Z-Wave roles that keep the network\'s node list and hand out node IDs.',doc:'z-wave-js-controller-z-wave-js-hubs-only'},
+  'zj.rebuild':{t:'Rebuilding Routes',d:'The controller is rebuilding routes for the network.',doc:'z-wave-js-controller-z-wave-js-hubs-only'},
+  'zj.stats':{t:'Controller statistics',d:'Z-Wave JS counters for the link between the hub\'s software and its Z-Wave chip, not for the radio. TX / RX: messages sent to and received from the chip. Dropped: messages Z-Wave JS dropped. NAK: messages the chip did not accept. CAN: collisions while sending to the chip. Timeout ACK / Resp / CB: the chip\'s acknowledgement, response or callback did not arrive in time. Non-zero error counts are shown in orange.',doc:'z-wave-js-controller-z-wave-js-hubs-only'},
+  'zj.bgRssi':{t:'Background RSSI',d:'The noise level the Z-Wave radio hears on each channel when no one is transmitting, in dBm. Lower (more negative) is quieter, and a quiet channel is what you want.',th:'Above −85 dBm orange, above −70 dBm red.',doc:'z-wave-js-controller-z-wave-js-hubs-only'},
+  'zj.interview':{t:'Interview',d:'How far the hub got in querying the device\'s capabilities when it was included. Complete is normal.',doc:'z-wave-js-controller-z-wave-js-hubs-only'},
+  // Matter and Hub Mesh
+  'mt.fabric':{t:'Fabric ID',d:'The identifier of the hub\'s Matter fabric: the network of Matter devices the hub controls.',doc:'network-tab'},
+  'hm.shared':{t:'Shared / Linked',d:'Shared: devices or hub variables on this hub that other hubs on Hub Mesh can use. Linked: devices or variables from other hubs that appear on this one.',doc:'network-tab'},
+  // Alerts
+  'al.mem':{t:'Free OS memory',d:'Free memory on the hub\'s operating system, as the hub reports it.',th:()=>'Orange below '+TH.warnMemMb+' MB, red below '+TH.critMemMb+' MB (set in Settings → Alert Thresholds).',doc:'system-resource-alerts'},
+  'al.cpu':{t:'CPU load (5-minute average)',d:'The hub\'s CPU load averaged over 5 minutes, as the hub reports it.',th:()=>'Orange above '+TH.warnCpuLoad+', red above '+TH.critCpuLoad+' (set in Settings → Alert Thresholds).',doc:'system-resource-alerts'},
+  'al.temp':{t:'Hub temperature',d:'The hub\'s internal temperature, as the hub reports it.',th:()=>'Orange above '+ftemp(TH.warnTempC)+', red above '+ftemp(TH.critTempC)+' (set in Settings → Alert Thresholds).',doc:'system-resource-alerts'},
+  'al.db':{t:'Database size',d:'The size of the hub\'s database in MB, as the hub reports it. The hub raises its own alerts as it grows (Database Growing Large, Large, Very Large); Hub Inspector does not colour it.',doc:'health-tab'},
+  'al.loadTh':{t:'Load threshold',d:'The level, as a percentage, that the hub itself treats as excessive load for one app or device: when an app\'s or device\'s run time as a share of uptime (its % Total) passes it, the hub warns about that app or device.',doc:'health-tab'},
+  // Performance
+  'pf.runtime':{t:'Device / app runtime',d:'Total time all devices (or all apps) have spent running since the hub booted, as the hub reports it in its runtime statistics.',doc:'performance-tab'},
+  'pf.total':{t:'Total (ms)',d:'Time this device or app has spent running since the hub booted, in milliseconds, from the hub\'s runtime statistics (the same data as the hub\'s Logs page, App stats and Device stats).',doc:'current-runtime-statistics'},
+  'pf.pct':{t:'% Busy',d:'The hub\'s "% busy" figure for this device or app, from its runtime statistics.',doc:'current-runtime-statistics'},
+  'pf.pctTotal':{t:'% Total',d:'This device\'s or app\'s run time as a share of hub uptime since boot. The hub warns about excessive load when it passes the hub\'s load threshold (shown on the Health tab).',doc:'current-runtime-statistics'},
+  'pf.count':{t:'Count',d:'How many times the hub has run this device\'s driver or this app since boot.',doc:'current-runtime-statistics'},
+  'pf.avg':{t:'Avg (ms)',d:'Average time per run, in milliseconds: Total divided by Count.',doc:'current-runtime-statistics'},
+  'pf.state':{t:'State Size',d:'The size of this device\'s or app\'s stored state, as the hub reports it.',doc:'current-runtime-statistics'},
+  'pf.hubActions':{t:'Hub Actions',d:'How many hub actions (commands the code sends through the hub, such as LAN or radio commands) the hub counted for it since boot.',doc:'current-runtime-statistics'},
+  'pf.cloud':{t:'Cloud Calls',d:'Requests that reached this app through Hubitat\'s cloud relay, as the hub counts them.',doc:'current-runtime-statistics'},
+  // Devices
+  'dv.inactive':{t:'Inactive devices',d:'Devices with no activity for longer than the inactivity threshold (Settings, default 7 days). Devices with no activity for twice that long are listed as stale.',doc:'device-alerts'},
+  'dv.battery':{t:'Battery devices',d:'Devices that report a battery level, whose power source is battery, or that are Z-Wave nodes that sleep.',doc:'devices-tab'},
+  'al.ethWifi':{t:'Ethernet and WiFi both active',d:'Running both interfaces at once is known to cause connectivity problems. Turn WiFi off when the hub is on Ethernet.',doc:'network-alerts-hardcoded'},
+  'al.mdns':{t:'mDNS/Bonjour periodic restart',d:'A hub setting that restarts mDNS (Bonjour) on a schedule. It is known to cause spikes of multicast traffic on the LAN. Leave it off unless you have HomeKit or Hub Mesh connection problems.',doc:'network-alerts-hardcoded'},
+  'al.deletedApp':{t:'Cloud calls to a deleted app',d:'Something still calls the cloud URL of an app that no longer exists on the hub (calls this hour or last). Find what uses that URL and update or remove it.',doc:'network-alerts-hardcoded'},
+  'al.zwRadio':{t:'Z-Wave radio firmware update',d:'The hub reports a firmware update for its Z-Wave radio chip.',doc:'network-alerts-hardcoded'},
+  'al.appUpdate':{t:'App update required',d:'The dashboard is newer than the Hub Inspector app code on the hub. Re-import the app code (or update through HPM) so both are the same version.',doc:'alerts--warnings-reference'},
+  'al.hubMessage':{t:'Hub message',d:'A notification from the hub itself, as shown in the hub\'s own interface. Hub Inspector relays it as is.',doc:'hub-messages'}
+};
+// The hub's own alert flags: Hub Inspector relays them; the hub decides when to raise them.
+[['hubLoadElevated','The hub reports elevated load.'],['hubLoadSevere','The hub reports severe load.'],['hubHighLoad','The hub reports high load.'],
+ ['hubLowMemory','The hub reports low memory.'],['hubZwaveCrashed','The hub reports that its Z-Wave radio crashed.'],
+ ['zwaveMigrateFailed','The hub reports that a Z-Wave migration failed.'],['zwaveOffline','The hub reports its Z-Wave radio offline.'],
+ ['zigbeeOffline','The hub reports its Zigbee radio offline.'],['cloudDisconnected','The hub reports that it lost its connection to Hubitat\'s cloud.'],
+ ['hubLargeishDatabase','The hub reports that its database is growing large.'],['hubLargeDatabase','The hub reports that its database is large.'],
+ ['hubHugeDatabase','The hub reports that its database is very large.'],
+ ['spammyDevices','The hub detected devices sending an unusually high number of messages. Its message names them when it gives one; the Performance tab\'s chatty-device banner is a separate measure.'],
+ ['localBackupFailed','The hub reports that its last local backup failed.'],['cloudBackupFailed','The hub reports that its last cloud backup failed.'],
+ ['weakZigbee','The hub reports a weak Zigbee channel.'],['platformUpdateAvailable','The hub reports a platform (firmware) update.']
+].forEach(([k,d])=>{HELP['pa.'+k]={t:'Hub alert',d:d+' This flag comes from the hub itself; Hub Inspector shows it as is and does not set its threshold.',doc:'platform-alerts-binary-flags-from-the-hub--no-configurable-threshold'}});
+function helpBtn(k){const e=k&&HELP[k];return e?'<button type="button" class="hlp" data-help="'+h(k)+'" aria-label="'+h('What is '+e.t+'?')+'">ⓘ</button>':''}
+function helpHtml(k){
+  const e=HELP[k];if(!e)return'';
+  const th=typeof e.th==='function'?e.th():e.th;
+  let o='<div class="hlp-t">'+h(e.t)+'</div><div>'+h(e.d)+'</div>';
+  if(th)o+='<div class="hlp-th">'+h(th)+'</div>';
+  if(e.js||e.zip){
+    if(HELP_ZWJS===true&&e.js)o+='<div>'+h(e.js)+'</div>';
+    else if(HELP_ZWJS===false&&e.zip)o+='<div>'+h(e.zip)+'</div>';
+    else o+=(e.js?'<div><b>Z-Wave JS:</b> '+h(e.js)+'</div>':'')+(e.zip?'<div><b>Z/IP:</b> '+h(e.zip)+'</div>':'');
+  }
+  if(e.doc)o+='<a href="'+HELP_DOC+'#'+h(e.doc)+'" target="_blank" rel="noopener">More in the docs ↗</a>';
+  return o;
+}
+// One popover for the page. Opened by click, tap, Enter or Space on an ⓘ button; closed by Esc,
+// the close button, a click outside, or a second press of the same button. The click listener runs
+// in the capture phase so an ⓘ inside a sortable <th> or a <summary> does not also sort or toggle.
+const HLP={el:null,btn:null};
+function helpClose(){if(!HLP.el)return;HLP.el.remove();HLP.el=null;const b=HLP.btn;HLP.btn=null;if(b&&document.contains(b))b.focus({preventScroll:true})}
+function helpOpen(btn){
+  helpClose();
+  const p=document.createElement('div');p.className='hlp-pop';p.setAttribute('role','dialog');p.setAttribute('aria-label',(HELP[btn.dataset.help]||{}).t||'Help');p.tabIndex=-1;
+  p.innerHTML='<button type="button" class="hlp-x" aria-label="Close">×</button>'+helpHtml(btn.dataset.help);
+  document.body.appendChild(p);HLP.el=p;HLP.btn=btn;
+  const r=btn.getBoundingClientRect(),vw=document.documentElement.clientWidth,vh=window.innerHeight,pw=p.offsetWidth,ph=p.offsetHeight;
+  const x=Math.max(16,Math.min(r.left,vw-pw-16));
+  const y=Math.max(8,Math.min(r.bottom+6+ph<=vh-8?r.bottom+6:r.top-6-ph,vh-ph-8));
+  p.style.left=x+'px';p.style.top=y+'px';p.focus({preventScroll:true});
+}
+document.addEventListener('click',e=>{
+  const t=e.target;if(!t||!t.closest)return;
+  const b=t.closest('.hlp');
+  if(b){e.preventDefault();e.stopPropagation();if(HLP.btn===b)helpClose();else helpOpen(b);return}
+  if(!HLP.el)return;
+  if(t.closest('.hlp-x')){e.preventDefault();helpClose();return}
+  if(!HLP.el.contains(t))helpClose();
+},true);
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&HLP.el)helpClose()});
+window.addEventListener('resize',()=>{if(HLP.el)helpClose()});
+window.addEventListener('scroll',e=>{if(HLP.el&&!HLP.el.contains(e.target)){HLP.el.remove();HLP.el=null;HLP.btn=null}},true);
+function ni(l,v,c,wide,k){const s=c?' style="color:'+c+';font-weight:600"':'';return'<div class="ni"'+(wide?' style="grid-column:1/-1"':'')+'><div class="nl">'+h(l)+helpBtn(k)+'</div><div class="nv"'+s+'>'+h(String(v??'N/A'))+'</div></div>'}
 // Module-level thresholds with hardcoded defaults — updated when settings load
 let TH={warnMemMb:100,critMemMb:75,warnCpuLoad:4,critCpuLoad:8,warnTempC:65,critTempC:80,chattyDeviceThreshold:10};
 
@@ -1374,7 +1527,7 @@ function ftempBoth(c){if(c==null)return'N/A';const o=tScale()==='F'?'C':'F';cons
 function alertRow(a,text){
   const sev=(a.severity==='critical')?'crit':((a.severity==='info')?'info':'warn');const icon=(a.severity==='critical')?'\u26D4':((a.severity==='info')?'\u2139':'\u26A0');
   const body=a.href?'<a class="live-only" href="'+a.href+'" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline">'+h(text)+' ↗</a><span class="report-only">'+h(text)+'</span>':h(text);
-  return'<div class="alert a-'+sev+'">'+icon+' '+body+'</div>'}
+  return'<div class="alert a-'+sev+'">'+icon+' '+body+helpBtn(a.help||(a.key?'pa.'+a.key:''))+'</div>'}
 // Troubleshooting Center (firmware 2.5.3+): pure summary of the raw payload. null = absent, {available:false} = read failed.
 const REL_T={silentDevice:'Silent device',lowBattery:'Low battery',offline:'Offline',missingIp:'No IP address',networkOffline:'Network offline',matterSubscription:'Matter subscription',hubLoad:'Hub load',hubMemory:'Hub memory',hubScheduler:'Hub scheduler',hubCloud:'Hub cloud connection',hubThread:'Thread network',zwaveRadioUnhealthy:'Z-Wave radio',zigbeeRadioUnhealthy:'Zigbee radio',zwaveFailed:'Failed Z-Wave node',zwaveWeakSignal:'Weak Z-Wave signal',zwaveRouteChanges:'Z-Wave route changes',zigbeeInactive:'Inactive Zigbee device',zigbeeWeakLink:'Weak Zigbee link',missingSubscriptions:'Rule with no trigger',overdueSchedule:'Overdue rule schedule'};
 function relLabel(t){return REL_T[t]||t}
@@ -1443,18 +1596,18 @@ function composeAlerts(d){
   const t=d.temperature;
   if(r){
     if(r.freeOSMemory!=null){
-      if(r.freeOSMemory<TH.critMemMb*1024) out.push({severity:'critical',name:`OS memory critically low (${fmem(r.freeOSMemory)})`});
-      else if(r.freeOSMemory<TH.warnMemMb*1024) out.push({severity:'warning',name:`Low OS memory (${fmem(r.freeOSMemory)})`});
+      if(r.freeOSMemory<TH.critMemMb*1024) out.push({help:'al.mem',severity:'critical',name:`OS memory critically low (${fmem(r.freeOSMemory)})`});
+      else if(r.freeOSMemory<TH.warnMemMb*1024) out.push({help:'al.mem',severity:'warning',name:`Low OS memory (${fmem(r.freeOSMemory)})`});
     }
     const cpu=r.cpuAvg5min;
     if(cpu!=null){
-      if(cpu>TH.critCpuLoad) out.push({severity:'critical',name:`Very high CPU load (${Number(cpu).toFixed(2)})`});
-      else if(cpu>TH.warnCpuLoad) out.push({severity:'warning',name:`Elevated CPU load (${Number(cpu).toFixed(2)})`});
+      if(cpu>TH.critCpuLoad) out.push({help:'al.cpu',severity:'critical',name:`Very high CPU load (${Number(cpu).toFixed(2)})`});
+      else if(cpu>TH.warnCpuLoad) out.push({help:'al.cpu',severity:'warning',name:`Elevated CPU load (${Number(cpu).toFixed(2)})`});
     }
   }
   if(t!=null){
-    if(t>TH.critTempC) out.push({severity:'critical',name:`Hub temperature very high (${ftemp(t)})`});
-    else if(t>TH.warnTempC) out.push({severity:'warning',name:`Hub temperature elevated (${ftemp(t)})`});
+    if(t>TH.critTempC) out.push({help:'al.temp',severity:'critical',name:`Hub temperature very high (${ftemp(t)})`});
+    else if(t>TH.warnTempC) out.push({help:'al.temp',severity:'warning',name:`Hub temperature elevated (${ftemp(t)})`});
   }
   // Hub firmware update — surfaced once via the version-bearing entry at the end of this
   // function. The platform flags the same update two other ways (the platformUpdateAvailable
@@ -1476,28 +1629,28 @@ function composeAlerts(d){
     if(!stripped)return;
     // Same firmware update as the entry below — skip the platform's redundant notification.
     if(fwUpdate&&((fwVer&&stripped.includes(fwVer))||/platform update/i.test(stripped)))return;
-    out.push({key:'hubMessage',name:stripped,severity:'info'});
+    out.push({key:'hubMessage',help:'al.hubMessage',name:stripped,severity:'info'});
   });
-  if(sig.ethernetAndWifi) out.push({severity:'warning',name:'Ethernet and WiFi both active — disable WiFi when using Ethernet'});
-  if(sig.bonjourRestartsScheduled) out.push({severity:'warning',name:'mDNS/Bonjour periodic restart is enabled — known to cause LAN multicast traffic spikes; disable unless you have HomeKit or Hub Mesh connectivity issues'});
+  if(sig.ethernetAndWifi) out.push({help:'al.ethWifi',severity:'warning',name:'Ethernet and WiFi both active — disable WiFi when using Ethernet'});
+  if(sig.bonjourRestartsScheduled) out.push({help:'al.mdns',severity:'warning',name:'mDNS/Bonjour periodic restart is enabled — known to cause LAN multicast traffic spikes; disable unless you have HomeKit or Hub Mesh connectivity issues'});
   // Z-Wave radio health (derived hub-side from one zwaveDetails fetch).
   const ghost=sig.zwaveGhostCount||0,failed=sig.zwaveFailedCount||0,problem=sig.zwaveProblemCount||0;
-  if(ghost>0) out.push({severity:'critical',name:`${ghost} Z-Wave ghost node${ghost>1?'s':''} — no Hubitat device, remove from mesh`});
-  if(failed>0) out.push({severity:'warning',name:`${failed} Z-Wave failed node${failed>1?'s':''} — try a battery swap or move closer to the hub`});
-  if(problem>0) out.push({severity:'warning',name:`${problem} Z-Wave problem node${problem>1?'s':''} — degraded route or packet errors`});
-  if(sig.zwaveRadioUpdate) out.push({severity:'warning',name:'Z-Wave radio firmware update available'});
+  if(ghost>0) out.push({help:'zw.ghost',severity:'critical',name:`${ghost} Z-Wave ghost node${ghost>1?'s':''} — no Hubitat device, remove from mesh`});
+  if(failed>0) out.push({help:'zw.failed',severity:'warning',name:`${failed} Z-Wave failed node${failed>1?'s':''} — try a battery swap or move closer to the hub`});
+  if(problem>0) out.push({help:'zw.problem',severity:'warning',name:`${problem} Z-Wave problem node${problem>1?'s':''} — degraded route or packet errors`});
+  if(sig.zwaveRadioUpdate) out.push({help:'al.zwRadio',severity:'warning',name:'Z-Wave radio firmware update available'});
   // Cloud calls to an app that no longer exists: some client still uses its cloud URL.
   const prevHr=Math.floor(Date.now()/3600000)*3600000-3600000;
   (sig.deletedAppCloudCalls||[]).forEach(a=>{
     const n=(a.hours||[]).filter(b=>b.hourStart>=prevHr).reduce((t,b)=>t+b.count,0);
-    if(n>0)out.push({key:'deletedAppCloudCalls',severity:'warning',name:`Deleted app ${a.id} received ${n} cloud call${n>1?'s':''} this hour and last — something still uses its cloud URL`});
+    if(n>0)out.push({key:'deletedAppCloudCalls',help:'al.deletedApp',severity:'warning',name:`Deleted app ${a.id} received ${n} cloud call${n>1?'s':''} this hour and last — something still uses its cloud URL`});
   });
   // Hub firmware update (present on both dashboard and health payloads). The Dashboard's
   // dedicated "Hub Firmware" card carries the release-notes link; this is the rollup entry.
   if(fwUpdate) out.push(Object.assign({key:'hubFirmware',href:'/hub/platformUpdate'},fu.beta?{severity:'info',name:`Hub firmware beta available: v${fwVer||'?'}`}:{severity:'warning',name:`Hub firmware update available: v${fwVer||'?'}`}));
   // App code behind the bundled UI — the Groovy app needs re-importing.
   if(d.appVersion&&typeof isNewer==='function'&&isNewer(CODE_VERSION,d.appVersion))
-    out.push({severity:'critical',name:`App update required — UI is v${CODE_VERSION} but app code is v${d.appVersion}`});
+    out.push({help:'al.appUpdate',severity:'critical',name:`App update required — UI is v${CODE_VERSION} but app code is v${d.appVersion}`});
   // Criticals first, then warnings, then info — both list surfaces render in this order.
   const rank={critical:0,warning:1,info:2};
   out.sort((a,b)=>(rank[a.severity]??1)-(rank[b.severity]??1));
@@ -2179,7 +2332,7 @@ function tbl(cid,cols,rows,opts={}){
     if(ct>0&&cl){const open=rows.length<=ct?' open':'';o+='<details'+open+'><summary style="cursor:pointer;font-weight:600;margin:4px 0">'+cl+' ('+rows.length+')</summary>'}
     if(opts.filter)o+='<div class="filter"><input type="text" placeholder="Filter..." id="flt_'+cid+'"></div>';
     o+='<div class="tbl-wrap"><table id="t_'+cid+'"><thead><tr>';
-    cols.forEach((c,i)=>{const ar=i===sc?(sd==='asc'?' \u25B2':' \u25BC'):' \u21C5';o+='<th data-c="'+i+'">'+h(c.l)+'<span class="arr">'+ar+'</span></th>'});
+    cols.forEach((c,i)=>{const ar=i===sc?(sd==='asc'?' \u25B2':' \u25BC'):' \u21C5';o+='<th data-c="'+i+'">'+h(c.l)+helpBtn(c.k)+'<span class="arr">'+ar+'</span></th>'});
     o+='</tr></thead><tbody>'+bldRows(rs)+'</tbody></table></div>';
     if(ct>0&&cl)o+='</details>';return o
   }
@@ -2367,13 +2520,13 @@ function renderChart(pts,cid,range){
 
 // ===== LIVE RESOURCE CARD RENDERERS =====
 // Free OS Memory metric card — identical across the dash/health/perf resource renderers.
-function resMemCard(r){return mc('Free OS Memory',fmem(r.freeOSMemory),sev(r.freeOSMemory,TH.warnMemMb*1024,TH.critMemMb*1024,true))}
+function resMemCard(r){return mc('Free OS Memory',fmem(r.freeOSMemory),sev(r.freeOSMemory,TH.warnMemMb*1024,TH.critMemMb*1024,true),'al.mem')}
 function renderDashRes(r,d){
   let o='';
   o+=resMemCard(r);
-  o+=mc('CPU Load (5m)',r.cpuAvg5min?.toFixed(2)??'N/A',sev(r.cpuAvg5min,TH.warnCpuLoad,TH.critCpuLoad,false));
-  if(d.temperature!=null)o+=mc('Temperature',ftemp(d.temperature),sev(d.temperature,TH.warnTempC,TH.critTempC,false));
-  if(d.databaseSize!=null)o+=mc('Database',d.databaseSize+' MB');
+  o+=mc('CPU Load (5m)',r.cpuAvg5min?.toFixed(2)??'N/A',sev(r.cpuAvg5min,TH.warnCpuLoad,TH.critCpuLoad,false),'al.cpu');
+  if(d.temperature!=null)o+=mc('Temperature',ftemp(d.temperature),sev(d.temperature,TH.warnTempC,TH.critTempC,false),'al.temp');
+  if(d.databaseSize!=null)o+=mc('Database',d.databaseSize+' MB','','al.db');
   return o}
 // Since-restart ranges for the Health resource tiles; set when health/history loads.
 let resRanges=null;
@@ -2395,30 +2548,30 @@ function resBar(cur,band,w,c,min,max,low){
   b+=`<div title="Critical" style="position:absolute;left:${pc(c)}%;top:-3px;bottom:-3px;width:2px;background:var(--crit)"></div>`;
   if(cur!=null)b+=`<div style="position:absolute;left:calc(${pc(cur)}% - 6px);top:-3px;width:12px;height:12px;border-radius:50%;background:${sev(cur,w,c,low)};border:2px solid var(--card);box-shadow:0 0 0 1px var(--chart-axis);box-sizing:border-box"></div>`;
   return b+'</div>'}
-function resTile(label,val,col,bar,lines){
-  return `<div class="m" style="padding:12px 14px"><div class="m-l">${label}</div><div class="m-v" style="color:${col}">${val??'N/A'}</div>${bar}`+
+function resTile(label,val,col,bar,lines,k){
+  return `<div class="m" style="padding:12px 14px"><div class="m-l">${label}${helpBtn(k)}</div><div class="m-v" style="color:${col}">${val??'N/A'}</div>${bar}`+
     lines.map(t=>`<div style="font-size:11px;color:var(--muted);margin-top:3px">${t}</div>`).join('')+'</div>'}
 function renderHealthRes(r,d){
   const R=resRanges||{},wM=TH.warnMemMb*1024,cM=TH.critMemMb*1024;
   let o='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px">';
   const m=R.mem,mMax=Math.max(m?m.hi:0,r.freeOSMemory||0,wM)*1.1;
   o+=resTile('Free OS Memory',fmem(r.freeOSMemory),sev(r.freeOSMemory,wM,cM,true),resBar(r.freeOSMemory,m,wM,cM,0,mMax,true),
-    (m?[`Since restart ${fmem(m.lo)} – ${fmem(m.hi)}, median ${fmem(m.med)}`]:[]).concat(`Warning ${TH.warnMemMb} MB · critical ${TH.critMemMb} MB`));
+    (m?[`Since restart ${fmem(m.lo)} – ${fmem(m.hi)}, median ${fmem(m.med)}`]:[]).concat(`Warning ${TH.warnMemMb} MB · critical ${TH.critMemMb} MB`),'al.mem');
   const c=R.cpu,cMax=Math.max(TH.critCpuLoad,c?c.hi:0,r.cpuAvg5min||0)*1.1;
   o+=resTile('CPU Load (5m)',r.cpuAvg5min?.toFixed(2),sev(r.cpuAvg5min,TH.warnCpuLoad,TH.critCpuLoad,false),resBar(r.cpuAvg5min,c,TH.warnCpuLoad,TH.critCpuLoad,0,cMax,false),
-    (c?[`Since restart ${c.lo.toFixed(2)} – ${c.hi.toFixed(2)}, median ${c.med.toFixed(2)}`]:[]).concat(`Warning ${TH.warnCpuLoad} · critical ${TH.critCpuLoad}`));
+    (c?[`Since restart ${c.lo.toFixed(2)} – ${c.hi.toFixed(2)}, median ${c.med.toFixed(2)}`]:[]).concat(`Warning ${TH.warnCpuLoad} · critical ${TH.critCpuLoad}`),'al.cpu');
   if(d.temperature!=null){
     const t=R.temp,tl=[];
     if(t)tl.push(`Since restart ${ftemp(t.lo)} – ${ftemp(t.hi)}`);
     if(R.temp30)tl.push(`30 days ${ftemp(R.temp30.lo)} – ${ftemp(R.temp30.hi)}`);
     tl.push(`Warning ${ftemp(TH.warnTempC)} · critical ${ftemp(TH.critTempC)}`);
     o+=resTile('Temperature',ftempBoth(d.temperature),sev(d.temperature,TH.warnTempC,TH.critTempC,false),
-      resBar(d.temperature,t,TH.warnTempC,TH.critTempC,20,Math.max(TH.critTempC,t?t.hi:0,d.temperature)+10,false),tl);
+      resBar(d.temperature,t,TH.warnTempC,TH.critTempC,20,Math.max(TH.critTempC,t?t.hi:0,d.temperature)+10,false),tl,'al.temp');
   }
   o+='</div><div style="display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12px;color:var(--muted);margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">';
   const sm=(k,v)=>v==null?'':`<span>${k} <b style="color:var(--text)">${v}</b></span>`;
   const ci=d.cpuInfo||{};
-  o+=sm('Processors',ci.processors)+sm('Load avg (1m)',ci.loadAverage?.toFixed(2))+sm('Load threshold',d.loadThreshold!=null?d.loadThreshold+'%':null)+
+  o+=sm('Processors',ci.processors)+sm('Load avg (1m)',ci.loadAverage?.toFixed(2))+sm('Load threshold'+helpBtn('al.loadTh'),d.loadThreshold!=null?d.loadThreshold+'%':null)+
      sm('Java total / free / direct',`${fmem(r.totalJavaMemory)} / ${fmem(r.freeJavaMemory)} / ${fmem(r.directJavaMemory)}`)+
      sm('Database',d.databaseSize!=null?d.databaseSize+' MB'+(R.db30?` <span style="font-weight:normal;color:var(--muted)">(30 days ${R.db30.lo}–${R.db30.hi} MB)</span>`:''):null);
   return o+'</div>'}
@@ -2444,7 +2597,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   o+='<div class="metrics">';
   o+=mc('Total Devices',dlistlink(d.devices.total,true));
   o+=mc('Active',dlistlink(d.devices.active,is.active),'var(--ok)');
-  o+=mc('Inactive',dlistlink(d.devices.inactive,is.inactive),(d.devices.inactive>0?'var(--warn)':''));
+  o+=mc('Inactive',dlistlink(d.devices.inactive,is.inactive),(d.devices.inactive>0?'var(--warn)':''),'dv.inactive');
   o+=mc('Disabled',dlistlink(d.devices.disabled,is.disabled),(d.devices.disabled>0?'var(--crit)':''));
   o+='</div>';
   o+='<div class="metrics" style="margin-top:8px">';
@@ -2493,7 +2646,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   // Reports
   const rpts=await api('reports');
   o+='<div class="card"><div class="card-h">Reports</div><div class="card-b">';
-  o+='<div class="actions" style="margin-bottom:10px"><button class="btn btn-p" id="btnReport">Generate Full Report</button><button class="btn btn-p" id="btnForum">Copy for Forum</button></div>';
+  o+='<div class="actions" style="margin-bottom:10px"><button class="btn btn-p" id="btnReport">Generate Full Report</button><button class="btn btn-p" id="btnForum">Copy for AI or Forum</button></div>';
   if(rpts.lastReport)o+='<p><a href="/local/'+h(rpts.lastReport)+'" target="_blank" style="color:var(--link)">Open latest report: '+h(rpts.lastReport)+'</a></p>';
   if(rpts.reports&&rpts.reports.length>0){
     o+='<details style="margin-top:8px"><summary style="cursor:pointer;color:var(--muted)">All reports ('+rpts.reports.length+')</summary><div style="margin-top:6px">';
@@ -2643,17 +2796,17 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
         batch.forEach((ep,j)=>{results[ep]=got[j]});
       }
       const markdown=buildForumMarkdown(assembleForumData(results));
-      btnForum.disabled=false;btnForum.textContent='Copy for Forum';
+      btnForum.disabled=false;btnForum.textContent='Copy for AI or Forum';
       const overlay=document.createElement('div');overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:flex;align-items:center;justify-content:center';
       const box=document.createElement('div');box.style.cssText='background:var(--card);color:var(--text);border-radius:8px;padding:16px;width:90%;max-width:700px;max-height:80vh;display:flex;flex-direction:column';
-      box.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><b>Forum Export</b><span>Select All + Copy, then close</span></div>';
+      box.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><b>AI and Forum Export</b><span>Select All + Copy, then close</span></div>';
       const ta=document.createElement('textarea');ta.value=markdown;ta.readOnly=true;ta.style.cssText='width:100%;flex:1;min-height:300px;font-family:monospace;font-size:12px;padding:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);border-radius:4px;resize:vertical';
       const closeBtn=document.createElement('button');closeBtn.textContent='Close';closeBtn.className='btn btn-p';closeBtn.style.marginTop='10px';closeBtn.style.alignSelf='flex-end';
       closeBtn.onclick=()=>document.body.removeChild(overlay);
       overlay.onclick=e=>{if(e.target===overlay)document.body.removeChild(overlay)};
       box.appendChild(ta);box.appendChild(closeBtn);overlay.appendChild(box);document.body.appendChild(overlay);
       ta.focus();ta.select()}
-    catch(e){btnForum.disabled=false;btnForum.textContent='Copy for Forum';alert('Export failed: '+e.message)}};
+    catch(e){btnForum.disabled=false;btnForum.textContent='Copy for AI or Forum';alert('Export failed: '+e.message)}};
 
 }catch(e){err(P,e,rDashboard)}}
 
@@ -2715,10 +2868,10 @@ async function rDevices(){const P='p-devices';loading(P);try{
   let o='';
   o+='<div class="card"><div class="card-h">Device Summary</div><div class="card-b"><div class="metrics">';
   o+=mc('Total',dlistlink(s.totalDevices,true));o+=mc('Active ('+d.inactivityDays+' days)',dlistlink(s.activeDevices,is.active));
-  o+=mc('Inactive',dlistlink(s.inactiveDevices,is.inactive),(s.inactiveDevices>0?'var(--warn)':''));
+  o+=mc('Inactive',dlistlink(s.inactiveDevices,is.inactive),(s.inactiveDevices>0?'var(--warn)':''),'dv.inactive');
   o+=mc('Disabled',dlistlink(s.disabledDevices,is.disabled),(s.disabledDevices>0?'var(--crit)':''));
   o+=mc('Parent',dlistlink(s.parentDevices,s.parentIds));o+=mc('Child',dlistlink(s.childDevices,s.childIds));
-  o+=mc('Hub Mesh',dlistlink(s.linkedDevices,s.linkedIds));o+=mc('Battery',dlistlink(s.batteryDevices,s.batteryIds));
+  o+=mc('Hub Mesh',dlistlink(s.linkedDevices,s.linkedIds));o+=mc('Battery',dlistlink(s.batteryDevices,s.batteryIds),'','dv.battery');
   o+='</div></div></div>';
   // Device Audit
   o+='<div class="card"><div class="card-h">Device Audit</div><div class="card-b">';
@@ -2970,43 +3123,43 @@ async function rNetwork(){const P='p-network';loading(P);try{
     if(n.dnsServers&&n.dnsServers.length)o+=ni('DNS',n.dnsServers.join(', '));
     o+=ni('Ethernet',n.hasEthernet?'Connected':'Not Connected');o+=ni('WiFi',n.hasWiFi?'Available':'No');
     if(n.hasWiFi&&n.wifiNetwork)o+=ni('WiFi Network',n.wifiNetwork);
-    o+=ni('NTP Server',d.ntpServer||'(not configured)');
+    o+=ni('NTP Server',d.ntpServer||'(not configured)',null,false,'net.ntp');
     if(d.security){const sec=d.security,la=sec.limitedAccess;
       if(la==null){
-        o+=ni('Limited Access','Unknown (fetch failed)','var(--muted)');
+        o+=ni('Limited Access','Unknown (fetch failed)','var(--muted)',false,'net.limited');
       } else if(la.enabled){
-        o+=ni('Limited Access','Enabled ('+la.addresses.length+' entr'+(la.addresses.length===1?'y':'ies')+')','var(--ok)');
+        o+=ni('Limited Access','Enabled ('+la.addresses.length+' entr'+(la.addresses.length===1?'y':'ies')+')','var(--ok)',false,'net.limited');
         if(la.addresses.length)o+=ni('Allowed IPs / Subnets',la.addresses.join(', '),null,la.addresses.length>2);
       } else {
-        o+=ni('Limited Access','Off \u2014 any LAN IP can reach the hub UI','var(--warn)');
+        o+=ni('Limited Access','Off \u2014 any LAN IP can reach the hub UI','var(--warn)',false,'net.limited');
       }
       // allowSubnets adds non-private subnets; private-range clients are always accepted
-      if(sec.allowedSubnets==null)o+=ni('Extra Allowed Subnets','Unknown (fetch failed)','var(--muted)');
-      else if(sec.allowedSubnets.length)o+=ni('Extra Allowed Subnets',sec.allowedSubnets.join(', '),null,sec.allowedSubnets.length>2);
-      else o+=ni('Extra Allowed Subnets','None (private ranges always allowed)');
+      if(sec.allowedSubnets==null)o+=ni('Extra Allowed Subnets','Unknown (fetch failed)','var(--muted)',false,'net.subnets');
+      else if(sec.allowedSubnets.length)o+=ni('Extra Allowed Subnets',sec.allowedSubnets.join(', '),null,sec.allowedSubnets.length>2,'net.subnets');
+      else o+=ni('Extra Allowed Subnets','None (private ranges always allowed)',null,false,'net.subnets');
       if(sec.dnsFallback!=null)o+=ni('DNS Fallback',sec.dnsFallback?'Enabled':'Disabled');
-      if(sec.cloudController)o+=ni('Hubitat Cloud',sec.cloudController==='enabled'?'Enabled':'Disabled (local-only)');
+      if(sec.cloudController)o+=ni('Hubitat Cloud',sec.cloudController==='enabled'?'Enabled':'Disabled (local-only)',null,false,'net.cloud');
     }
     o+='</div>';
-    if(n.hasEthernet&&n.hasWiFi)o+='<div class="alert a-warn" style="margin-top:8px">\u26A0 Both Ethernet and WiFi are active. This is known to cause connectivity issues. Disable WiFi when using Ethernet.</div>';
+    if(n.hasEthernet&&n.hasWiFi)o+='<div class="alert a-warn" style="margin-top:8px">\u26A0 Both Ethernet and WiFi are active. This is known to cause connectivity issues. Disable WiFi when using Ethernet.'+helpBtn('al.ethWifi')+'</div>';
     o+='</div></div>'}
   // Zigbee
   if(d.zigbee){const z=d.zigbee;
     o+='<div class="card" id="nc-zigbee"><div class="card-h">Zigbee Network'+hp('/hub/zigbeeInfo')+'</div><div class="card-b"><div class="ng">';
-    o+=ni('Enabled',z.enabled?'Yes':'No');o+=ni('Healthy',z.healthy?'Yes':'No',z.healthy?'var(--ok)':'var(--crit)');
-    o+=ni('Channel',z.channel,([15,20,25].includes(z.channel)?'var(--ok)':'var(--warn)'));
-    o+=ni('PAN ID',z.panId);o+=ni('Extended PAN ID',z.extendedPanId);
-    o+=ni('Devices',z.deviceCount);o+=ni('Join Mode',z.joinMode?'Active':'Inactive');
-    if(z.powerLevel!=null)o+=ni('Power Level',z.powerLevel);
+    o+=ni('Enabled',z.enabled?'Yes':'No');o+=ni('Healthy',z.healthy?'Yes':'No',z.healthy?'var(--ok)':'var(--crit)',false,'zb.healthy');
+    o+=ni('Channel',z.channel,([15,20,25].includes(z.channel)?'var(--ok)':'var(--warn)'),false,'zb.channel');
+    o+=ni('PAN ID',z.panId,null,false,'zb.panId');o+=ni('Extended PAN ID',z.extendedPanId,null,false,'zb.panId');
+    o+=ni('Devices',z.deviceCount);o+=ni('Join Mode',z.joinMode?'Active':'Inactive',null,false,'zb.join');
+    if(z.powerLevel!=null)o+=ni('Power Level',z.powerLevel,null,false,'zb.power');
     o+='</div>';
     // Zigbee mesh
     if(z.mesh){const m=z.mesh;
       const weakNbrs=zbWeakNeighbors(m.neighborDetails),staleNbrs=zbStaleNeighbors(m.neighborDetails);
       o+='<div style="margin-top:10px"><div class="ng">';
-      o+=ni('Neighbors',m.neighbors);o+=ni('Routes',m.routes);o+=ni('End Devices',m.childDevices);
-      if(m.avgLqi!=null)o+=ni('Avg LQI',m.avgLqi+' (min: '+m.minLqi+', max: '+m.maxLqi+')',m.avgLqi<150?'var(--crit)':m.avgLqi<200?'var(--warn)':'var(--ok)');
-      if(weakNbrs.length)o+=ni('Weak Neighbors',weakNbrs.length,'var(--crit)');
-      if(staleNbrs.length)o+=ni('Stale Neighbors',staleNbrs.length,'var(--warn)');
+      o+=ni('Neighbors',m.neighbors,null,false,'zb.neighbors');o+=ni('Routes',m.routes,null,false,'zb.routes');o+=ni('End Devices',m.childDevices,null,false,'zb.children');
+      if(m.avgLqi!=null)o+=ni('Avg LQI',m.avgLqi+' (min: '+m.minLqi+', max: '+m.maxLqi+')',m.avgLqi<150?'var(--crit)':m.avgLqi<200?'var(--warn)':'var(--ok)',false,'zb.avgLqi');
+      if(weakNbrs.length)o+=ni('Weak Neighbors',weakNbrs.length,'var(--crit)',false,'zb.weak');
+      if(staleNbrs.length)o+=ni('Stale Neighbors',staleNbrs.length,'var(--warn)',false,'zb.stale');
       o+='</div>';
       if(weakNbrs.length){o+='<details style="margin-top:6px"><summary>Weak Neighbor Details</summary>';
         weakNbrs.forEach(n=>{o+='<div style="margin:3px 0;color:var(--crit)">'+h(n.shortId)+' &mdash; LQI: '+n.lqi+'</div>'});o+='</details>'}
@@ -3023,13 +3176,14 @@ async function rNetwork(){const P='p-network';loading(P);try{
   // Z-Wave
   if(d.zwave){const z=d.zwave;
     o+='<div class="card" id="nc-zwave"><div class="card-h">Z-Wave Network'+hp('/hub/zwaveInfo')+'</div><div class="card-b"><div class="ng">';
-    o+=ni('Enabled',z.enabled?'Yes':'No');o+=ni('Healthy',z.healthy?'Yes':'No',z.healthy?'var(--ok)':'var(--crit)');
-    o+=ni('Radio Firmware',z.version||'N/A');
-    o+=ni('Region',z.region||'N/A');o+=ni('Nodes',z.nodeCount);
-    if(z.zwaveJS!=null){const stack=z.zwaveJS?'ZWaveJS':'Z/IP Gateway';const avail=(!z.zwaveJS&&z.zwaveJSAvailable)?' <span style="color:var(--muted);font-size:12px">(ZWaveJS available'+(z.zwaveJSDownloaded===false?', download needed':'')+')</span>':'';o+='<div class="ni"><div class="nl">Stack</div><div class="nv">'+h(stack)+avail+'</div></div>';}
+    HELP_ZWJS=z.zwaveJS!=null?!!z.zwaveJS:null;
+    o+=ni('Enabled',z.enabled?'Yes':'No');o+=ni('Healthy',z.healthy?'Yes':'No',z.healthy?'var(--ok)':'var(--crit)',false,'zw.healthy');
+    o+=ni('Radio Firmware',z.version||'N/A',null,false,'zw.firmware');
+    o+=ni('Region',z.region||'N/A',null,false,'zw.region');o+=ni('Nodes',z.nodeCount);
+    if(z.zwaveJS!=null){const stack=z.zwaveJS?'ZWaveJS':'Z/IP Gateway';const avail=(!z.zwaveJS&&z.zwaveJSAvailable)?' <span style="color:var(--muted);font-size:12px">(ZWaveJS available'+(z.zwaveJSDownloaded===false?', download needed':'')+')</span>':'';o+='<div class="ni"><div class="nl">Stack'+helpBtn('zw.stack')+'</div><div class="nv">'+h(stack)+avail+'</div></div>';}
     if(z.zwaveJSVersion)o+=ni('Z-Wave JS Version',z.zwaveJSVersion);
     if(d.zipgatewayVersion)o+=ni('Z/IP Gateway Version',d.zipgatewayVersion);
-    if(z.isRadioUpdateNeeded)o+='</div><div class="alert a-warn" style="margin-top:8px">\u26A0 Z-Wave radio firmware update available</div><div class="ng">';
+    if(z.isRadioUpdateNeeded)o+='</div><div class="alert a-warn" style="margin-top:8px">\u26A0 Z-Wave radio firmware update available'+helpBtn('al.zwRadio')+'</div><div class="ng">';
     o+='</div>';
     // Ghost / Failed nodes \u2014 split by kind so users don't force-remove recoverable nodes.
     // kind=ghost  -> no Hubitat device, safe to force-remove from radio
@@ -3039,17 +3193,17 @@ async function rNetwork(){const P='p-network';loading(P);try{
       const renderRow=(g,color)=>{const sig=g.signals&&g.signals.length?'<span style="color:var(--muted);font-size:12px"> ['+g.signals.map(s=>h(s)).join(', ')+']</span>':'';return '<div style="margin:4px 0;color:'+(color||'var(--crit)')+'">'+(g.deviceId?dlink(g.deviceId,'Node '+g.id):h('Node '+g.id))+' &mdash; '+h(Obf.nm(g.name||'Unknown'))+sig+'</div>'};
       const {ghosts,failed,longRange,unlisted}=splitGhostNodes(z.ghostNodes);
       if(ghosts.length){
-        o+='<div style="margin-top:10px"><div class="alert a-crit">\u26D4 Ghost Nodes: '+ghosts.length+' \u2014 no Hubitat device, safe to force-remove from radio</div>';
+        o+='<div style="margin-top:10px"><div class="alert a-crit">\u26D4 Ghost Nodes: '+ghosts.length+' \u2014 no Hubitat device, safe to force-remove from radio'+helpBtn('zw.ghost')+'</div>';
         ghosts.forEach(g=>{o+=renderRow(g)});
         o+='</div>';
       }
       if(failed.length){
-        o+='<div style="margin-top:10px"><div class="alert a-warn">\u26A0 Failed Nodes: '+failed.length+' \u2014 radio reports failure; try a battery swap or moving the device closer to the hub before excluding</div>';
+        o+='<div style="margin-top:10px"><div class="alert a-warn">\u26A0 Failed Nodes: '+failed.length+' \u2014 radio reports failure; try a battery swap or moving the device closer to the hub before excluding'+helpBtn('zw.failed')+'</div>';
         failed.forEach(g=>{o+=renderRow(g)});
         o+='</div>';
       }
       if(unlisted.length){
-        o+='<div style="margin-top:10px"><div class="alert a-warn">\u26A0 Not in Radio List: '+unlisted.length+' \u2014 Hubitat devices the Z-Wave radio doesn\u2019t report; check that they still respond</div>';
+        o+='<div style="margin-top:10px"><div class="alert a-warn">\u26A0 Not in Radio List: '+unlisted.length+' \u2014 Hubitat devices the Z-Wave radio doesn\u2019t report; check that they still respond'+helpBtn('zw.unlisted')+'</div>';
         unlisted.forEach(g=>{o+=renderRow(g,'var(--warn)')});
         o+='</div>';
       }
@@ -3063,16 +3217,16 @@ async function rNetwork(){const P='p-network';loading(P);try{
     if(z.mesh&&z.mesh.nodes&&z.mesh.nodes.length){const m=z.mesh;
       o+='<div style="margin-top:10px"><div class="ng">';
       o+=ni('Nodes',m.nodeCount);
-      o+=ni('Avg PER',m.avgPer!=null?m.avgPer.toFixed(1)+'%':'N/A',m.avgPer>1?'var(--crit)':m.avgPer>0?'var(--warn)':'var(--ok)');
-      o+=ni('Nodes w/ Errors',m.nodesWithErrors,m.nodesWithErrors>0?'var(--crit)':'var(--ok)');
-      o+=ni('Route Changes',m.totalRouteChanges);
-      if(m.avgRssi!=null)o+=ni('Avg RSSI',m.avgRssi+' dBm',m.avgRssi<-80?'var(--crit)':m.avgRssi<-60?'var(--warn)':'var(--ok)');
+      o+=ni('Avg PER',m.avgPer!=null?m.avgPer.toFixed(1)+'%':'N/A',m.avgPer>1?'var(--crit)':m.avgPer>0?'var(--warn)':'var(--ok)',false,'zw.avgPer');
+      o+=ni('Nodes w/ Errors',m.nodesWithErrors,m.nodesWithErrors>0?'var(--crit)':'var(--ok)',false,'zw.nodesErr');
+      o+=ni('Route Changes',m.totalRouteChanges,null,false,'zw.routeChanges');
+      if(m.avgRssi!=null)o+=ni('Avg RSSI',m.avgRssi<0?m.avgRssi+' dBm':m.avgRssi+' dB',m.avgRssi>=0?'':m.avgRssi<-80?'var(--crit)':m.avgRssi<-60?'var(--warn)':'var(--ok)',false,'zw.avgRssi');
       o+='</div><div id="zwMeshTbl" style="margin-top:8px"></div></div>'}
     // Problem nodes
     const probNodes=zwProblemNodes(z.mesh&&z.mesh.nodes);
     if(probNodes.length){
-      o+='<div style="margin-top:10px"><div class="alert a-warn">\u26A0 Problem Nodes: '+probNodes.length+'</div>';
-      probNodes.forEach(n=>{o+='<div style="margin:4px 0;color:var(--crit)">'+(n.deviceId?dlink(n.deviceId,n.name):h(Obf.nm(n.name)))+' &mdash; '+h(Obf.scrub(n.issues))+'</div>'});o+='</div>'}
+      o+='<div style="margin-top:10px"><div class="alert a-warn">\u26A0 Problem Nodes: '+probNodes.length+helpBtn('zw.problem')+'</div>';
+      probNodes.forEach(n=>{o+='<div style="margin:4px 0;color:var(--crit)">'+(n.deviceId?dlink(n.deviceId,n.name):h(Obf.nm(n.name)))+' &mdash; '+h(Obf.scrub(n.issues))+(/PER:/.test(n.issues)?helpBtn('zw.per'):helpBtn('zw.state'))+'</div>'});o+='</div>'}
     o+='</div></div>'}
   // Z-Wave JS Controller (v5.9.0) \u2014 only when Z-Wave JS stack is active
   if(d.zwaveJs&&d.zwaveJs.unavailable){
@@ -3081,12 +3235,12 @@ async function rNetwork(){const P='p-network';loading(P);try{
   else if(d.zwaveJs){const j=d.zwaveJs,s=j.statistics||{};
     o+='<div class="card"><div class="card-h">Z-Wave JS Controller</div><div class="card-b"><div class="ng">';
     o+=ni('SDK',j.sdkVersion);
-    o+=ni('Home ID',j.homeId);o+=ni('Own Node',j.ownNodeId);
-    o+=ni('Primary',j.isPrimary?'Yes':'No');o+=ni('SUC',j.isSUC?'Yes':'No');o+=ni('SIS Present',j.isSISPresent?'Yes':'No');
+    o+=ni('Home ID',j.homeId,null,false,'zj.homeId');o+=ni('Own Node',j.ownNodeId,null,false,'zj.ownNode');
+    o+=ni('Primary',j.isPrimary?'Yes':'No');o+=ni('SUC',j.isSUC?'Yes':'No',null,false,'zj.suc');o+=ni('SIS Present',j.isSISPresent?'Yes':'No',null,false,'zj.suc');
     o+=ni('Long Range',j.supportsLongRange?'Yes':'No');
-    if(j.isRebuildingRoutes)o+=ni('Rebuilding Routes','Yes','var(--warn)');
+    if(j.isRebuildingRoutes)o+=ni('Rebuilding Routes','Yes','var(--warn)',false,'zj.rebuild');
     o+='</div>';
-    o+='<div style="margin-top:10px;font-size:12px;font-weight:600;color:var(--muted)">Controller Statistics</div><div class="ng" style="margin-top:4px">';
+    o+='<div style="margin-top:10px;font-size:12px;font-weight:600;color:var(--muted)">Controller Statistics'+helpBtn('zj.stats')+'</div><div class="ng" style="margin-top:4px">';
     if(s.messagesRX!=null)o+=ni('RX',s.messagesRX);
     if(s.messagesTX!=null)o+=ni('TX',s.messagesTX);
     if(s.messagesDroppedRX!=null)o+=ni('Dropped RX',s.messagesDroppedRX,s.messagesDroppedRX>0?'var(--warn)':'');
@@ -3097,7 +3251,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
     if(s.timeoutResponse!=null)o+=ni('Timeout Resp',s.timeoutResponse,s.timeoutResponse>0?'var(--warn)':'');
     o+='</div>';
     if(s.backgroundRSSI){const b=s.backgroundRSSI;
-      o+='<div style="margin-top:10px;font-size:12px;font-weight:600;color:var(--muted)">Background RSSI (dBm \u2014 lower is quieter)</div><div class="ng" style="margin-top:4px">';
+      o+='<div style="margin-top:10px;font-size:12px;font-weight:600;color:var(--muted)">Background RSSI (dBm \u2014 lower is quieter)'+helpBtn('zj.bgRssi')+'</div><div class="ng" style="margin-top:4px">';
       ['channel0','channel1','channel2','channel3'].forEach(ch=>{if(b[ch]&&b[ch].current!=null){const v=b[ch].current;const sev=v>-70?'var(--crit)':v>-85?'var(--warn)':'var(--ok)';o+=ni(ch.replace('channel','Ch '),v+(b[ch].average!=null?' (avg '+b[ch].average.toFixed(1)+')':''),sev)}});
       o+='</div>';
     }
@@ -3117,7 +3271,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
     o+=ni('Enabled',m.enabled!=null?(m.enabled?'Yes':'No'):'N/A');
     o+=ni('Installed',m.installed!=null?(m.installed?'Yes':'No'):'N/A');
     if(m.networkState)o+=ni('Network State',m.networkState);
-    if(m.fabricId)o+=ni('Fabric ID',m.fabricId);
+    if(m.fabricId)o+=ni('Fabric ID',m.fabricId,null,false,'mt.fabric');
     if(m.devices)o+=ni('Devices',m.devices.length);
     if(m.ipAddresses&&m.ipAddresses.length){
       const byIf={};m.ipAddresses.forEach(ip=>{(byIf[ip.interface||'?']=byIf[ip.interface||'?']||[]).push(ip.address||'-')});
@@ -3137,8 +3291,8 @@ async function rNetwork(){const P='p-network';loading(P);try{
     o+='<div class="card" id="nc-hubmesh"><div class="card-h">Hub Mesh'+hp('/device/hubMesh')+'</div><div class="card-b">';
     o+='<div class="ng">';
     o+=ni('Status',hm.enabled?'Enabled':'Disabled',hm.enabled?'var(--ok)':'var(--warn)');
-    o+=ni('Shared Devices',hm.sharedDevices);o+=ni('Linked Devices',hm.linkedDevices);
-    o+=ni('Shared Variables',hm.sharedVars);o+=ni('Linked Variables',hm.linkedVars);
+    o+=ni('Shared Devices',hm.sharedDevices,null,false,'hm.shared');o+=ni('Linked Devices',hm.linkedDevices,null,false,'hm.shared');
+    o+=ni('Shared Variables',hm.sharedVars,null,false,'hm.shared');o+=ni('Linked Variables',hm.linkedVars,null,false,'hm.shared');
     o+='</div>';
     if(hm.peers&&hm.peers.length){
       o+='<div id="hmPeerTbl" style="margin-top:12px"></div>';
@@ -3276,35 +3430,35 @@ async function rNetwork(){const P='p-network';loading(P);try{
     tbl('zwMeshTbl',[
       {l:'Device',f:'name',r:r=>r.deviceId?dlink(r.deviceId,r.name):h(Obf.nm(r.name))},
       {l:'Node',f:'nodeId',t:'n',r:r=>r.nodeId!=null?'0x'+r.nodeId.toString(16).toUpperCase().padStart(2,'0'):'—'},
-      {l:'Security',f:'security',r:r=>{const s=r.security||'None';const flag=r.s0Flag?'<span title="S0 on non-security device" style="color:var(--warn)"> \u26A0</span>':'';return h(s)+flag}},
-      {l:'RTT',f:'rtt',t:'n',r:r=>r.rtt!=null?r.rtt+'ms':'\u2014'},
-      {l:'RSSI',f:'rssi',t:'n',r:r=>r.rssi!=null?'<span style="color:'+(r.rssi<-80?'var(--crit)':r.rssi<-60?'var(--warn)':'var(--ok)')+'">'+r.rssi+' dBm</span>':'N/A'},
-      {l:'PER %',f:'per',t:'n',r:r=>'<span style="color:'+(r.per>1?'var(--crit)':r.per>0?'var(--warn)':'var(--ok)')+'">'+r.per+'%</span>'},
-      {l:'Neighbors',f:'neighbors',t:'n'},{l:'Route',f:'route'},{l:'Route Changes',f:'routeChanges',t:'n',r:routeChangesCell},
-      {l:'Msgs',f:'msgCount',t:'n'},{l:'Msgs/Min',f:'msgPerMin',t:'n',r:rateCell},
-      {l:'Driver',f:'driverType',r:r=>r.driverType==='usr'?'<span style="color:var(--link)">User</span>':r.driverType==='sys'?'Built-in':'\u2014'},
-      {l:'State',f:'state',r:r=>'<span style="color:'+(r.state==='OK'?'var(--ok)':'var(--crit)')+'">'+h(r.state)+'</span>'}
+      {l:'Security',k:'zw.security',f:'security',r:r=>{const s=r.security||'None';const flag=r.s0Flag?'<span title="S0 on non-security device" style="color:var(--warn)"> \u26A0</span>':'';return h(s)+flag}},
+      {l:'RTT',k:'zw.rtt',f:'rtt',t:'n',r:r=>r.rtt!=null?r.rtt+'ms':'\u2014'},
+      {l:'RSSI',k:'zw.rssi',f:'rssi',t:'n',r:r=>r.rssi==null?'N/A':r.rssi>=0?r.rssi+' dB':'<span style="color:'+(r.rssi<-80?'var(--crit)':r.rssi<-60?'var(--warn)':'var(--ok)')+'">'+r.rssi+' dBm</span>'},
+      {l:'PER %',k:'zw.per',f:'per',t:'n',r:r=>'<span style="color:'+(r.per>1?'var(--crit)':r.per>0?'var(--warn)':'var(--ok)')+'">'+r.per+'%</span>'},
+      {l:'Neighbors',k:'zw.neighbors',f:'neighbors',t:'n'},{l:'Route',k:'zw.route',f:'route'},{l:'Route Changes',k:'zw.routeChanges',f:'routeChanges',t:'n',r:routeChangesCell},
+      {l:'Msgs',k:'zw.msgs',f:'msgCount',t:'n'},{l:'Msgs/Min',k:'zw.msgsMin',f:'msgPerMin',t:'n',r:rateCell},
+      {l:'Driver',k:'zw.driver',f:'driverType',r:r=>r.driverType==='usr'?'<span style="color:var(--link)">User</span>':r.driverType==='sys'?'Built-in':'\u2014'},
+      {l:'State',k:'zw.state',f:'state',r:r=>'<span style="color:'+(r.state==='OK'?'var(--ok)':'var(--crit)')+'">'+h(r.state)+'</span>'}
     ],d.zwave.mesh.nodes,{sc:0,sd:'asc',filter:true,collapse:1,collapseLabel:'Z-Wave Mesh Nodes'});
   // Zigbee neighbor detail table
   if(d.zigbee&&d.zigbee.mesh&&d.zigbee.mesh.neighborDetails&&d.zigbee.mesh.neighborDetails.length)
     tbl('zbNeighborTbl',[
       {l:'Device',f:'name',r:r=>r.deviceId?dlink(r.deviceId,r.name||r.shortId):h(Obf.nm(r.name||r.shortId||'\u2014'))},
-      {l:'Short ID',f:'shortId',r:r=>h(r.shortId||'\u2014')},
-      {l:'LQI',f:'lqi',t:'n',r:r=>r.lqi!=null?'<span style="color:'+lqiBandColor(r.lqi)+'">'+r.lqi+'</span>':'N/A'},
-      {l:'Age',f:'age',t:'n',r:r=>r.stale?'<span class="badge b-warn">'+r.age+' (Stale)</span>':(r.age!=null?''+r.age:'N/A')},
-      {l:'In Cost',f:'inCost',t:'n',r:r=>r.inCost!=null?''+r.inCost:'\u2014'},
-      {l:'Out Cost',f:'outCost',t:'n',r:r=>r.outCost!=null?''+r.outCost:'\u2014'},
+      {l:'Short ID',k:'zb.shortId',f:'shortId',r:r=>h(r.shortId||'\u2014')},
+      {l:'LQI',k:'zb.lqi',f:'lqi',t:'n',r:r=>r.lqi!=null?'<span style="color:'+lqiBandColor(r.lqi)+'">'+r.lqi+'</span>':'N/A'},
+      {l:'Age',k:'zb.age',f:'age',t:'n',r:r=>r.stale?'<span class="badge b-warn">'+r.age+' (Stale)</span>':(r.age!=null?''+r.age:'N/A')},
+      {l:'In Cost',k:'zb.cost',f:'inCost',t:'n',r:r=>r.inCost!=null?''+r.inCost:'\u2014'},
+      {l:'Out Cost',k:'zb.cost',f:'outCost',t:'n',r:r=>r.outCost!=null?''+r.outCost:'\u2014'},
       {l:'Route',f:'viaName',r:r=>{if(!r.direct&&r.viaName)return 'via '+(r.viaDeviceId?dlink(r.viaDeviceId,r.viaName):h(Obf.nm(r.viaName)));if(r.noLearnedRoute)return '<span class="badge b-warn">direct (no learned route)</span>';return '<span class="muted">direct</span>'}}
     ],d.zigbee.mesh.neighborDetails,{sc:1,sd:'desc',collapse:1,collapseLabel:'Zigbee Neighbor Details'});
   // Zigbee route detail table
   if(d.zigbee&&d.zigbee.mesh&&d.zigbee.mesh.routeDetails&&d.zigbee.mesh.routeDetails.length)
     tbl('zbRouteTbl',[
       {l:'Destination',f:'destinationName',r:r=>r.destinationDeviceId?dlink(r.destinationDeviceId,r.destinationName||r.destinationShortId):h(Obf.nm(r.destinationName||r.destinationShortId||'\u2014'))},
-      {l:'Dest ID',f:'destinationShortId',r:r=>h(r.destinationShortId||'\u2014')},
+      {l:'Dest ID',k:'zb.shortId',f:'destinationShortId',r:r=>h(r.destinationShortId||'\u2014')},
       {l:'Via',f:'viaName',r:r=>r.direct?'<span class="muted">(direct)</span>':(r.viaDeviceId?dlink(r.viaDeviceId,r.viaName||r.viaShortId):h(Obf.nm(r.viaName||r.viaShortId||'\u2014')))},
-      {l:'Via ID',f:'viaShortId',r:r=>r.direct?'\u2014':h(r.viaShortId||'\u2014')},
+      {l:'Via ID',k:'zb.shortId',f:'viaShortId',r:r=>r.direct?'\u2014':h(r.viaShortId||'\u2014')},
       {l:'Direct',f:'direct',r:r=>r.direct?'<span class="badge b-warn">Direct</span>':'\u2014'},
-      {l:'Status',f:'status',r:r=>r.status?'<span style="color:'+(r.status==='Active'?'var(--ok)':'var(--muted)')+'">'+h(r.status)+'</span>':'\u2014'},
+      {l:'Status',k:'zb.routeStatus',f:'status',r:r=>r.status?'<span style="color:'+(r.status==='Active'?'var(--ok)':'var(--muted)')+'">'+h(r.status)+'</span>':'\u2014'},
       {l:'Age',f:'age',t:'n',r:r=>r.age!=null?''+r.age:'\u2014'},
       {l:'Concentrator',f:'concentratorType',r:r=>h(r.concentratorType||'\u2014')}
     ],d.zigbee.mesh.routeDetails,{sc:0,sd:'asc',collapse:1,collapseLabel:'Zigbee Route Details'});
@@ -3522,7 +3676,7 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
       temp:cp.temperature!=null?ftemp(cp.temperature):'—',db:cp.databaseSize!=null?cp.databaseSize+' MB':'—',_idx:i,_key:cp.key}));
     tbl('cpTbl',[
       {l:'#',f:'idx',t:'n'},{l:'Timestamp',f:'timestamp'},{l:'Uptime',f:'uptime'},
-      {l:'Dev Runtime',f:'devRuntime'},{l:'App Runtime',f:'appRuntime'},
+      {l:'Dev Runtime',k:'pf.runtime',f:'devRuntime'},{l:'App Runtime',k:'pf.runtime',f:'appRuntime'},
       {l:'Temp',f:'temp'},{l:'DB',f:'db'},
       {l:'',f:'_idx',r:r=>'<button class="btn btn-d btn-s" title="Delete" onclick="delCp('+r._key+')">\u{1F5D1}</button>'}
     ],cpRows,{sc:0,sd:'asc'})}
@@ -3536,11 +3690,11 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
   // Type = the grouping the CPU-by-type charts use, so the tables can be filtered to one bar.
   if(s&&s.deviceStats)
     tbl('devStatsTbl',[
-      {l:'Name',f:'name',r:r=>r.id?dlink(r.id,r.name):h(Obf.nm(r.name))},{l:'Type',f:'type'},{l:'Total (ms)',f:'total',t:'n'},
-      {l:'% Busy',f:'pct',t:'n',r:r=>r.pct!=null?r.pct.toFixed(1)+'%':''},
-      {l:'% Total',f:'pctTotal',t:'n',r:r=>r.pctTotal!=null?r.pctTotal.toFixed(3)+'%':''},
-      {l:'Count',f:'count',t:'n'},{l:'Avg (ms)',f:'average',t:'n',r:r=>Number(r.average||0).toFixed(1)},
-      {l:'State Size',f:'stateSize',t:'n'},{l:'Hub Actions',f:'hubActionCount',t:'n'}
+      {l:'Name',f:'name',r:r=>r.id?dlink(r.id,r.name):h(Obf.nm(r.name))},{l:'Type',f:'type'},{l:'Total (ms)',k:'pf.total',f:'total',t:'n'},
+      {l:'% Busy',k:'pf.pct',f:'pct',t:'n',r:r=>r.pct!=null?r.pct.toFixed(1)+'%':''},
+      {l:'% Total',k:'pf.pctTotal',f:'pctTotal',t:'n',r:r=>r.pctTotal!=null?r.pctTotal.toFixed(3)+'%':''},
+      {l:'Count',k:'pf.count',f:'count',t:'n'},{l:'Avg (ms)',k:'pf.avg',f:'average',t:'n',r:r=>Number(r.average||0).toFixed(1)},
+      {l:'State Size',k:'pf.state',f:'stateSize',t:'n'},{l:'Hub Actions',k:'pf.hubActions',f:'hubActionCount',t:'n'}
     ],s.deviceStats.map(r=>({...r,type:(d.deviceTypeById||{})[r.id]||''})),{sc:2,sd:'desc',filter:true,collapse:10,collapseLabel:'Show all'});
   // CPU by app type chart — v5.20.0 (R-7 B2): id→parent-label map now ships in /api/performance
   if(s&&s.appStats&&s.appStats.length){
@@ -3553,12 +3707,12 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
       {l:'Name',  f:'name',  r:r=>r.id?appLink(r):h(Obf.nm(r.name))},
       {l:'Type',f:'type'},
       {l:'Source',f:'source',r:r=>srcBadge(r.source,false)},
-      {l:'Total (ms)',f:'total',t:'n'},
-      {l:'% Busy',f:'pct',t:'n',r:r=>r.pct!=null?r.pct.toFixed(1)+'%':''},
-      {l:'% Total',f:'pctTotal',t:'n',r:r=>r.pctTotal!=null?r.pctTotal.toFixed(3)+'%':''},
-      {l:'Count',f:'count',t:'n'},
-      {l:'Avg (ms)',f:'average',t:'n',r:r=>Number(r.average||0).toFixed(1)},
-      {l:'State Size',f:'stateSize',t:'n'},{l:'Hub Actions',f:'hubActionCount',t:'n'},{l:'Cloud Calls',f:'cloudCallCount',t:'n'}
+      {l:'Total (ms)',k:'pf.total',f:'total',t:'n'},
+      {l:'% Busy',k:'pf.pct',f:'pct',t:'n',r:r=>r.pct!=null?r.pct.toFixed(1)+'%':''},
+      {l:'% Total',k:'pf.pctTotal',f:'pctTotal',t:'n',r:r=>r.pctTotal!=null?r.pctTotal.toFixed(3)+'%':''},
+      {l:'Count',k:'pf.count',f:'count',t:'n'},
+      {l:'Avg (ms)',k:'pf.avg',f:'average',t:'n',r:r=>Number(r.average||0).toFixed(1)},
+      {l:'State Size',k:'pf.state',f:'stateSize',t:'n'},{l:'Hub Actions',k:'pf.hubActions',f:'hubActionCount',t:'n'},{l:'Cloud Calls',k:'pf.cloud',f:'cloudCallCount',t:'n'}
     ],s.appStats.map(r=>({...r,type:noTags((d.appParentTypeById||{})[r.id])||''})),{sc:3,sd:'desc',filter:true,collapse:10,collapseLabel:'Show all'});}
   // Radio message count tables
   if(hasZw){
@@ -4131,7 +4285,7 @@ async function rConfig(){const P='p-config';loading(P);try{
   o+='<div class="card"><div class="card-h">Privacy</div><div class="card-b"><div class="cfg-row">';
   o+=`<label><input type="checkbox" id="cfg_obfuscate" ${s.obfuscateForumExport?'checked':''}> Obfuscate device/app names in the dashboard (uses stable random aliases)</label>`;
   o+='</div><div class="cfg-row">';
-  o+=`<label><input type="checkbox" id="cfg_forumObfuscate" ${s.forumObfuscate!==false?'checked':''}> Obfuscate device/app names in the forum export</label>`;
+  o+=`<label><input type="checkbox" id="cfg_forumObfuscate" ${s.forumObfuscate!==false?'checked':''}> Obfuscate device/app names in the AI/forum export</label>`;
   o+='</div></div></div>';
 
   // Alert Thresholds
@@ -6405,7 +6559,7 @@ function buildAuditHtml(data) {
   if (zwNodeRows.length > 0) {
     o += openCard('zwjs', `📶 Z-Wave JS mesh health (${zwNodeRows.length})`);
     o += '<div class="muted" style="margin-bottom:6px">Per-node controller statistics from Z-Wave JS. RSSI lower (more negative) is quieter; RTT lower is faster; PER (packet error rate) higher is worse.</div>';
-    o += '<div class="tbl-wrap"><table data-sortable id="t_zwjs"><thead><tr><th>Device</th><th data-t="n">Node</th><th>State</th><th>Status</th><th>Interview</th><th data-t="n">RTT</th><th>RSSI</th><th data-t="n" data-sd="desc">PER %</th><th data-t="n">TX</th><th data-t="n">RX</th><th>Last Seen</th></tr></thead><tbody>';
+    o += '<div class="tbl-wrap"><table data-sortable id="t_zwjs"><thead><tr><th>Device</th><th data-t="n">Node</th><th>State</th><th>Status</th><th>Interview'+helpBtn('zj.interview')+'</th><th data-t="n">RTT'+helpBtn('zw.rtt')+'</th><th>RSSI'+helpBtn('zw.rssi')+'</th><th data-t="n" data-sd="desc">PER %'+helpBtn('zw.per')+'</th><th data-t="n">TX</th><th data-t="n">RX</th><th>Last Seen</th></tr></thead><tbody>';
     const sortedZw = zwNodeRows.slice().sort((a, b) => ((b.zwaveNode && b.zwaveNode.per) || 0) - ((a.zwaveNode && a.zwaveNode.per) || 0));
     sortedZw.forEach(d => {
       const z = d.zwaveNode || {};
