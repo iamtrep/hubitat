@@ -11,7 +11,7 @@ Hubitat Elevation drivers for Sinopé Zigbee devices.
 
 - `Sinope_DM2500ZB.groovy` — **Sinope Dimmer (DM2500ZB)**: Zigbee dimmer switch
 - `Sinope_SW2500ZB.groovy` — **Sinope Switch (SW2500ZB)**: Zigbee on/off switch
-- `Sinope_TH112xZB.groovy` — **Sinope Thermostat (TH112xZB)**: Zigbee line-voltage thermostat (TH1123ZB, TH1124ZB and their G2 versions); not in HPM yet, install it from its import URL
+- `Sinope_TH112xZB.groovy` — **Sinope Thermostat (TH112xZB)**: Zigbee line-voltage thermostat (TH1123ZB, TH1124ZB and their G2 versions). Not in HPM: install it from its import URL. The HPM package "Zigbee Driver for Sinope device" by Samuel C Auclair also covers this thermostat, with an energy meter.
 - `Sinope_TH13X0ZB.groovy` — **Sinope Floor Thermostat (TH13X0ZB)**: Zigbee floor-heating thermostat (TH1300ZB, TH1320ZB-04)
 - `Sinope_VA422xZB.groovy` — **Sinope Water Valve (VA422xZB)**: Zigbee water valve with optional flow sensor support
 
