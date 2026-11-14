@@ -128,10 +128,6 @@ Messages (`<name>` is the app label; temperatures show the hub's scale, such as 
 
 On hub start, on every Done and on the first event after a code update, the app samples sensor activity, rewrites the temperature, re-applies the heaters (restarting the limit, rest, cycle, minimum-time, warming and keep-alive timers from its saved state), re-evaluates power and re-asserts the fault switches.
 
-## Tests
-
-See [tests/README.md](tests/README.md) for how to run them and [tests/TEST_PLAN.md](tests/TEST_PLAN.md) for what each covers.
-
 ## Not in this version
 
 Time-proportional control with an outdoor temperature, cooling, and per-heater power thresholds.
