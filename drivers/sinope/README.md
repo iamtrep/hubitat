@@ -12,6 +12,7 @@ Hubitat Elevation drivers for Sinopé Zigbee devices.
 - `Sinope_DM2500ZB.groovy` — **Sinope Dimmer (DM2500ZB)**: Zigbee dimmer switch
 - `Sinope_RM3250ZB.groovy` — **Sinope Load Controller (RM3250ZB)**: Zigbee 50A load controller with energy meter
 - `Sinope_RM3500ZB.groovy` — **Sinope Water Heater Controller (RM3500ZB)**: Zigbee water heater controller with energy meter, water temperature and leak sensor
+- `Sinope_SP2600ZB.groovy` — **Sinope Smart Plug (SP2600ZB)**: Zigbee smart plug with power and energy metering (SP2600ZB, SP2610ZB). Prototype, not yet run on a device; reports from owners are welcome
 - `Sinope_SW2500ZB.groovy` — **Sinope Switch (SW2500ZB)**: Zigbee on/off switch
 - `Sinope_TH112xZB.groovy` — **Sinope Thermostat (TH112xZB)**: Zigbee line-voltage thermostat (TH1123ZB, TH1124ZB and their G2 versions)
 - `Sinope_TH13X0ZB.groovy` — **Sinope Floor Thermostat (TH13X0ZB)**: Zigbee floor-heating thermostat (TH1300ZB, TH1320ZB-04)

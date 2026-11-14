@@ -1715,6 +1715,32 @@
             ]
         }
     },
+    "drivers/sinope/Sinope_SP2600ZB.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
     "drivers/sinope/Sinope_SW2500ZB.groovy": {
         "logging-driver": {
             "version": 1,
