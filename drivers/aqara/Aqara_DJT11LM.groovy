@@ -79,7 +79,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 
 // A pending version reconfigure older than this is treated as lost and re-armed.
 @Field static final long RECONFIGURE_RETRY_MS = 60000L
@@ -257,7 +257,11 @@ private void updateHealthStatus() {
 void parse(String description) {
     updateHealthStatus()
     runVersionCheck()
-    sendPendingSensitivity()   // the sensor is awake right after it transmits
+    handleFrame(description)
+    sendPendingSensitivity()   // the sensor is awake right after it transmits; after the frame, which may be the confirmation
+}
+
+private void handleFrame(String description) {
 
     // --- Xiaomi check-in (cluster 0x0000 attr 0xFF01) is delivered in a
     // non-ZCL description format. Slice it and hand off to the check-in decoder.
@@ -552,6 +556,9 @@ private void parseBasic(Map map) {
         case "FF01":  // Bundled check-in TLV (see the parseCheckin doc comment above)
             parseCheckinFromMap(map)
             break
+        case "FF0D":  // Sensitivity level, read back after a write
+            parseSensitivityLevel(map)
+            break
         default:
             logRx("Basic cluster : unhandled attrId=${map.attrId} encoding=${encoding} value=${value}")
     }
@@ -717,7 +724,9 @@ private void sendPendingSensitivity() {
     state.sensitivityAttempts = attempts
     state.sensitivityLastAttempt = now()
     logCmd("Sensitivity : writing ${SENSITIVITY_LABELS[pending]} (attempt ${attempts})")
-    sendZigbeeCommands(zigbee.writeAttribute(0x0000, 0xFF0D, 0x20, pending as int, [mfgCode: "0x115F"]))
+    // Write, then read the level back: either answer confirms it.
+    sendZigbeeCommands(zigbee.writeAttribute(0x0000, 0xFF0D, 0x20, pending as int, [mfgCode: "0x115F"]) +
+                       zigbee.readAttribute(0x0000, 0xFF0D, [mfgCode: "0x115F"]))
 }
 
 private void parseSensitivityResponse(Map descMap) {
@@ -732,11 +741,34 @@ private void parseSensitivityResponse(Map descMap) {
         clearSensitivityRequest()
         return
     }
-    String label = SENSITIVITY_LABELS[pending]
-    updateDataValue("sensitivityLevel", pending)
+    confirmSensitivity(pending)
+}
+
+private void parseSensitivityLevel(Map map) {
+    // Attribute 0xFF0D read back from the sensor: the level it holds now.
+    String level = map.value ? Integer.parseInt(map.value as String, 16).toString() : null
+    if (!SENSITIVITY_LABELS.containsKey(level)) {
+        logRx("Sensitivity 0xFF0D : level ${map.value} is not one of high, medium, low")
+        updateDataValue("sensitivityLevel", level ?: "unknown")
+        return
+    }
+    String pending = state.sensitivityPending
+    if (pending && pending != level) {
+        // The read answered before the write took effect, or the write was lost: keep trying.
+        logRx("Sensitivity 0xFF0D : sensor holds ${SENSITIVITY_LABELS[level]}, ${SENSITIVITY_LABELS[pending]} still pending")
+        updateDataValue("sensitivityLevel", level)
+        sendEvent(name: "sensitivity", value: SENSITIVITY_LABELS[level])
+        return
+    }
+    confirmSensitivity(level)
+}
+
+private void confirmSensitivity(String level) {
+    String label = SENSITIVITY_LABELS[level]
+    updateDataValue("sensitivityLevel", level)
     sendEvent(name: "sensitivity", value: label)
+    if (state.sensitivityPending) logCfg("Sensitivity : ${label} confirmed by the sensor")
     clearSensitivityRequest()
-    logCfg("Sensitivity : ${label} confirmed by the sensor")
 }
 
 private void clearSensitivityRequest() {
