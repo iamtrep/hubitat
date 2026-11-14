@@ -93,8 +93,8 @@ Map mainPage() {
                 List<String> calErrs = cal.error ? [] : validateCfg(withDates(cfg, cal))
                 paragraph rawHtml: true, calibHtml(cfg, cal, calErrs)
                 if (!cal.error && !calErrs && (cal.w2s || cal.f2w || cal.summer))
-                    input "btnCalibApply", "button", title: "Use these dates", width: 4, inputClass: "p-button bg-hubitat-primary-green text-white"
-                input "btnCalibDiscard", "button", title: cal.error ? "Close" : "Keep the current dates", width: 4, inputClass: "p-button p-button-outlined"
+                    input "btnCalibApply", "button", title: "Use these values", width: 4, inputClass: "p-button bg-hubitat-primary-green text-white"
+                input "btnCalibDiscard", "button", title: cal.error ? "Close" : "Keep the current values", width: 4, inputClass: "p-button p-button-outlined"
             } else {
                 input "btnCalibrate", "button", title: "Compute dates from local climate", width: 4, inputClass: "p-button p-button-outlined"
             }
@@ -235,10 +235,17 @@ String calibHtml(Map cfg, Map cal, List<String> calErrs) {
         String shown = got ? (got == now ? mdLabel(got) : "<b>${mdLabel(got)}</b>") : '<span class="text-color-secondary">not computed</span>'
         h << "<tr><td style='padding:4px 8px'>${r[0]}</td><td style='padding:4px 8px'>${mdLabel(now)}</td><td style='padding:4px 8px'>${shown}</td></tr>"
     }
+    String u = unit()
+    [['Winter → spring above', 'w2s', 'above'], ['Fall → winter below', 'f2w', 'below'], ['Enter summer above', 'summer', 'enter'],
+     ['Leave summer below', 'summer', 'leave'], ['Summer end', 'summer', 'end']].each { List r ->
+        Object got = (cal[r[1]] as Map)?.get(r[2])
+        if (got == null) return
+        h << "<tr><td style='padding:4px 8px'>${r[0]}</td><td style='padding:4px 8px'>${fmtNum(cfg[r[1]][r[2]])} ${u}</td><td style='padding:4px 8px'><b>${fmtNum(got)} ${u}</b></td></tr>"
+    }
     h << "</table>"
     ((cal.notes ?: []) as List).each { h << "<div class='text-sm mt-2'>${esc(it)}</div>" }
     if (calErrs) h << "<div class='p-message p-message-warn p-2 mt-2 mb-0 border-round'>With these dates: ${calErrs.collect { esc(it) }.join('; ')}. Adjust the thresholds and compute again.</div>"
-    h << "<div class='text-sm text-color-secondary mt-2'>Computed for the thresholds above. Each window runs from the 10th to the 90th percentile of the day the 3-day mean first crossed its threshold.</div></div>"
+    h << "<div class='text-sm text-color-secondary mt-2'>Each window runs from the 10th to the 90th percentile of the day the 3-day mean first crossed its threshold. A threshold is changed only when it does not fit this climate: crossed in fewer than two thirds of the years, or already crossed when the search starts in more than a third.</div></div>"
     return h.toString()
 }
 
@@ -481,18 +488,18 @@ Map runCalibration(Map cfg) {
     int y = realToday().substring(0, 4) as int
     String first = "${y - 21}-01-01".toString()
     String last = "${y - 1}-12-31".toString()
-    Map thr = [w2s: cfg.w2s.above, f2w: cfg.f2w.below, enter: cfg.summer.enter, end: cfg.summer.end]
+    Map thr = [w2s: cfg.w2s.above, f2w: cfg.f2w.below, enter: cfg.summer.enter, leave: cfg.summer.leave, end: cfg.summer.end]
     Map res = [made: realToday(), years: "${y - 21}–${y - 1}".toString(), thr: thr.toString()]
     String url = omUrl('archive', location.latitude, location.longitude, location.temperatureScale as String, first, last)
     if (url == null) return res + [error: 'The hub has no location set.']
     Map om = omGet(url, 60)
     if (!om) return res + [error: 'Open-Meteo did not answer; try again later.']
-    Map c = calibrate(om, first, last, thr, (numOrNull(location.latitude) ?: 0) < 0)
+    Map c = calibrate(om, first, last, thr, (numOrNull(location.latitude) ?: 0) < 0, location.temperatureScale as String)
     logCfg "dates from ${res.years} climate: ${c}"
     return res + c
 }
 
-String calibThr(Map cfg) { [w2s: cfg.w2s.above, f2w: cfg.f2w.below, enter: cfg.summer.enter, end: cfg.summer.end].toString() }
+String calibThr(Map cfg) { [w2s: cfg.w2s.above, f2w: cfg.f2w.below, enter: cfg.summer.enter, leave: cfg.summer.leave, end: cfg.summer.end].toString() }
 
 
 // ── Device ────────────────────────────────────────────────────────────
@@ -752,6 +759,8 @@ void applyCalibration() {
     Map names = [w2s: [from: 'w2sFrom', until: 'w2sUntil'], f2w: [from: 'f2wFrom', until: 'f2wUntil'],
                  summer: [from: 'summerFrom', until: 'summerUntil', fallFrom: 'fallFrom']]
     names.each { String rule, Map m -> m.each { String k, String n -> if (c[rule]?.get(k)) app.updateSetting(n, [type: 'text', value: c[rule][k]]) } }
+    Map thrNames = [w2s: [above: 'w2sAbove'], f2w: [below: 'f2wBelow'], summer: [enter: 'summerEnter', leave: 'summerLeave', end: 'summerEnd']]
+    thrNames.each { String rule, Map m -> m.each { String k, String n -> if (c[rule]?.get(k) != null) app.updateSetting(n, [type: 'decimal', value: c[rule][k]]) } }
     logCfg "dates set from ${c.years} climate"
     state.remove('calib')
 }
@@ -1271,52 +1280,92 @@ String percentileMd(List<String> mds, String anchor, int p) {
 
 // Proposed dates from daily means (ISO day -> mean) between first and last, the way tools/season-calibration does it:
 // for each year, the first day from the anchor on which the mean of the 3 previous daily means crosses the threshold;
-// a window runs from the 10th to the 90th percentile of those days. thr: w2s, f2w, enter, end, in the means' scale.
-// A rule is left out when its threshold was crossed in fewer than two thirds of the years.
-Map calibrate(Map means, String first, String last, Map thr, boolean south) {
+// a window runs from the 10th to the 90th percentile of those days. thr: w2s, f2w, enter, leave, end, in scale.
+// A threshold that does not fit the climate is moved, by 0.5 °C (1 °F) steps, to the nearest one that does: it fits
+// when it is crossed in at least two thirds of the years, and already crossed on the anchor day in at most a third
+// (more would make the window that day, not the climate's). A moved threshold is returned with the rule's dates; the
+// summer leave and end thresholds move with the entry. A rule no threshold within its limits fits is left out.
+Map calibrate(Map means, String first, String last, Map thr, boolean south, String scale = 'C') {
     List<String> days = []
-    List<BigDecimal> vals = []
+    List<BigDecimal> m3 = []
     Map<String, Integer> at = [:]
+    List<BigDecimal> vals = []
     for (String d = first; d <= last; d = addDays(d, 1)) { at[d] = vals.size(); days << d; vals << numOrNull(means[d]) }
+    for (int i = 0; i < vals.size(); i++) {
+        BigDecimal x = i >= 3 ? vals[i - 1] : null, y2 = i >= 3 ? vals[i - 2] : null, z = i >= 3 ? vals[i - 3] : null
+        m3 << ((x == null || y2 == null || z == null) ? null : (x + y2 + z) / 3)
+    }
     Map a = calibAnchors(south)
     int y0 = first.substring(0, 4) as int
     int y1 = last.substring(0, 4) as int
     List<String> notes = []
-    Closure cross = { String name, String anchor, boolean above, Object t ->
-        BigDecimal th = numOrNull(t)
+    BigDecimal step = scale == 'F' ? 1.0 : 0.5
+    Closure stats = { String anchor, boolean above, BigDecimal th ->
         List<String> hits = []
-        int years = 0
+        int years = 0, onStart = 0
         for (int y = y0; y <= y1; y++) {
             Integer s = at["${y}-${anchor}".toString()]
             if (s == null || s < 3) continue
             years++
-            for (int i = s; i < Math.min(s + 365, vals.size()); i++) {
-                BigDecimal x = vals[i - 1], y2 = vals[i - 2], z = vals[i - 3]
-                if (x == null || y2 == null || z == null) continue
-                BigDecimal m = (x + y2 + z) / 3
-                if (above ? m > th : m < th) { hits << days[i].substring(5); break }
+            for (int i = s; i < Math.min(s + 365, m3.size()); i++) {
+                BigDecimal m = m3[i]
+                if (m == null) continue
+                if (above ? m > th : m < th) { hits << days[i].substring(5); if (i == s) onStart++; break }
             }
         }
-        if (years == 0 || hits.size() * 3 < years * 2) {
-            notes << "${name}: the 3-day mean went ${above ? 'above' : 'below'} ${fmtNum(th)} in ${hits.size()} of ${years} years, too few to set dates".toString()
-            return null
-        }
-        return hits
+        return [hits: hits, years: years, onStart: onStart, ok: years > 0 && hits.size() * 3 >= years * 2 && onStart * 3 <= years]
     }
+    // [th:, hits:] for the threshold that fits, null when none within lo..hi does.
+    Closure fit = { String name, String anchor, boolean above, Object t, BigDecimal lo, BigDecimal hi ->
+        BigDecimal th = numOrNull(t)
+        if (th == null) return null
+        Map st = stats(anchor, above, th)
+        if (st.ok) return [th: th, hits: st.hits]
+        boolean few = st.years == 0 || (st.hits as List).size() * 3 < (st.years as int) * 2
+        String side = above ? 'above' : 'below'
+        String why = few ? "the 3-day mean went ${side} ${fmtNum(th)} in ${(st.hits as List).size()} of ${st.years} years".toString()
+                         : "the 3-day mean was already ${side} ${fmtNum(th)} on ${mdLabel(anchor)} in ${st.onStart} of ${st.years} years".toString()
+        // Too few crossings: make it easier to cross; crossed at the anchor: harder.
+        BigDecimal dir = (above == few) ? -step : step
+        for (BigDecimal t2 = th + dir; dir > 0 ? t2 <= hi : t2 >= lo; t2 += dir) {
+            Map s2 = stats(anchor, above, t2)
+            if (s2.ok) {
+                notes << "${name}: threshold ${fmtNum(th)} → ${fmtNum(t2)}, since ${why}".toString()
+                return [th: t2, hits: s2.hits]
+            }
+        }
+        notes << "${name}: ${why}, and no threshold from ${fmtNum(lo)} to ${fmtNum(hi)} fits, so its dates are not set".toString()
+        return null
+    }
+    BigDecimal wLo = inScale(-10.0, scale), wHi = inScale(18.0, scale), sLo = inScale(10.0, scale), sHi = inScale(30.0, scale)
     Map out = [:]
-    List<String> w = cross('Winter → spring', a.spring as String, true, thr.w2s)
-    if (w) out.w2s = [from: percentileMd(w, a.spring as String, 10), until: percentileMd(w, a.spring as String, 90)]
-    List<String> f = cross('Fall → winter', a.winter as String, false, thr.f2w)
-    if (f) out.f2w = [from: percentileMd(f, a.winter as String, 10), until: percentileMd(f, a.winter as String, 90)]
-    List<String> s = cross('Summer', a.summer as String, true, thr.enter)
-    List<String> e = cross('Summer end', a.fall as String, false, thr.end)
-    if (s && e) out.summer = [from: percentileMd(s, a.summer as String, 10), until: percentileMd(e, a.fall as String, 90),
-                              fallFrom: percentileMd(e, a.fall as String, 10)]
+    Map w = fit('Winter → spring', a.spring as String, true, thr.w2s, wLo, wHi)
+    if (w) {
+        out.w2s = [from: percentileMd(w.hits as List<String>, a.spring as String, 10), until: percentileMd(w.hits as List<String>, a.spring as String, 90)]
+        if (w.th != numOrNull(thr.w2s)) out.w2s.above = w.th
+    }
+    Map f = fit('Fall → winter', a.winter as String, false, thr.f2w, wLo, wHi)
+    if (f) {
+        out.f2w = [from: percentileMd(f.hits as List<String>, a.winter as String, 10), until: percentileMd(f.hits as List<String>, a.winter as String, 90)]
+        if (f.th != numOrNull(thr.f2w)) out.f2w.below = f.th
+    }
+    Map s = fit('Summer', a.summer as String, true, thr.enter, sLo, sHi)
+    BigDecimal shift = s ? (s.th as BigDecimal) - numOrNull(thr.enter) : 0
+    Map e = s ? fit('Summer end', a.fall as String, false, numOrNull(thr.end) + shift, sLo, sHi) : null
+    if (s && e) {
+        out.summer = [from: percentileMd(s.hits as List<String>, a.summer as String, 10), until: percentileMd(e.hits as List<String>, a.fall as String, 90),
+                      fallFrom: percentileMd(e.hits as List<String>, a.fall as String, 10)]
+        if (shift != 0) {
+            out.summer.enter = s.th
+            if (numOrNull(thr.leave) != null) out.summer.leave = numOrNull(thr.leave) + shift
+        }
+        if (e.th != numOrNull(thr.end)) out.summer.end = e.th
+    }
     out.notes = notes
     return out
 }
 
-// cfg with the dates of a calibration result in place of its own, where the result has them.
+// cfg with the dates (and any moved thresholds) of a calibration result in place of its own, where the result has them.
 @CompileStatic
 Map withDates(Map cfg, Map cal) {
     Map out = [w2s: [:] + (cfg.w2s as Map), f2w: [:] + (cfg.f2w as Map), summer: [:] + (cfg.summer as Map)]

@@ -242,7 +242,28 @@ Map mild = [:]
 for (String d = '2021-01-01'; d <= '2023-12-31'; d = core.addDays(d, 1)) mild[d] = 20
 Map calMild = core.calibrate(mild, '2021-01-01', '2023-12-31', thr, false)
 check('calibrate no winter: rule left out', calMild.f2w, null)
-check('calibrate no winter: fall note text', calMild.notes.find { it.startsWith('Fall → winter') }, 'Fall → winter: the 3-day mean went below 3.0 in 0 of 3 years, too few to set dates')
+check('calibrate no winter: fall note text', calMild.notes.find { it.startsWith('Fall → winter') }, 'Fall → winter: the 3-day mean went below 3.0 in 0 of 3 years, and no threshold from -10.0 to 18.0 fits, so its dates are not set')
+// A threshold the climate already crossed on Feb 15 moves up: there the 3-day mean is -9.0 every year (days 43 to 45).
+Map calEarly = core.calibrate(climate, '2021-01-01', '2023-12-31', [w2s: -10, f2w: 3, enter: 17, end: 12], false)
+check('crossed at the anchor: moved to the first that is not', calEarly.w2s?.above, -9.0)
+check('crossed at the anchor: note', calEarly.notes, ['Winter → spring: threshold -10.0 → -9.0, since the 3-day mean was already above -10.0 on Feb 15 in 3 of 3 years'])
+// A threshold never crossed moves toward the climate, from outside the limits too. The coldest 3-day mean is -19.5
+// (Jan 1 to 3) in the searches that reach January, 2 of 3 years, which is enough.
+Map calFew = core.calibrate(climate, '2021-01-01', '2023-12-31', [w2s: 3, f2w: -25, enter: 17, end: 12], false)
+check('never crossed: moved to the first crossed in two thirds', calFew.f2w?.below, -19.0)
+check('never crossed: note', calFew.notes, ['Fall → winter: threshold -25.0 → -19.0, since the 3-day mean went below -25.0 in 0 of 3 years'])
+check('fitting climate: thresholds not returned', [cal.w2s?.above, cal.f2w?.below, cal.summer?.enter, cal.summer?.end], [null, null, null, null])
+// Hot climate, 12 to 34: every default fails, and the moved thresholds give valid dates; leave keeps its 5-degree band.
+Map hot = [:]
+for (String d = '2021-01-01'; d <= '2023-12-31'; d = core.addDays(d, 1)) hot[d] = (23 + 11 * Math.cos(2 * Math.PI * (core.doyOf(d.substring(5)) - 200) / 365)).round(1)
+Map calHot = core.calibrate(hot, '2021-01-01', '2023-12-31', [w2s: 3.0, f2w: 3.0, enter: 17.0, leave: 12.0, end: 17.0], false)
+check('hot: every rule set', [calHot.w2s?.above != null, calHot.f2w?.below != null, calHot.summer?.enter != null], [true, true, true])
+check('hot: leave keeps the band', calHot.summer.enter - calHot.summer.leave, 5.0)
+check('hot: dates valid', core.validateCfg(core.withDates(core.defaultCfg('C'), calHot)), [])
+check('withDates takes moved thresholds', core.withDates(core.defaultCfg('C'), calHot).f2w.below, calHot.f2w.below)
+Map hotF = hot.collectEntries { k, v -> [k, ((v as BigDecimal) * 9 / 5 + 32).setScale(1, BigDecimal.ROUND_HALF_UP)] }
+Map calHotF = core.calibrate(hotF, '2021-01-01', '2023-12-31', [w2s: 37.4, f2w: 37.4, enter: 62.6, leave: 53.6, end: 62.6], false, 'F')
+check('hot °F: moves in whole degrees', (calHotF.f2w.below - 37.4).remainder(1), 0)
 Map base = core.defaultCfg('C')
 check('withDates replaces dates', core.withDates(base, cal).w2s, [from: '04-05', until: '04-05', above: 3.0])
 check('withDates keeps the rest', core.withDates(base, [:]).summer.fallFrom, '08-15')
