@@ -214,7 +214,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "6.3.0";
+const CODE_VERSION = "6.3.1";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -2510,7 +2510,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   o+='<div class="card"><div class="card-h">Hub Inspector App</div><div class="card-b">';
   o+='<div id="updateBanner"></div>';
   if(appUpdateNeeded) {
-    o+='<div class="alert a-crit">\u26D4 <b>App Update Required:</b> A newer UI version ('+CODE_VERSION+') is installed than this App code ('+d.appVersion+'). Please update the Groovy App code in Hubitat.</div>';
+    o+='<div class="alert a-crit">\u26D4 <b>App Update Required:</b> A newer UI version ('+CODE_VERSION+') is installed than this App code ('+d.appVersion+'). <span id="appUpdHow">Use Import in Apps Code to update the app.</span></div>';
   }
   o+='<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">';
   o+='<div><b>App Version:</b> '+d.appVersion+'</div>';
@@ -2540,6 +2540,8 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
       const link=v.editorPath?'<a href="'+v.editorPath+'" target="_blank" style="color:inherit;font-weight:bold">Apps Code</a>':'Apps Code';
       const how=v.selfUpdate?'<button class="btn btn-p" id="btnSelfUpdate" style="margin-left:6px">Update now</button> or use Import in '+link+'.':'Use Import in '+link+' to update.';
       el.innerHTML='<div class="alert a-warn" style="margin-bottom:12px">\u26A0 <b>New version available:</b> v'+h(v.latestVersion)+' (you have v'+h(v.currentVersion)+'). '+how+'</div>';
+      const hw=document.getElementById('appUpdHow');
+      if(hw&&v.selfUpdate)hw.innerHTML='Click <b>Update now</b> above.';
       const b=document.getElementById('btnSelfUpdate');
       if(b)b.onclick=async()=>{
         if(!confirm('Update Hub Inspector to v'+v.latestVersion+' from GitHub?'))return;

@@ -88,5 +88,25 @@ t('keys a caller adds do not reach the cache') {
     assert c.reads == 1
 }
 
+t('a longer max age accepts a copy the default TTL would refuse') {
+    def c = C.newInstance()
+    c.fetchRuntimeStats(); c.clock += TTL * 10
+    assert c.fetchRuntimeStats(false, TTL * 20).data.uptime == '1 day'
+    assert c.reads == 1
+    c.fetchRuntimeStats()
+    assert c.reads == 2
+}
+t('a copy older than the max age is read again') {
+    def c = C.newInstance()
+    c.fetchRuntimeStats(); c.clock += TTL * 20
+    c.fetchRuntimeStats(false, TTL * 20)
+    assert c.reads == 2
+}
+t('the scheduled checkpoint shares its read and the scheduled snapshot takes it') {
+    assert text.contains("cachePut('runtimeStats', new LinkedHashMap((Map) resp.json))")
+    assert text.contains('createSnapshot(SNAPSHOT_STATS_MAX_AGE_MS)')
+    assert text.contains('runIn(jitterDelaySec(), "createScheduledSnapshot")')
+}
+
 println "\n${pass} passed, ${fail} failed"
 System.exit(fail ? 1 : 0)

@@ -37,6 +37,7 @@ import groovy.transform.Field
 @groovy.transform.Field static final ConcurrentHashMap<String, Map> TTL_CACHE = new ConcurrentHashMap<>()
 @groovy.transform.Field static final long FW_UPDATE_CACHE_TTL_MS = 3600000L
 @groovy.transform.Field static final long FW_UPDATE_FAIL_TTL_MS = 300000L
+@groovy.transform.Field static final long RUNTIME_STATS_CACHE_TTL_MS = 30000L
 @groovy.transform.Field static final String FIRMWARE_UPDATE_PATH = "/fw"
 @groovy.transform.Field static final String DEVICES_LIST_PATH = "/devices"
 long now() { System.currentTimeMillis() }
@@ -52,7 +53,7 @@ ${extract('Map enrichDevices(Map uncertainDevices, Set communityAppTypeNames = [
 ${extract('private String fullJsonControllerType(Map fj) {')}
 ${extract('String safeToString(value, String defaultValue = "") {')}
 ${extract('Map analyzeDevices(boolean deep = true, Map prefetchedDevices = null) {')}
-${extract('Map analyzeApps(boolean deep = true) {')}
+${extract('Map analyzeApps(boolean deep = true, long statsMaxAgeMs = RUNTIME_STATS_CACHE_TTL_MS) {')}
 ${connConstants}
 ${extract('Map getEmptyDeviceStats() {')}
 ${extract('Map getEmptyAppStats() {')}
@@ -121,7 +122,7 @@ t('A-3 snapshotFetchFailure: failed apps') { assert app.snapshotFetchFailure([to
 t('A-3 snapshotFetchFailure: both real') { assert app.snapshotFetchFailure([totalDevices: 3], [totalApps: 3]) == null }
 t('A-3 snapshotFetchFailure: null input') { assert app.snapshotFetchFailure(null, [:]) }
 t('A-3 createSnapshot checks before it saves') {
-    String body = extract('void createSnapshot() {')
+    String body = extract('void createSnapshot(long statsMaxAgeMs = RUNTIME_STATS_CACHE_TTL_MS) {')
     int chk = body.indexOf('snapshotFetchFailure(')
     int save = body.indexOf('saveSnapshots(')
     assert chk > 0 : 'createSnapshot does not call snapshotFetchFailure'

@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "6.3.0"
+@Field static final String CODE_VERSION = "6.3.1"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -190,6 +190,9 @@ import java.util.concurrent.atomic.AtomicInteger
 // /logs/json is the most expensive read the app makes. Tab loads (Network, Apps, Performance)
 // share one build per window; checkpoints and Compare -> Now read it fresh and refresh the slot.
 @Field static final long       RUNTIME_STATS_CACHE_TTL_MS = 30_000L
+// The scheduled config snapshot only needs the list of running apps from /logs/json, so it takes
+// the copy the 00:03 scheduled checkpoint left in the slot instead of a second read 20 minutes later.
+@Field static final long       SNAPSHOT_STATS_MAX_AGE_MS  = 1_800_000L
 // apiLive polls every 30s by default and fans out to 5 hub HTTP calls. The slow-changing ones
 // (temperature, databaseSize, cpuInfo, loadThreshold) carry longer TTLs to spare the hub.
 // cpuInfo also carries the 1-minute load average, so it stays on the 60 s tier.
@@ -316,9 +319,12 @@ private void cachePut(String key, Object data) {
 @Field static final ConcurrentHashMap<Long, ConcurrentHashMap<String, Object>> CONTROLLER_TYPE_CACHE = new ConcurrentHashMap<>()
 @Field static final String CHECKPOINT_DETAIL_PREFIX = "hub_diagnostics_checkpoint_"
 @Field static final String PERFORMANCE_COMPARISON_FILE = "hub_diagnostics_performance_comparison.json"
-// Scheduled snapshots and checkpoints: cron fires JITTER_BASE_MIN past the slot, then a
-// random 1..JITTER_MAX_S delay, so each run lands between :03 and :07.
+// Scheduled snapshots and checkpoints: cron fires at the base minute, then a random
+// 1..JITTER_MAX_S delay. Checkpoints land between :03 and :07 past their slot, snapshots between
+// 00:23 and 00:27: clear of every checkpoint window (:03, :18, :33, :48 at the 15-minute interval)
+// and after a midnight checkpoint has finished, retry included.
 @Field static final int    JITTER_BASE_MIN = 3
+@Field static final int    SNAPSHOT_BASE_MIN = 23
 @Field static final int    JITTER_MAX_S    = 240
 
 @Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/HubInspector/HubInspector.groovy"
@@ -481,13 +487,15 @@ Map dashboardPage() {
                 if (selfUpdateSupported()) input "btnSelfUpdate", "button", title: "Update now"
             }
             if (appUpdateNeeded) {
-                paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f); font-weight:bold;'>\u26A0 Update Recommended:</span> A newer UI version (${uiVer}) is active than this App code (${CODE_VERSION}). Please update the Groovy App Code in Hubitat."
+                String how = selfUpdateSupported() ? "Click <b>Update now</b>." : "Use Import in Apps Code to update the app."
+                paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f); font-weight:bold;'>\u26A0 Update Recommended:</span> A newer UI version (${uiVer}) is active than this App code (${CODE_VERSION}). ${how}"
+                if (selfUpdateSupported() && !githubUpdateAvailable) input "btnSelfUpdate", "button", title: "Update now"
             }
             paragraph "<b>App Version:</b> ${CODE_VERSION}\n<b>UI Version:</b> ${uiVer}\n<b>Hub Firmware:</b> ${hubFw ?: 'Unknown'}"
             if (!githubUpdateAvailable) {
                 String editorPath = getAppEditorPath()
                 if (editorPath) {
-                    paragraph "<a href='${editorPath}' target='_blank'>Open App Code Editor</a> — update the Groovy source code via Import"
+                    paragraph "<a href='${editorPath}' target='_blank'>Open App Code Editor</a>"
                 }
             }
         }
@@ -1688,10 +1696,11 @@ private Object hubRequest(String path, String name, String type = "json", int ti
 }
 
 // /logs/json through the TTL slot. fresh = true skips the read but still refreshes the slot.
+// maxAgeMs lets a caller that only needs the app list accept an older copy.
 // Callers add keys to the returned map, so the slot keeps its own shallow copy and hands out another.
-private Map fetchRuntimeStats(boolean fresh = false) {
+private Map fetchRuntimeStats(boolean fresh = false, long maxAgeMs = RUNTIME_STATS_CACHE_TTL_MS) {
     if (!fresh) {
-        Object hit = cachePeek('runtimeStats', RUNTIME_STATS_CACHE_TTL_MS)
+        Object hit = cachePeek('runtimeStats', maxAgeMs)
         if (hit != null) return [ok: true, data: new LinkedHashMap((Map) hit), error: null]
     }
     Map wrap = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats")
@@ -3005,7 +3014,7 @@ private Map fetchAppsList() {
     return (Map) cachedFetch('appsList', HUB_LIST_CACHE_TTL_MS) { (Map) reqData(APPS_LIST_PATH, "apps list", 20) ?: null }
 }
 
-Map analyzeApps(boolean deep = true) {
+Map analyzeApps(boolean deep = true, long statsMaxAgeMs = RUNTIME_STATS_CACHE_TTL_MS) {
     List appsList = (fetchAppsList()?.apps ?: []) as List
 
     if (!appsList) {
@@ -3120,7 +3129,7 @@ Map analyzeApps(boolean deep = true) {
     // Identify platform-only apps by comparing runtime stats against appsList
     stats.platformApps = []
     try {
-        Map runtimeWrap = fetchRuntimeStats()
+        Map runtimeWrap = fetchRuntimeStats(false, statsMaxAgeMs)
         if (runtimeWrap.ok) {
             List runtimeAppStats = runtimeWrap.data.appStats ?: []
             stats.runtimeTotalApps = runtimeAppStats.size()
@@ -3747,6 +3756,8 @@ void asyncOnRuntimeStats(resp, data) {
     }
     try {
         asyncCheckpointStaging.stats = resp.json
+        // Share this read: tab loads within the TTL and the scheduled snapshot reuse it.
+        if (resp.json instanceof Map && resp.json) cachePut('runtimeStats', new LinkedHashMap((Map) resp.json))
         asyncCheckpointStaging.resources = fetchSystemResources()
         asyncCheckpointStaging.temperature = fetchTemperature()
         asyncCheckpointStaging.databaseSize = fetchDatabaseSize()
@@ -3943,7 +3954,11 @@ void scheduledSnapshot() {
     Long last = state.lastScheduledSnapshotMs as Long
     if (last != null && now() - last < days * 86400000L - 3600000L) return
     state.lastScheduledSnapshotMs = now()
-    runIn(jitterDelaySec(), "createSnapshot")
+    runIn(jitterDelaySec(), "createScheduledSnapshot")
+}
+
+void createScheduledSnapshot() {
+    createSnapshot(SNAPSHOT_STATS_MAX_AGE_MS)
 }
 
 // Scheduled jobs fire on a fixed cron slot, then wait a fresh random delay each run
@@ -3952,7 +3967,7 @@ private int jitterDelaySec() {
     return 1 + new Random().nextInt(JITTER_MAX_S)
 }
 
-void createSnapshot() {
+void createSnapshot(long statsMaxAgeMs = RUNTIME_STATS_CACHE_TTL_MS) {
     checkVersion()
     logInfo "Creating config snapshot..."
 
@@ -3978,7 +3993,7 @@ void createSnapshot() {
     // A failed devices or apps fetch returns an empty result; storing it would show every device as
     // removed in the diff and push the oldest good snapshot out at the retention cap.
     Map snapDevices = analyzeDevices()
-    Map snapApps = analyzeApps()
+    Map snapApps = analyzeApps(true, statsMaxAgeMs)
     String fetchFailure = snapshotFetchFailure(snapDevices, snapApps)
     if (fetchFailure) {
         logWarn "Config snapshot not saved: ${fetchFailure}"
@@ -5315,8 +5330,8 @@ void initialize() {
         int days = (settings.snapshotInterval ?: 1).toInteger()
         // A day-of-month step (*/N) restarts on the 1st, so it only means "every N days"
         // when N divides the month. Run daily and let scheduledSnapshot() count the days.
-        schedule("0 ${JITTER_BASE_MIN} 0 * * ?", "scheduledSnapshot")
-        logInfo "Automatic config snapshots scheduled every ${days} day(s), 00:0${JITTER_BASE_MIN}–00:0${JITTER_BASE_MIN + 4}"
+        schedule("0 ${SNAPSHOT_BASE_MIN} 0 * * ?", "scheduledSnapshot")
+        logInfo "Automatic config snapshots scheduled every ${days} day(s), 00:${SNAPSHOT_BASE_MIN}–00:${SNAPSHOT_BASE_MIN + 4}"
     }
 
     if (settings.autoCheckpoint) {
