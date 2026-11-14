@@ -18,6 +18,7 @@
  *  for the specific language governing permissions and limitations under the License.
  *
  * v0.0.1 - Initial version
+ * v0.0.27 - Control mode and floor sensor type are written only when set; unset leaves the thermostat's own setting
  * v0.0.26 - Report an unchanged setpoint hourly, not every 5 minutes: a change still reports at once
  *
  */
@@ -26,7 +27,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.26"
+@Field static final String CODE_VERSION = "0.0.27"
 
 @Field static final List<String> SUPPORTED_THERMOSTAT_MODES     = ['"off"', '"heat"']
 @Field static final List<String> SUPPORTED_THERMOSTAT_FAN_MODES = ['"auto"']
@@ -90,8 +91,8 @@ metadata
         input name: 'prefDisplayOutdoorTemp', type: 'bool', title: 'Display outdoor temperature', defaultValue: true
         input name: 'prefSecondTempDisplay', type: 'enum', title: 'Secondary Temp. Display', options:['auto': 'Auto (default)', 'setpoint': 'Setpoint', 'outdoor': 'Outdoor', 'roomTemperature': 'Room'], defaultValue: 'auto', required: true
         input name: 'prefTimeFormatParam', type: 'enum', title: 'Time Format', options:['24h', '12h AM/PM'], defaultValue: '24h', multiple: false, required: true
-        input name: 'prefAirFloorModeParam', type: 'enum', title: 'Control mode (Floor or Ambient temperature)', options: ['Ambient', 'Floor'], defaultValue: 'Floor', multiple: false, required: true
-        input name: 'prefFloorSensorTypeParam', type: 'enum', title: 'Probe type (Default: 10k)', options: ['10k', '12k'], defaultValue: '10k', multiple: false, required: true
+        input name: 'prefAirFloorModeParam', type: 'enum', title: 'Control mode (Floor or Ambient temperature)', description: 'Leave unset to keep the thermostat setting. Floor mode needs a floor sensor.', options: ['Ambient', 'Floor'], multiple: false, required: false
+        input name: 'prefFloorSensorTypeParam', type: 'enum', title: 'Floor sensor type', description: 'Leave unset to keep the thermostat setting.', options: ['10k', '12k'], multiple: false, required: false
         input name: 'prefMaxAirTemperature', type: 'number', title:'Ambient high limit (5C to 36C / 41F to 97F)', description: 'The maximum ambient temperature limit when in floor control mode.', range: '5..97', required: false
         input name: 'prefMinFloorTemperature', type: 'number', title:'Floor low limit (5C to 36C / 41F to 97F)', description: 'The minimum temperature limit of the floor when in ambient control mode.', range:'5..97', required: false
         input name: 'prefMaxFloorTemperature', type: 'number', title:'Floor high limit (5C to 36C / 41F to 97F)', description: 'The maximum temperature limit of the floor when in ambient control mode.', range:'5..97', required: false
@@ -197,10 +198,11 @@ void configure() {
     }
 
     //Set the control heating mode
+    // Control mode and sensor type are written only when set, so a choice made on the thermostat's own menu stays.
     if (prefAirFloorModeParam == 'Ambient') { //Air mode
         logCfg('Set to Ambient mode')
         cmds += zigbee.writeAttribute(0xFF01, 0x0105, 0x30, 0x0001, [mfgCode: '0x119C'])
-    } else { //Floor mode
+    } else if (prefAirFloorModeParam == 'Floor') {
         logCfg('Set to Floor mode')
         cmds += zigbee.writeAttribute(0xFF01, 0x0105, 0x30, 0x0002, [mfgCode: '0x119C'])
     }
@@ -209,7 +211,7 @@ void configure() {
     if (prefFloorSensorTypeParam == '12k') { //sensor type = 12k
         logCfg('Sensor type is 12k')
         cmds += zigbee.writeAttribute(0xFF01, 0x010B, 0x30, 0x0001, [mfgCode: '0x119C'])
-    } else { //sensor type = 10k
+    } else if (prefFloorSensorTypeParam == '10k') {
         logCfg('Sensor type is 10k')
         cmds += zigbee.writeAttribute(0xFF01, 0x010B, 0x30, 0x0000, [mfgCode: '0x119C'])
     }
@@ -519,9 +521,7 @@ private void parseAttributeReport(Map descMap) {
                     map.value = getTemperature(descMap.value)
                     map.unit = getTemperatureScale()
                     map.descriptionText = "Temperature of ${device.displayName} is at ${map.value}${map.unit}"
-                    if (prefAirFloorModeParam != null) { // If floor heating device, refresh secondary temperature
-                        runIn(1, 'refreshSecondTemp')
-                    }
+                    runIn(1, 'refreshSecondTemp')  // floor and room temperatures follow each local temperature report
                     break
 
                 case 0x0008:
