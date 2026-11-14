@@ -1559,6 +1559,32 @@
             ]
         }
     },
+    "drivers/aqara/Aqara_DJT11LM.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
     "drivers/aqara/Aqara_MCCGQ11LM.groovy": {
         "logging-driver": {
             "version": 1,
