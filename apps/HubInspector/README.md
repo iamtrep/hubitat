@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
 <!-- AUTO:hubinspector-version -->
-**Current version:** 6.3.1
+**Current version:** 6.3.2
 <!-- /AUTO -->
 
 ---
@@ -91,6 +91,9 @@ Otherwise, use **Apps Code → Hub Inspector → Import** (same import URL as ab
 > it rewrites checkpoint storage on first run. Legacy snapshots are never rewritten: snapshots
 > saved before the connection-type format (pre-v5.13) display without connection/integration
 > breakdowns and are best deleted and re-captured.
+
+### Running without GitHub
+**Check GitHub for new releases and download the dashboard page** (app settings, **Updates**) is on by default. Turn it off and the app makes no request to GitHub: no release check, no **update available** badge, no **Update now** button and no UI download. Update the app with **Apps Code → Hub Inspector → Import** or by pasting the code, then upload the matching `hub_inspector_ui.html` to File Manager as `hub_diagnostics_ui.html`.
 
 ### Updating the UI
 The app keeps the UI in sync with the app version automatically: a nightly job downloads the latest UI from GitHub and installs it once its version matches the installed app. In practice: after updating the Groovy app code, open the app preferences once and re-save (or wait for the nightly job) and the matching UI will install automatically. You can also trigger an immediate sync via **Check for updates** on the Dashboard tab.

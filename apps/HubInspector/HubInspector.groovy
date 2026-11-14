@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "6.3.1"
+@Field static final String CODE_VERSION = "6.3.2"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -465,7 +465,7 @@ Map dashboardPage() {
     dynamicPage(name: "dashboardPage", install: true, uninstall: true) {
         String uiVer = getUIVersion()
         boolean appUpdateNeeded = isNewer(uiVer, CODE_VERSION)
-        String remoteVersion = checkGithubVersion()
+        String remoteVersion = githubEnabled() ? checkGithubVersion() : null
         boolean githubUpdateAvailable = remoteVersion && isNewer(remoteVersion, CODE_VERSION)
 
         String hubFw = getHubFirmwareVersion()
@@ -476,13 +476,15 @@ Map dashboardPage() {
                 paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f); font-weight:bold;'>\u26A0 Unsupported hub firmware:</span> Hub Inspector is developed and tested against platform ${MIN_FW_SUPPORTED} and later \u2014 your hub runs ${hubFw}. Some features may be unavailable or behave unexpectedly. Updating the hub firmware is recommended."
             }
             if (state.selfUpdateError) {
-                paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f); font-weight:bold;'>\u26A0 Update failed:</span> ${state.selfUpdateError}"
+                String failPath = getAppEditorPath()
+                paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f); font-weight:bold;'>\u26A0 Update failed:</span> ${state.selfUpdateError}" +
+                    (failPath ? " <a href='${failPath}' target='_blank'>Open Apps Code</a>" : "")
                 state.remove('selfUpdateError')
             }
             if (githubUpdateAvailable) {
                 String editorPath = getAppEditorPath()
                 String codeLink = editorPath ? "<a href='${editorPath}' target='_blank'>Apps Code</a>" : "Apps Code"
-                String importLink = selfUpdateSupported() ? "Click <b>Update now</b> below, or use Import in ${codeLink}." : "Use Import in ${codeLink} to update."
+                String importLink = selfUpdateSupported() ? "Click <b>Update now</b> below." : "Use Import in ${codeLink} to update."
                 paragraph "<span style='color:var(--hubitat-warning-color, #8a5a00); font-weight:bold;'>\u26A0 New version available:</span> v${remoteVersion} (you have v${CODE_VERSION}). ${importLink}"
                 if (selfUpdateSupported()) input "btnSelfUpdate", "button", title: "Update now"
             }
@@ -491,13 +493,10 @@ Map dashboardPage() {
                 paragraph "<span style='color:var(--hubitat-validation-color, #d32f2f); font-weight:bold;'>\u26A0 Update Recommended:</span> A newer UI version (${uiVer}) is active than this App code (${CODE_VERSION}). ${how}"
                 if (selfUpdateSupported() && !githubUpdateAvailable) input "btnSelfUpdate", "button", title: "Update now"
             }
-            paragraph "<b>App Version:</b> ${CODE_VERSION}\n<b>UI Version:</b> ${uiVer}\n<b>Hub Firmware:</b> ${hubFw ?: 'Unknown'}"
-            if (!githubUpdateAvailable) {
-                String editorPath = getAppEditorPath()
-                if (editorPath) {
-                    paragraph "<a href='${editorPath}' target='_blank'>Open App Code Editor</a>"
-                }
-            }
+            String releaseNote = !githubEnabled() ? "GitHub checks are off" : !remoteVersion ? "latest release not checked yet" :
+                githubUpdateAvailable ? "v${remoteVersion} is available" :
+                isNewer(CODE_VERSION, remoteVersion) ? "newer than the latest release, v${remoteVersion}" : "latest release"
+            paragraph "<b>App Version:</b> ${CODE_VERSION} (${releaseNote})\n<b>UI Version:</b> ${uiVer}\n<b>Hub Firmware:</b> ${hubFw ?: 'Unknown'}"
         }
 
         section("Dashboard") {
@@ -527,6 +526,11 @@ Map settingsPage() {
     dynamicPage(name: "settingsPage", title: "Settings") {
         section {
             paragraph "<i>Snapshots, checkpoints, and trigger switches re-arm when you save this page. After updating the app or UI code, open Settings and click <b>Done</b>.</i>"
+        }
+
+        section("Updates") {
+            input "githubAccess", "bool", title: "Check GitHub for new releases and download the dashboard page", defaultValue: true
+            paragraph "<i>Turn off to stop every request to GitHub. The app then never reports a new release, and after an app code update you upload <b>${UI_FILE}</b> to File Manager yourself.</i>"
         }
 
         section("Config Snapshots") {
@@ -637,7 +641,8 @@ Map serveUI() {
             // doesn't serve the previous version. On failure the old UI is served as before.
             if (syncUIBlocking()) html = loadUITemplate()
         }
-        if (!html) return render(status: 404, contentType: 'text/plain', data: 'UI file not found. Check hub logs.')
+        if (!html) return render(status: 404, contentType: 'text/plain', data: githubEnabled() ? 'UI file not found. Check hub logs.' :
+            "UI file not found. GitHub access is off in the app settings: upload ${UI_FILE} to File Manager.")
 
         html = html.replace('${access_token}', state.accessToken)
             .replace('${api_base}', fullLocalApiServerUrl)
@@ -691,6 +696,10 @@ Map apiReinit() {
 
 Map apiVersionCheck() {
     checkVersion()
+    if (!githubEnabled()) {
+        return jsonResponse([currentVersion: CODE_VERSION, latestVersion: null, updateAvailable: false,
+                             editorPath: getAppEditorPath(), selfUpdate: false, githubOff: true])
+    }
     String latestVersion = checkGithubVersion()
     if (!latestVersion) return jsonResponse([error: "Unable to check for updates"])
 
@@ -716,7 +725,12 @@ void appButtonHandler(String btn) {
 }
 
 private boolean selfUpdateSupported() {
-    return isVersionAtLeast(getHubFirmwareVersion(), SELF_UPDATE_MIN_FW)
+    return githubEnabled() && isVersionAtLeast(getHubFirmwareVersion(), SELF_UPDATE_MIN_FW)
+}
+
+// The "Updates" setting. Off: no request leaves for GitHub (release check, UI download, self-update).
+private boolean githubEnabled() {
+    return settings.githubAccess != false
 }
 
 // Replace this app's code with the GitHub copy. The hub refuses (returns false) a source that
@@ -5218,6 +5232,13 @@ void updated() {
     // settings change isn't masked by stale data for up to the cache TTL.
     TTL_CACHE.clear()   // N1: one wholesale clear — a new cache can never be missed here again
     cachedCheckpointIndex = null   // re-read the checkpoint index from FileManager on next access
+    // Ask GitHub now: after a code update the page must not compare against a version seen before it.
+    if (githubEnabled()) {
+        state.lastGithubVersionCheck = 0L
+        checkGithubVersion()
+    } else {
+        state.remove('lastGithubVersion')   // clears the "update available" badge
+    }
     // C2: auto-disable debug logging after 30 min so it can't be left on indefinitely
     if (settings.debugLogging || settings.traceEnable) runIn(1800, 'logsOff')
     runIn(1, 'syncUIForced')
@@ -5261,6 +5282,7 @@ private boolean checkOAuth() {
 
 // Async UI sync — used by scheduled job and lifecycle paths. Fire-and-forget.
 void syncUI(boolean force = false) {
+    if (!githubEnabled()) return
     if (!force && state.lastInstalledVersion == CODE_VERSION) {
         long lastCheck = state.lastUIUpdateCheck ?: 0
         if (now() - lastCheck < 86400000) return
@@ -5279,6 +5301,7 @@ void syncUICallback(resp, data) {
 
 // Blocking UI sync — only for emergency recovery (file missing) and explicit API endpoint.
 private boolean syncUIBlocking() {
+    if (!githubEnabled()) return false
     try {
         logInfo "Syncing UI from GitHub (blocking)..."
         String htmlText = null
@@ -5355,9 +5378,13 @@ void initialize() {
     // right after the user updates the code.
     int gh = installOffset('githubPollOffsetSec', 3600)
     String ghMin = "${gh % 60} ${gh.intdiv(60)}"
-    schedule("${ghMin} 3 * * ?", "scheduledUISync")
-    schedule("${ghMin} 4 * * ?", "scheduledVersionCheck")
-    logInfo "Daily UI sync and release check scheduled at minute ${gh.intdiv(60)} past 03:00 and 04:00"
+    schedule("${ghMin} 3 * * ?", "scheduledUISync")   // also re-arms temperature sampling; downloads nothing with GitHub off
+    if (githubEnabled()) {
+        schedule("${ghMin} 4 * * ?", "scheduledVersionCheck")
+        logInfo "Daily UI sync and release check scheduled at minute ${gh.intdiv(60)} past 03:00 and 04:00"
+    } else {
+        logInfo "GitHub access is off: no release check, no UI download"
+    }
     refreshUpdateLabel()
 
     if (settings.snapshotTriggerSwitch) {
@@ -5403,6 +5430,7 @@ void scheduledUISync() {
 void scheduledVersionCheck() {
     checkVersion()
     logSched "Running scheduled GitHub version check"
+    if (!githubEnabled()) return
     checkGithubVersion()   // stale-while-revalidate; the async callback refreshes the label
     refreshUpdateLabel()   // also reconcile the label against the already-cached version
 }

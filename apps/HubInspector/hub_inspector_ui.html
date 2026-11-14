@@ -214,7 +214,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "6.3.1";
+const CODE_VERSION = "6.3.2";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -2513,7 +2513,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
     o+='<div class="alert a-crit">\u26D4 <b>App Update Required:</b> A newer UI version ('+CODE_VERSION+') is installed than this App code ('+d.appVersion+'). <span id="appUpdHow">Use Import in Apps Code to update the app.</span></div>';
   }
   o+='<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">';
-  o+='<div><b>App Version:</b> '+d.appVersion+'</div>';
+  o+='<div><b>App Version:</b> '+d.appVersion+'<span id="appLatest"></span></div>';
   o+='<div><b>UI Version:</b> '+CODE_VERSION+'</div>';
   o+='<div class="badge '+(upToDate?'b-ok':'b-warn')+'">'+(upToDate?'In Sync':'Update Recommended')+'</div>';
   o+='</div>';
@@ -2536,9 +2536,12 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
   api('version/check').then(v=>{
     const el=document.getElementById('updateBanner');
     if(!el||v.error)return;
+    const lt=document.getElementById('appLatest');
+    if(v.githubOff){if(lt)lt.textContent=' (GitHub checks are off)';const sb=document.getElementById('btnSyncUI');if(sb)sb.style.display='none'}
+    if(lt&&v.latestVersion)lt.textContent=v.updateAvailable?' (v'+v.latestVersion+' is available)':isNewer(v.currentVersion,v.latestVersion)?' (newer than the latest release, v'+v.latestVersion+')':' (latest release)';
     if(v.updateAvailable){
       const link=v.editorPath?'<a href="'+v.editorPath+'" target="_blank" style="color:inherit;font-weight:bold">Apps Code</a>':'Apps Code';
-      const how=v.selfUpdate?'<button class="btn btn-p" id="btnSelfUpdate" style="margin-left:6px">Update now</button> or use Import in '+link+'.':'Use Import in '+link+' to update.';
+      const how=v.selfUpdate?'<button class="btn btn-p" id="btnSelfUpdate" style="margin-left:6px">Update now</button>':'Use Import in '+link+' to update.';
       el.innerHTML='<div class="alert a-warn" style="margin-bottom:12px">\u26A0 <b>New version available:</b> v'+h(v.latestVersion)+' (you have v'+h(v.currentVersion)+'). '+how+'</div>';
       const hw=document.getElementById('appUpdHow');
       if(hw&&v.selfUpdate)hw.innerHTML='Click <b>Update now</b> above.';
@@ -2559,7 +2562,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
           alert('The app code was updated but the new version has not started yet. Reload the page in a minute.');
         }catch(e){alert('Update failed: '+e.message);b.disabled=false;b.textContent='Update now'}
       };
-    } else if(v.editorPath){
+    } else if(v.editorPath&&!v.selfUpdate){
       el.innerHTML='<div style="margin-bottom:8px"><a href="'+v.editorPath+'" target="_blank" style="color:var(--link)">Open Apps Code</a></div>';
     }
   }).catch(()=>{});
