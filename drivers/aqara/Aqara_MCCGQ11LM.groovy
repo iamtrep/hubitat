@@ -66,7 +66,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "1.1.4"
+@Field static final String CODE_VERSION = "1.1.5"
 
 // A pending version reconfigure older than this is treated as lost and re-armed.
 @Field static final long RECONFIGURE_RETRY_MS = 60000L
@@ -329,11 +329,11 @@ private void runVersionCheck() {
  *     `value:` field still carries the length prefix -> parseCheckin() skips
  *     it (strPosition = 2), same as the sibling WSDCGQ11LM driver.
  *   - Button press: FF01 rides as an *additionalAttr* alongside a primary
- *     0x0005 (ModelIdentifier) mfr-specific report; the platform has already
- *     stripped the length prefix from descMap.additionalAttrs by the time it
- *     reaches parseCheckinFromMap(), so that method re-adds a one-byte "00"
- *     placeholder before delegating to parseCheckin(), keeping both paths
- *     aligned on the same strPosition = 2 skip.
+ *     0x0005 (ModelIdentifier) mfr-specific report; descMap.additionalAttrs
+ *     carries it as text (one character per byte) with the length prefix
+ *     stripped, so parseCheckinFromMap() converts it back to hex and re-adds
+ *     a one-byte "00" placeholder before delegating to parseCheckin(),
+ *     keeping both paths aligned on the same strPosition = 2 skip.
  *
  *   • len     — UINT8 byte count of everything that follows. Skipped.
  *   • tag     — 1-byte Xiaomi-proprietary attribute id (see table below).
@@ -441,15 +441,15 @@ private void parseCheckin(Map map) {
 }
 
 private void parseCheckinFromMap(Map map) {
-    // The FF01 that rides bundled with a button-press's 0x0005 frame reaches
-    // here as an additionalAttr (map.value = the raw TLV hex). Normalize into
-    // the shape parseCheckin() expects (it only reads map.value).
-    String hex = map.value
-    if (!hex) { logRx("FF01(map): empty value"); return }
+    // FF01 bundled with a button-press 0x0005 frame. zigbee.parseDescriptionAsMap()
+    // hands a char-string additionalAttr over as text, one Latin-1 character per
+    // byte, with the length prefix stripped. Turn it back into hex (a value that
+    // is already hex is kept) and prepend a placeholder byte for parseCheckin()'s
+    // strPosition = 2 skip.
+    String value = map.value
+    if (!value) { logRx("FF01(map): empty value"); return }
+    String hex = (value ==~ /[0-9a-fA-F]+/) ? value : value.collect { String ch -> String.format("%02X", (int) ch.charAt(0)) }.join("")
     logRx("FF01 via additionalAttr (button frame): ${hex}")
-    // The additionalAttrs path arrives with the ZCL char-string length prefix
-    // already stripped by the platform, so prepend a placeholder byte that
-    // parseCheckin()'s uniform prefix-skip (strPosition=2) discards.
     parseCheckin([value: "00" + hex])
 }
 

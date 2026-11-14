@@ -51,11 +51,13 @@ you silently corrupt the other *(probed firmware not recorded, C-7, MCCGQ11LM ca
 - **Button / reset press** — the frame carries `attrId 0x0005` (ModelIdentifier) **plus**
   `0xFF01`. Here `0x0005` is primary and the FF01 rides in `descMap.additionalAttrs` (from
   `zigbee.parseDescriptionAsMap`), where the platform has **already stripped** the prefix
-  ([helper reference](hubitat-zigbee-helper.md))
-  (value `0121…`). Re-add a placeholder byte so this path aligns with the standalone one *(probed firmware not recorded, C-7, MCCGQ11LM captures, July 2026)*.
+  ([helper reference](hubitat-zigbee-helper.md)) and decoded the rest to **text**, one Latin-1
+  character per byte, `0x00` bytes included (`\u0001!…` for the bytes `0121…`). Convert each
+  character back to two hex digits, then re-add a placeholder byte so this path aligns with the
+  standalone one; `Integer.parseInt(…, 16)` on the text throws `NumberFormatException` *(probed 2.5.2.135–2.5.3.124, C-8 Pro, throwaway driver, a reported MCCGQ11LM press frame)*.
 
 Align both paths on **`strPosition = 2`** (skip a two-hex-char prefix). The trap: a
-descMap-derived sample (prefix already stripped, `0121…`) tempts you to set `strPosition = 0`,
+descMap-derived sample (prefix already stripped) tempts you to set `strPosition = 0`,
 which then misparses every standalone check-in (which arrives `1D0121…`, with the prefix).
 Keep the parser prefix-skipping and normalize the stripped path instead *(inferred: from the two paths above)*.
 
@@ -68,6 +70,10 @@ Keep the parser prefix-skipping and normalize the stripped path instead *(inferr
 | Join announce | `0x0005` + `0x0001` (ApplicationVersion) | Rejoin; update model/appVersion, emit **no** button event |
 
 The shapes are those seen from MCCGQ11LM: a short press sends the press shape, a long press the join shape *(probed firmware not recorded, C-7, MCCGQ11LM captures, July 2026)*. On the MCCGQ11LM a single reset-button press (`0x0005` + `0xFF01`) is the "Effective Range Test" maintenance signal, so do not automate on it; a 3 s press rejoins (`0x0005` + `0x0001`) and sends no button event *(probed firmware not recorded, C-7, one MCCGQ11LM)*.
+
+A WSDCGQ11LM differs. A short press sends two frames, 10 to 115 ms apart and with consecutive ZCL sequence numbers: a standalone `0xFF01` check-in with the sensor values, then a `0x0005` report carrying the model string alone (payload `…0A0500420C6C756D692E77656174686572`), neither manufacturer-specific *(probed 2.5.3.118, C-7, radio capture of two WSDCGQ11LM, two presses, and one press with trace logging; probed firmware not recorded, C-7, radio capture, one WSDCGQ11LM, one press, June 2026)*. Presses on a third sensor put no `0x0000` frame on the air that the hub received, only measurement reports *(probed 2.5.3.118, C-7, radio capture, one WSDCGQ11LM)*. A rejoin sends a device announce, then `0x0005` + `0x0001`, then the `0xFF01` check-in *(probed firmware not recorded, C-7, radio capture, one WSDCGQ11LM, September 2026)*. The MCCGQ11LM press frame is manufacturer-specific (`0x115F`) *(probed firmware not recorded, C-7, radio captures of one MCCGQ11LM, five presses, July 2026)*.
+
+To tell the two WSDCGQ11LM `0x0005` reports apart in a driver: for the press, `parseDescriptionAsMap` returns no `additionalAttrs` key; for the rejoin it returns an empty `additionalAttrs` list, because the `0x0001` record after a 12-byte string is too short for it to decode ([helper reference](hubitat-zigbee-helper.md)), so the application version in that frame is never delivered *(probed 2.5.3.124, C-8 Pro, the two captured frames replayed through `parse()`)*.
 
 **Per-model tag table — tag IDs are reused with different meanings per model; do NOT copy a
 decoder across models.** Authoritative cross-check: Zigbee2MQTT `zigbee-herdsman-converters`

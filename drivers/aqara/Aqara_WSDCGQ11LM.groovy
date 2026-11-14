@@ -88,7 +88,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "2.15.7"
+@Field static final String CODE_VERSION = "2.15.8"
 
 // A pending version reconfigure older than this is treated as lost and re-armed.
 @Field static final long RECONFIGURE_RETRY_MS = 60000L
@@ -440,8 +440,9 @@ private void runVersionCheck() {
  *   - Hourly check-in: FF01 is the primary attribute and arrives via parse()'s
  *     string branch with the length prefix intact -> parseCheckin().
  *   - Button press: FF01 rides as an additionalAttr of a 0x0005 report; the
- *     platform has stripped the prefix, so parseCheckinFromMap() re-adds a
- *     placeholder byte before delegating to parseCheckin().
+ *     platform hands it over as text with the prefix stripped, so
+ *     parseCheckinFromMap() converts it to hex and re-adds a placeholder
+ *     byte before delegating to parseCheckin().
  *
  * Tag table for lumi.weather (WSDCGQ11LM). Tags 0x64+ are reused across the
  * lumi.* family for different sensors — do not copy this table verbatim into
@@ -545,11 +546,14 @@ private void parseCheckin(Map map) {
 }
 
 private void parseCheckinFromMap(Map map) {
-    // FF01 bundled with a button-press 0x0005 frame. See the parseCheckin
-    // header: this path arrives without the length prefix, so prepend a
-    // placeholder byte for parseCheckin()'s strPosition = 2 skip.
-    String hex = map.value
-    if (!hex) { logRx("FF01(map): empty value"); return }
+    // FF01 bundled with a button-press 0x0005 frame. zigbee.parseDescriptionAsMap()
+    // hands a char-string additionalAttr over as text, one Latin-1 character per
+    // byte, with the length prefix stripped. Turn it back into hex (a value that
+    // is already hex is kept) and prepend a placeholder byte for parseCheckin()'s
+    // strPosition = 2 skip.
+    String value = map.value
+    if (!value) { logRx("FF01(map): empty value"); return }
+    String hex = (value ==~ /[0-9a-fA-F]+/) ? value : value.collect { String ch -> String.format("%02X", (int) ch.charAt(0)) }.join("")
     logRx("FF01 via additionalAttr (button frame): ${hex}")
     parseCheckin([value: "00" + hex])
 }
@@ -584,11 +588,13 @@ private void parseAttributeReport(Map map) {
 }
 
 private void parseBasic(Map map) {
-    // ZCL Basic cluster (0x0000) attribute reports. attrId 0x0005 is overloaded:
-    // it is the standard ZCL ModelIdentifier, but pressing the physical reset
-    // button also surfaces on this attribute, bundled with an FF01 check-in
-    // (attrId 0xFF01, routed to parseCheckinFromMap). The join announce bundles
-    // 0x0005 + 0x0001 instead, so only the FF01-bundled frame is a press.
+    // ZCL Basic cluster (0x0000) attribute reports. attrId 0x0005 is the
+    // standard ZCL ModelIdentifier. On the sibling MCCGQ11LM a reset-button
+    // press sends it bundled with an FF01 check-in (attrId 0xFF01, routed to
+    // parseCheckinFromMap), and that bundle is what counts as a press here.
+    // A WSDCGQ11LM press instead sends an FF01 check-in and then, in a second
+    // frame, a report of 0x0005 alone; that report is the press. A rejoin
+    // sends 0x0005 + 0x0001 (ApplicationVersion) and is not a press.
 
     String value = map.value
     String encoding = map.encoding
@@ -616,8 +622,14 @@ private void parseBasic(Map map) {
             if (map.additionalAttrs?.any { Map extra -> extra.attrId == "FF01" }) {
                 logInfo("Trigger : Button pressed (0x0005 + FF01)")
                 sendEvent(name: "pushed", value: 1, isStateChange: true)
+            } else if (map.command == "0A" && map.additionalAttrs == null) {
+                // additionalAttrs is absent only when nothing follows the model
+                // string. The rejoin frame's trailing 0x0001 record is too short
+                // for the platform to decode, which leaves an empty list.
+                logInfo("Trigger : Button pressed (0x0005 alone)")
+                sendEvent(name: "pushed", value: 1, isStateChange: true)
             } else {
-                logRx("Basic 0x0005 announce (no FF01 bundled) — no button event")
+                logRx("Basic 0x0005 with other attributes or in a read response — no button event")
             }
             break
         case "4000":  // SWBuildID (Character String)
