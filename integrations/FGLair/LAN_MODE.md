@@ -244,16 +244,72 @@ http.server.HTTPServer((MY_IP, MY_PORT), H).serve_forever()
 Run this with the unit warm and toggle a few settings via the IR remote and
 the FGLair app to observe the pushes that arrive.
 
+## Update 2026-11-14: prior work and the hub as listener
+
+### Gap B is filled by published code
+
+[aioayla-lan](https://github.com/Dr-Blank/aioayla-lan) (Python, Apache-2.0, pre-alpha) implements
+Ayla Local LAN Mode and says it was tested only against Fujitsu FGLair units. Earlier
+reverse-engineering: [jakecrowley/AylaLocalAPI](https://github.com/jakecrowley/AylaLocalAPI) and
+`docs/LAN_MODE.md` in [ericboehs/ha-icomm-local](https://github.com/ericboehs/ha-icomm-local). The
+points below come from reading those sources. None of them has been checked against our unit yet.
+
+- **What the unit calls, all under the registered `uri`:**
+  - `POST <uri>/key_exchange.json`
+  - `GET <uri>/commands.json`
+  - `POST <uri>/property/datapoint.json`, plus `?cmd_id=N&status=S` when it answers a read
+  - `POST <uri>/property/datapoint/ack.json`
+- **Replies:**
+  - The key exchange is answered 200 with a bare `{"random_2":…,"time_2":…}`. Wrapped in
+    `{"key_exchange":…}`, the unit keeps retrying.
+  - `commands.json` is answered 206 while more commands are queued, which makes the unit fetch
+    again at once, and 200 otherwise.
+- **Registration:** the first `local_reg.json` call is a POST, later ones are PUTs, about every 10 s
+  (a third of `keep_alive`). The unit answers 202 when it accepts, 404 when LAN mode isn't armed,
+  412 when it has no key, and 403 when the callback address isn't on its subnet.
+- **Keys:**
+  - `build(k, m) = HMAC-SHA256(k, HMAC-SHA256(k, m) + m)`, keyed with `lanip_key`.
+  - App to unit, `m` is `random_1 + random_2 + time_1 + time_2`. Unit to app it is
+    `random_2 + random_1 + time_2 + time_1`.
+  - Sign key is `build(m + "0")`, AES-256 key is `build(m + "1")`, IV is the first 16 bytes of
+    `build(m + "2")`.
+- **Messages:**
+  - On the wire: `{"enc": b64, "sign": b64}`, AES-CBC with zero padding.
+  - The CBC chain carries across messages: the next IV is the last ciphertext block, and the
+    chain advances only after the signature verifies.
+  - The signature is HMAC-SHA256 over the plaintext JSON.
+  - Commands are `{"seq_no":n,"data":{…}}`, one command per payload. A batched list can be
+    ignored and force a re-key.
+- **One client at a time:** aioayla-lan says to run one LAN client at a time. Nothing public says
+  whether a second registration evicts the FGLair app.
+
+### The hub can't be the listener
+
+Tested against the unit on 2026-11-14 (details in `docs/hubitat-device-reference.md`, "Fujitsu /
+Ayla (FGLair)"):
+
+- **The token form is ruled out.** The unit refuses any registered `uri` longer than 24
+  characters (`400`), so the `?access_token=…&x=` form can't be registered. App endpoints need a
+  36-character token, so a Hubitat app endpoint can't receive the unit's calls.
+- **Port 39501 receives but can't answer.** The unit calls back within about 50 ms with `POST
+  <uri>/key_exchange.json`, as the published code describes, and a registration on port 39501 hands
+  that request to a driver's `parse()`. But the hub answers it itself with an empty `200`, and the
+  key exchange needs `random_2` and `time_2` in the reply.
+
+The protocol and the crypto would run on the hub (HMAC-SHA256 and AES-256-CBC with no padding work
+in the sandbox). What's missing is a way to answer the unit's HTTP request with a body. LAN control
+would need a small relay on another LAN host that speaks LAN mode to the unit and offers the hub a
+plain API. That adds a host the integration depends on.
+
 ## Status
 
-**Deferred.** Cloud-mode integration is stable as of FGLair driver v0.1.2 +
-manager v0.1.3. LAN mode is the long-term-right architecture but a meaningful
-lift that's not blocking anything today. Pick up by filling the missing capture
-first.
+**Parked.** Without an HTTP listener on the hub that can answer the unit, LAN mode needs a relay
+host. Revisit if Hubitat adds a raw TCP server socket or token-free local endpoints, or if a relay
+host becomes acceptable.
 
 ## Related
 
 - `README.md` — current cloud-mode integration overview.
 - `TODO.md` — other deferred work (Tier 3 swing/mode-toggles, errorCode/opStatus
   decoding, testing harness).
-- Captures: `tmp/fglair1.chlz`, `tmp/fglair2.chlz`.
+- Captures: `tmp/fglair1.chlz` to `tmp/fglair4.chlz`.

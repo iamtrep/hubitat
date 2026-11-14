@@ -297,6 +297,12 @@ Write quirks of the cloud path, seen on an ASUG15LZTD with an AP-WF1E module *(p
 - **Sensed temperatures go stale without a wake.** Without one, `display_temperature` and `outdoor_temperature` refresh in the cloud about once a day. A `refresh` = 1 write every 15 minutes, independent of the poll rate, caused no jam; shorter cadences were not proven *(probed firmware not recorded, one ASUG15LZTD, vendor cloud API)*.
 - **A jammed unit presents as** `adjust_temperature` stuck and ignoring fresh writes while `display_temperature` keeps updating; the vendor app also cannot change the setpoint over the cloud, though it still works on the LAN, which bypasses the cloud; the IR remote always works. Stopping writes for a few minutes drains the queue without re-registering the unit *(probed firmware not recorded, one ASUG15LZTD, vendor cloud API)*.
 
+Local LAN mode registration, on the same ASUG15LZTD with an AP-WF1E module, module firmware `E072V01P01L20-1`:
+
+- **The registered `uri` is limited to 24 characters.** `POST /local_reg.json?dsn=<DSN>` with `{"local_reg":{"uri":…,"notify":0,"ip":…,"port":…}}` answers `202` up to 24 characters and `400` from 25 on. `?`, `=` and `&` in the `uri` are accepted within that limit. So a client can't put a 36-character OAuth token in the callback URL. *(probed 2.5.3.124, C-8 Pro, throwaway app and driver)*
+- **The unit calls back about 50 ms after each accepted registration** with `POST <uri>/key_exchange.json` (HTTP/1.1, `Content-Type: application/json`) and the body `{"key_exchange":{"ver":1,"random_1":<16 chars>,"time_1":<integer>,"proto":1,"key_id":<integer>}}`. A reply it can't use (an empty `200`) brings the same request again at the next `PUT` registration, every 10 s. *(probed 2.5.3.124, C-8 Pro, throwaway app and driver)*
+- **Hub port 39501 receives the callback but can't complete it.** Registered with `port` 39501, the request reaches the `parse()` of the device whose network id is the unit's address in hex. The hub always answers it with an empty `200`, which carries no `random_2`/`time_2`, so the key exchange never completes. *(probed 2.5.3.124, C-8 Pro, throwaway app and driver)*
+
 ## Philips Hue
 
 Philips Hue (Signify) motion sensors report their model in `device.data.model` (mfr `Signify
