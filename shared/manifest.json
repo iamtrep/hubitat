@@ -1845,6 +1845,32 @@
             ]
         }
     },
+    "drivers/sinope/Sinope_TH1400ZB.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
     "drivers/sinope/Sinope_VA422xZB.groovy": {
         "logging-driver": {
             "version": 1,

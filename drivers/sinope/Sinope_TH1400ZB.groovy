@@ -1,0 +1,1001 @@
+/*
+ *  Sinope TH1400ZB Low Voltage (24 VAC) Thermostat Device Driver for Hubitat
+ *
+ *  PROTOTYPE: written from the published attribute list, not yet run on a device. Derived from the
+ *  TH13X0ZB driver in this repository; the floor-sensing attributes are shared with that model.
+ *  The TH1400ZB has no Electrical Measurement cluster and does not measure its load, so there is no power
+ *  or energy reporting. Output polarity (normally open / normally closed) has no known Zigbee attribute:
+ *  it is set on the thermostat's own menu.
+ *
+ *  Code derived from Sinope's SmartThing thermostat for their Zigbee protocol requirements, from the driver of erilaj and from the TH112xZB driver
+ *  Source: https://www.sinopetech.com/wp-content/uploads/2019/03/Sinope-Technologies-TH1300ZB-V.1.0.5-SVN-503.txt
+ *  Source: https://github.com/sacua/SinopeDriverHubitat/blob/main/drivers/TH112xZB_Sinope_Hubitat.groovy
+ *  Source: https://github.com/erilaj/hubitat/blob/main/drivers/Sinope/erilaj-Sinope-TH1300ZB.groovy
+ *  Source: https://github.com/sacua/SinopeDriverHubitat/blob/main/drivers/mergeDrivers/TH1300ZB_Sinope_Hubitat.groovy
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
+ *  in compliance with the License. You may obtain a copy of the License at:
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software distributed under the License is distributed
+ *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
+ *  for the specific language governing permissions and limitations under the License.
+ *
+ */
+
+import groovy.transform.Field
+import groovy.transform.CompileStatic
+
+@Field static final String CODE_VERSION = "0.0.1"
+
+@Field static final List<String> SUPPORTED_THERMOSTAT_MODES     = ['"off"', '"heat"']
+@Field static final List<String> SUPPORTED_THERMOSTAT_FAN_MODES = ['"auto"']
+
+metadata
+{
+    definition(
+        name: 'Sinope Low Voltage Thermostat (TH1400ZB)',
+        namespace: 'iamtrep',
+        author: 'pj',
+        description: 'Zigbee 24 VAC thermostat for hydronic, electric floor (via relay), baseboard (via relay) and furnace heating (prototype)',
+        singleThreaded: true,
+        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/drivers/sinope/Sinope_TH1400ZB.groovy"
+    ) {
+        capability 'Actuator'
+        capability 'Configuration'
+        capability 'Initialize'
+        capability 'Refresh'
+        capability 'TemperatureMeasurement'
+        capability 'Thermostat'
+
+        attribute 'floorTemperature', 'number'
+        attribute 'roomTemperature', 'number'
+        attribute 'outdoorTemperature', 'number'
+
+        attribute 'keypad', 'enum', ['locked', 'unlocked']
+
+        attribute 'heatingDemand', 'number'
+        attribute 'mainCycleOutput', 'string'
+        attribute 'auxCycleOutput', 'string'
+        attribute 'auxOutputMode', 'enum', ['off', 'on 15 min cycle', 'on 15 sec cycle', 'expansion module']
+        attribute 'auxConnectedLoad', 'number'
+        attribute 'pumpProtection', 'enum', ['on', 'off']
+        attribute 'floorSensorStatus', 'enum', ['OK', 'error']
+        attribute 'tempSensorStatus', 'enum', ['OK', 'error']
+        attribute 'floorLimitStatus', 'enum', ['OK', 'floorLimitLowReached', 'floorLimitMaxReached', 'floorAirLimitMaxReached']
+
+        command 'setClockTime'
+        command 'setKeypadLockoutMode', [ [name: "lockoutMode*",
+                                           type: "ENUM",
+                                           description: "Lock/unlock the thermostat's keypad",
+                                           constraints:["lock","unlock"]] ]
+        command 'setDynamicRatingMode', [ [name: "drMode*",
+                                           type: "ENUM",
+                                           description: "Control the flashing DR icon on the thermostat display",
+                                           constraints:["on","off"]] ]
+        command 'setBacklightMode', [ [name: "backlightMode*",
+                                       type: "ENUM",
+                                       description: "Set the thermostat display backlight mode",
+                                       constraints:["adaptive","on","off"]] ]
+        command 'setOutdoorTemperature', [ [name: "outdoorTemperature*",
+                                            type: "NUMBER",
+                                            description: "Outdoor temperature in ${getTemperatureScale()}"]]
+
+
+        fingerprint profileId: '0104', endpointId: '01', inClusters: '0000,0003,0004,0005,0201,0204,0402,0702,0B05,FF01', outClusters: '000A,0019,FF01', manufacturer: 'Sinope Technologies', model: 'TH1400ZB', deviceJoinName: 'Sinope Thermostat TH1400ZB'
+    }
+
+    preferences {
+        input name: 'prefBacklightMode', type: 'enum', title: 'Display backlight', options: ['off': 'On Demand', 'adaptive': 'Adaptive (default)', 'on': 'Always On'], defaultValue: 'adaptive', required: true
+        input name: 'prefDisplayOutdoorTemp', type: 'bool', title: 'Display outdoor temperature', defaultValue: true
+        input name: 'prefSecondTempDisplay', type: 'enum', title: 'Secondary Temp. Display', options:['auto': 'Auto (default)', 'setpoint': 'Setpoint', 'outdoor': 'Outdoor', 'roomTemperature': 'Room'], defaultValue: 'auto', required: true
+        input name: 'prefTimeFormatParam', type: 'enum', title: 'Time Format', options:['24h', '12h AM/PM'], defaultValue: '24h', multiple: false, required: true
+        input name: 'prefAirFloorModeParam', type: 'enum', title: 'Control mode (Floor or Ambient temperature)', description: 'Leave unset to keep the thermostat setting (ambient from the factory). Floor mode needs a floor sensor.', options: ['Ambient', 'Floor'], multiple: false, required: false
+        input name: 'prefFloorSensorTypeParam', type: 'enum', title: 'Floor sensor type', description: 'Leave unset to keep the thermostat setting.', options: ['10k', '12k'], multiple: false, required: false
+        input name: 'prefMaxAirTemperature', type: 'number', title:'Ambient high limit (5C to 36C / 41F to 97F)', description: 'The maximum ambient temperature limit when in floor control mode.', range: '5..97', required: false
+        input name: 'prefMinFloorTemperature', type: 'number', title:'Floor low limit (5C to 36C / 41F to 97F)', description: 'The minimum temperature limit of the floor when in ambient control mode.', range:'5..97', required: false
+        input name: 'prefMaxFloorTemperature', type: 'number', title:'Floor high limit (5C to 36C / 41F to 97F)', description: 'The maximum temperature limit of the floor when in ambient control mode.', range:'5..97', required: false
+        input name: 'prefMinHeatingSetpoint', type: 'number', title: 'Min heat setpoint (5C to 36C / 41F to 97F)', description: 'Clamps the lowest heat setpoint the device will accept.', range: '5..97', required: false
+        input name: 'prefMaxHeatingSetpoint', type: 'number', title: 'Max heat setpoint (5C to 36C / 41F to 97F)', description: 'Clamps the highest heat setpoint the device will accept.', range: '5..97', required: false
+        input name: 'prefCycleLength', type: 'enum', title: 'Main output cycle length', description: 'Leave unset to keep the thermostat setting. 15 seconds is for electronic relays and solid-state relays only.', options: ['15': '15 seconds (electronic relay / SSR)', '300': '5 minutes', '600': '10 minutes', '900': '15 minutes', '1200': '20 minutes', '1800': '30 minutes'], required: false
+        input name: 'prefAuxCycleLength', type: 'enum', title: 'Auxiliary output cycle length', description: 'Leave unset to keep the thermostat setting.', options: ['15': '15 seconds (electronic relay / SSR)', '300': '5 minutes', '600': '10 minutes', '900': '15 minutes', '1200': '20 minutes', '1800': '30 minutes', '65535': 'Off'], required: false
+        input name: 'prefAuxOutputMode', type: 'enum', title: 'Auxiliary output mode', description: 'Leave unset to keep the thermostat setting.', options: ['0': 'Off', '1': 'On, 15 minute cycle', '2': 'On, 15 second cycle', '3': 'Expansion module (TR1310)'], required: false
+        input name: 'prefAuxConnectedLoad', type: 'number', title: 'Auxiliary connected load (W)', description: '0 to 20000 W, 0 turns the auxiliary load off. Leave blank to keep the thermostat setting.', range: '0..20000', required: false
+        input name: 'prefPumpProtection', type: 'bool', title: 'Pump protection', description: 'Runs the main output for 1 minute every 24 hours to keep a circulator from seizing. Shows the thermostat setting after a refresh.', required: false
+        input name: 'prefTempCalibration', type: 'number', title: 'Local temperature calibration', description: 'Offset applied to the local temperature reading (±2.5 °C / ±4.5 °F).', range: '-5..5', required: false
+        input name: 'prefDynamicRatingPI', type: 'enum', title: 'Limit PI heating', description: 'Limit PI heating when DR Icon is on', options:[255: '100 (default)', 75: '75', 50: '50', 25: '25'], defaultValue: '255', required: true
+
+        input name: 'prefMinTempChange', type: 'number', title: 'Temperature change', description: 'Minumum change of temperature reading to trigger report in Celsius/100, 5..50', range: '5..50', defaultValue: 50
+        input name: 'prefMinPIChange', type: 'number', title: 'Heating change', description: 'Minimum change in the PI heating in % to trigger PI heating reporting, 1..25', range: '1..25', defaultValue: 5
+        input name: 'txtEnable',   type: 'bool', title: 'Enable info logging', defaultValue: true
+        input name: 'debugEnable', type: 'bool', title: 'Enable debug level logging', defaultValue: false, submitOnChange: true
+        if (debugEnable) {
+            input name: 'traceEnable', type: 'bool', title: 'Enable trace level logging', description: 'For driver development', defaultValue: false
+        }
+    }
+}
+
+@Field static final Map constBacklightModes = [ 'off': 0x0, 'adaptive': 0x1, 'on': 0x1,
+                                                0x0: 'off', 0x1: 'on' ]
+@Field static final Map constSecondTempDisplayModes =  [ 0x0 : 'auto', 0x01: 'setpoint', 0x02: 'outdoor', 0x04: 'roomTemperature',
+                                                        'auto': 0x0, 'setpoint': 0x1, 'outdoor': 0x2, 'roomTemperature': 0x4 ]
+// Cycle lengths in seconds (0x0201 0x0401 main, 0x0201 0x0404 auxiliary); 15 s is for electronic/solid-state relays.
+// The preferences block cannot see @Field constants, so the same lists are repeated in the input options there.
+@Field static final Map constMainCycleOptions = [ '15': '15 seconds (electronic relay / SSR)', '300': '5 minutes', '600': '10 minutes',
+                                                 '900': '15 minutes', '1200': '20 minutes', '1800': '30 minutes' ]
+@Field static final Map constAuxCycleOptions = [ '15': '15 seconds (electronic relay / SSR)', '300': '5 minutes', '600': '10 minutes',
+                                                '900': '15 minutes', '1200': '20 minutes', '1800': '30 minutes', '65535': 'Off' ]   // 0xFFFF = auxiliary output off
+@Field static final Map constAuxOutputModes = [ 0: 'off', 1: 'on 15 min cycle', 2: 'on 15 sec cycle', 3: 'expansion module' ]
+
+@Field static final Map constThermostatModes = [ '00': 'off', '04': 'heat' ]
+
+@Field static final Map constFloorLimitStatus = [ 'OK': 0, 'floorLimitLowReached': 1, 'floorLimitMaxReached': 2, 'floorAirLimitMaxReached': 3,
+                                                 0: 'OK', 1: 'floorLimitLowReached', 2: 'floorLimitMaxReached', 3: 'floorAirLimitMaxReached']
+
+@Field static final Map constKeypadLockoutMap = [ '00': 'unlocked', '01': 'locked' ]
+
+
+//-- Capabilities -----------------------------------------------------------------------------------------
+
+void configure() {
+    logCfg('configure()')
+    state.version = CODE_VERSION  // installed()/updated() route here; keep parse() from re-firing configure()
+    // Left behind by the getNeighbors/getRoutes commands removed in June 2026.
+    state.remove('neighborTable')
+    state.remove('routeTable')
+
+    // Set unused default values
+    sendEvent(name: 'coolingSetpoint', value:getTemperature('0BB8')) // 0x0BB8 =  30 Celsius
+    sendEvent(name: 'thermostatFanMode', value:'auto') // We dont have a fan, so auto it is
+    sendEvent(name: 'supportedThermostatFanModes', value: SUPPORTED_THERMOSTAT_FAN_MODES)
+    sendEvent(name: 'supportedThermostatModes',    value: SUPPORTED_THERMOSTAT_MODES)
+
+    unschedule()
+
+    runIn(10, 'refreshClockTime')
+
+    List<String> cmds = []
+    cmds += zigbee.configureReporting(0x0201, 0x0000, 0x29, 30, 580, (int) (prefMinTempChange ?: 50))   // local temperature
+    cmds += zigbee.configureReporting(0x0201, 0x0008, 0x20, 59, 590, (int) (prefMinPIChange ?: 5))      // PI heating demand
+    cmds += zigbee.configureReporting(0x0201, 0x0012, 0x29, 15, 3600, 40)                                // occupied heating setpoint
+    cmds += zigbee.configureReporting(0x0204, 0x0000, 0x30, 1, 0)                                       // temperature display mode (change-of-value only, 1s debounce)
+    cmds += zigbee.configureReporting(0x0204, 0x0001, 0x30, 1, 0)                                       // keypad lockout (change-of-value only, 1s debounce)
+    cmds += zigbee.configureReporting(0xFF01, 0x010C, 0x30, 10, 3600, 1, [mfgCode: '0x119C'])           // floor limit status
+    cmds += zigbee.configureReporting(0xFF01, 0x0200, 0x1b, 10, 3600, 0x60, [mfgCode: '0x119C'])        // device status bitmap — watch bits 5 (floor) + 6 (temp)
+
+    cmds += zigbee.readAttribute(0xFF01, 0x0003, [mfgCode: '0x119C'])  // firmware number
+    cmds += zigbee.readAttribute(0xFF01, 0x0004, [mfgCode: '0x119C'])  // firmware version
+
+    // Configure displayed scale
+    if (getTemperatureScale() == 'C') {
+        cmds += zigbee.writeAttribute(0x0204, 0x0000, 0x30, 0)    // Wr °C on thermostat display
+    } else {
+        cmds += zigbee.writeAttribute(0x0204, 0x0000, 0x30, 1)    // Wr °F on thermostat display
+    }
+
+    // Configure display mode
+    runIn(1, 'setBacklightMode')
+
+    // Configure secondary display
+    runIn(1, 'setSecondTempDisplay')
+
+    //Configure Clock Format
+    if (prefTimeFormatParam == '12h AM/PM') { //12h AM/PM "24h"
+        logCfg('Set to 12h AM/PM')
+        cmds += zigbee.writeAttribute(0xFF01, 0x0114, 0x30, 0x0001, [mfgCode: '0x119C'])
+    } else { //24h
+        logCfg('Set to 24h')
+        cmds += zigbee.writeAttribute(0xFF01, 0x0114, 0x30, 0x0000, [mfgCode: '0x119C'])
+    }
+
+    // Configure outdoor temperature display timeout
+    if (prefDisplayOutdoorTemp) {
+        cmds += zigbee.writeAttribute(0xFF01, 0x0011, 0x21, 10800, [mfgCode: '0x119C'])  // 3 hour timeout
+    } else {
+        // 12s is the Sinopé "disabled" sentinel (below the 3600..18000s active range).
+        cmds += zigbee.writeAttribute(0xFF01, 0x0011, 0x21, 12, [mfgCode: '0x119C'])
+    }
+
+    // Control mode and floor sensor type are written only when set: many TH1400ZB installs control on the
+    // room temperature with no floor sensor, and ambient is the factory default.
+    if (prefAirFloorModeParam == 'Ambient') {
+        logCfg('Set to Ambient mode')
+        cmds += zigbee.writeAttribute(0xFF01, 0x0105, 0x30, 0x0001, [mfgCode: '0x119C'])
+    } else if (prefAirFloorModeParam == 'Floor') {
+        logCfg('Set to Floor mode')
+        cmds += zigbee.writeAttribute(0xFF01, 0x0105, 0x30, 0x0002, [mfgCode: '0x119C'])
+    }
+
+    if (prefFloorSensorTypeParam == '12k') {
+        logCfg('Sensor type is 12k')
+        cmds += zigbee.writeAttribute(0xFF01, 0x010B, 0x30, 0x0001, [mfgCode: '0x119C'])
+    } else if (prefFloorSensorTypeParam == '10k') {
+        logCfg('Sensor type is 10k')
+        cmds += zigbee.writeAttribute(0xFF01, 0x010B, 0x30, 0x0000, [mfgCode: '0x119C'])
+    }
+
+    //Set temperature limit for floor or air
+    if (prefMaxAirTemperature) {
+        Integer maxAirTemperatureValue
+        if (getTemperatureScale() == 'F') {
+            maxAirTemperatureValue = fahrenheitToCelsius(prefMaxAirTemperature).toInteger()
+        } else { // getTemperatureScale() == 'C'
+            maxAirTemperatureValue = prefMaxAirTemperature.toInteger()
+        }
+
+        maxAirTemperatureValue = Math.min(Math.max(5, maxAirTemperatureValue), 36) //We make sure that it is within the limit
+        maxAirTemperatureValue =  maxAirTemperatureValue * 100
+        cmds += zigbee.writeAttribute(0xFF01, 0x0108, 0x29, maxAirTemperatureValue, [mfgCode: '0x119C'])
+    }
+    else {
+        cmds += zigbee.writeAttribute(0xFF01, 0x0108, 0x29, 0x8000, [mfgCode: '0x119C'])
+    }
+
+    if (prefMinFloorTemperature) {
+        Integer floorLimitMinValue
+        if (getTemperatureScale() == 'F') {
+            floorLimitMinValue = fahrenheitToCelsius(prefMinFloorTemperature).toInteger()
+        } else { // getTemperatureScale() == 'C'
+            floorLimitMinValue = prefMinFloorTemperature.toInteger()
+        }
+
+        floorLimitMinValue = Math.min(Math.max(5, floorLimitMinValue), 36) //We make sure that it is within the limit
+        floorLimitMinValue =  floorLimitMinValue * 100
+        cmds += zigbee.writeAttribute(0xFF01, 0x0109, 0x29, floorLimitMinValue, [mfgCode: '0x119C'])
+    } else {
+        cmds += zigbee.writeAttribute(0xFF01, 0x0109, 0x29, 0x8000, [mfgCode: '0x119C'])
+    }
+
+    if (prefMaxFloorTemperature) {
+        Integer floorLimitMaxValue
+        if (getTemperatureScale() == 'F') {
+            floorLimitMaxValue = fahrenheitToCelsius(prefMaxFloorTemperature).toInteger()
+        } else { //getTemperatureScale() == 'C'
+            floorLimitMaxValue = prefMaxFloorTemperature.toInteger()
+        }
+
+        floorLimitMaxValue = Math.min(Math.max(5, floorLimitMaxValue), 36) //We make sure that it is within the limit
+        floorLimitMaxValue =  floorLimitMaxValue * 100
+        cmds += zigbee.writeAttribute(0xFF01, 0x010A, 0x29, floorLimitMaxValue, [mfgCode: '0x119C'])
+    }
+    else {
+        cmds += zigbee.writeAttribute(0xFF01, 0x010A, 0x29, 0x8000, [mfgCode: '0x119C'])
+    }
+
+    if (prefMinHeatingSetpoint) {
+        Integer minSetpoint = (getTemperatureScale() == 'F')
+            ? fahrenheitToCelsius(prefMinHeatingSetpoint).toInteger()
+            : prefMinHeatingSetpoint.toInteger()
+        minSetpoint = Math.min(Math.max(5, minSetpoint), 36) * 100
+        cmds += zigbee.writeAttribute(0x0201, 0x0015, 0x29, minSetpoint)
+    }
+    if (prefMaxHeatingSetpoint) {
+        Integer maxSetpoint = (getTemperatureScale() == 'F')
+            ? fahrenheitToCelsius(prefMaxHeatingSetpoint).toInteger()
+            : prefMaxHeatingSetpoint.toInteger()
+        maxSetpoint = Math.min(Math.max(5, maxSetpoint), 36) * 100
+        cmds += zigbee.writeAttribute(0x0201, 0x0016, 0x29, maxSetpoint)
+    }
+
+    // Each output setting below is written only when the user has set it; unset leaves the thermostat's own value.
+    // Data types: 0x21 uint16, 0x20 uint8, 0x30 enum8.
+    if (prefCycleLength) {
+        cmds += zigbee.writeAttribute(0x0201, 0x0401, 0x21, Integer.parseInt(prefCycleLength as String), [mfgCode: '0x119C'])   // main output cycle, seconds
+    }
+    if (prefAuxCycleLength) {
+        cmds += zigbee.writeAttribute(0x0201, 0x0404, 0x21, Integer.parseInt(prefAuxCycleLength as String), [mfgCode: '0x119C'])  // auxiliary output cycle, seconds, 65535 = off
+    }
+    if (prefAuxOutputMode) {
+        cmds += zigbee.writeAttribute(0xFF01, 0x0106, 0x30, Integer.parseInt(prefAuxOutputMode as String), [mfgCode: '0x119C'])
+    }
+    if (prefAuxConnectedLoad != null) {
+        // 65535 is the device's "off" value, so a preference of 0 maps to it
+        int auxLoad = Math.min(Math.max(0, (prefAuxConnectedLoad as Number).intValue()), 20000)
+        cmds += zigbee.writeAttribute(0xFF01, 0x0118, 0x21, auxLoad == 0 ? 65535 : auxLoad, [mfgCode: '0x119C'])
+    }
+    if (prefPumpProtection != null) {
+        cmds += zigbee.writeAttribute(0xFF01, 0x0128, 0x20, prefPumpProtection ? 1 : 0, [mfgCode: '0x119C'])
+    }
+
+    if (prefTempCalibration != null) {  // delta, scale linearly °F↔°C
+        Double calibCelsius = (getTemperatureScale() == 'F')
+            ? (prefTempCalibration as Double) * 5.0d / 9.0d
+            : (prefTempCalibration as Double)
+        int calibTenths = Math.round(calibCelsius * 10) as int
+        calibTenths = Math.min(Math.max(-25, calibTenths), 25)
+        cmds += zigbee.writeAttribute(0x0201, 0x0010, 0x28, calibTenths)
+    }
+
+    if (debugEnable || traceEnable) {
+        runIn(1800, 'logsOff')
+    }
+
+    sendZigbeeCommands(cmds) // Submit zigbee commands
+}
+
+void refresh() {
+    logCmd('refresh()')
+
+    List<String> cmds = []
+    cmds += zigbee.readAttribute(0x0201, 0x0000)    // Read Local Temperature
+    cmds += zigbee.readAttribute(0x0201, 0x0008)    // Read PI Heating State
+    cmds += zigbee.readAttribute(0x0201, 0x0012)    // Read Heat Setpoint
+    cmds += zigbee.readAttribute(0x0201, 0x001C)    // Read System Mode
+    cmds += zigbee.readAttribute(0x0204, 0x0000)    // Read Temperature Display Mode
+    cmds += zigbee.readAttribute(0x0204, 0x0001)    // Read Keypad Lockout
+    cmds += zigbee.readAttribute(0x0201, 0x0010)    // Read local temperature calibration
+    cmds += zigbee.readAttribute(0xFF01, 0x0107, [mfgCode: '0x119C'])    // Read floor temperature
+    cmds += zigbee.readAttribute(0xFF01, 0x0200, [mfgCode: '0x119C'])    // Read device status bitmap
+    cmds += zigbee.readAttribute(0x0201, 0x0401, [mfgCode: '0x119C'])    // Read main output cycle
+    cmds += zigbee.readAttribute(0x0201, 0x0404, [mfgCode: '0x119C'])    // Read auxiliary output cycle
+    cmds += zigbee.readAttribute(0xFF01, 0x0106, [mfgCode: '0x119C'])    // Read auxiliary output mode
+    cmds += zigbee.readAttribute(0xFF01, 0x0118, [mfgCode: '0x119C'])    // Read auxiliary connected load
+    cmds += zigbee.readAttribute(0xFF01, 0x0128, [mfgCode: '0x119C'])    // Read pump protection
+
+    sendZigbeeCommands(cmds) // Submit zigbee commands
+}
+
+void installed() {
+    logCfg('installed()')
+    configure()
+    refresh()
+}
+
+void initialize() {
+    // refresh() not configure() — Zigbee reconfigure on every hub startup wastes radio bandwidth
+    logCfg('initialize()')
+    refresh()
+    // One-shot runIn chains: a run that fell due while the hub was down is dropped, ending the chain
+    runIn(10, 'refreshClockTime')
+}
+
+void updated() {
+    logCfg('updated()')
+
+    if (!state.updatedLastRanAt || now() >= state.updatedLastRanAt + 5000) {
+        state.updatedLastRanAt = now()
+        configure()
+        refresh()
+    }
+}
+
+void uninstalled() {
+    logCfg('uninstalled()')
+}
+
+void deviceTypeUpdated() {
+    logDebug "driver change detected"
+    configure()
+}
+
+
+void heat() {
+    logCmd('heat(): mode set')
+
+    List<String> cmds = []
+    cmds += zigbee.writeAttribute(0x0201, 0x001C, 0x30, 04, [:], 1000)
+    cmds += zigbee.readAttribute(0x0201, 0x001C)
+
+    sendZigbeeCommands(cmds)
+}
+
+void off() {
+    logCmd('off(): mode set')
+
+    List<String> cmds = []
+    cmds += zigbee.writeAttribute(0x0201, 0x001C, 0x30, 0)
+    //cmds += zigbee.readAttribute(0x0201, 0x0008)
+    cmds += zigbee.readAttribute(0x0201, 0x001C)
+
+    sendZigbeeCommands(cmds)
+}
+
+void auto() {
+    logWarn('auto(): mode is not available for this device. => Defaulting to heat mode instead.')
+    heat()
+}
+
+void cool() {
+    logWarn('cool(): mode is not available for this device. => Defaulting to heat mode instead.')
+    heat()
+}
+
+void emergencyHeat() {
+    logWarn('emergencyHeat(): mode is not available for this device. => Defaulting to heat mode instead.')
+    heat()
+}
+
+void fanAuto() {
+    logWarn('fanAuto(): mode is not available for this device')
+}
+
+void fanCirculate() {
+    logWarn('fanCirculate(): mode is not available for this device')
+}
+
+void fanOn() {
+    logWarn('fanOn(): mode is not available for this device')
+}
+
+void setCoolingSetpoint(BigDecimal degrees) {
+    logWarn("setCoolingSetpoint(${degrees}): is not available for this device")
+}
+
+void setHeatingSetpoint(BigDecimal preciseDegrees) {
+    if (preciseDegrees != null) {
+        unschedule('applyHeatingSetpoint')
+        state.setPoint = preciseDegrees
+        runInMillis(500, 'applyHeatingSetpoint')
+    }
+}
+
+private void applyHeatingSetpoint() {
+    if (state.setPoint != device.currentValue('heatingSetpoint')) {
+        String temperatureScale = getTemperatureScale()
+        BigDecimal degrees = state.setPoint as BigDecimal
+
+        logCmd("setHeatingSetpoint(${degrees}:${temperatureScale})")
+        state.lastDigitalSetpointAt = now()
+
+        Float celsius = (temperatureScale == 'C') ? degrees.floatValue() : (fahrenheitToCelsius(degrees) as Float).round(2)
+        int celsius100 = Math.round(celsius * 100)
+
+        // Chained readAttribute forces a Read Response on no-op writes
+        // (same setpoint) — otherwise the command-retry watchdog times out.
+        List<String> cmds = []
+        cmds += zigbee.writeAttribute(0x0201, 0x0012, 0x29, celsius100)
+        cmds += zigbee.readAttribute(0x0201, 0x0012)
+        sendZigbeeCommands(cmds)
+    }
+}
+
+void setThermostatFanMode(String fanmode) {
+    logWarn("setThermostatFanMode(${fanmode}): is not available for this device")
+}
+
+void setThermostatMode(String value) {
+    logCmd("setThermostatMode(${value})")
+
+    switch (value) {
+        case 'heat':
+        case 'emergency heat':
+        case 'auto':
+        case 'cool':
+            heat()
+            break
+
+        case 'off':
+            off()
+            break
+    }
+}
+
+
+// Zigbee message parsing
+
+void parse(String description) {
+    if (state.version != CODE_VERSION) {
+        logVer("new version: ${CODE_VERSION} (was: ${state.version})")
+        state.version = CODE_VERSION
+        runInMillis(1, 'configure')
+    }
+
+    Map descMap = zigbee.parseDescriptionAsMap(description)
+    logTrace("parse() - description = ${descMap}")
+
+    if (descMap.attrId != null) {
+        // device attribute report
+        parseAttributeReport(descMap)
+        descMap.additionalAttrs?.each { add ->
+            add.cluster = descMap.cluster
+            add.clusterInt = descMap.clusterInt
+            parseAttributeReport(add)
+        }
+    } else if (descMap.profileId == "0000") {
+        // ZigBee Device Object (ZDO) command
+        logTrace("Unhandled ZDO command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
+    } else if (descMap.profileId == "0104" && descMap.clusterId != null) {
+        // ZigBee Home Automation (ZHA) global command
+        logTrace("Unhandled ZHA global command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
+    } else if (description?.startsWith('enroll request')) {
+        logRx "Received enroll request"
+    } else if (description?.startsWith('zone status')  || description?.startsWith('zone report')) {
+        logRx "Zone status: $description"
+    } else {
+        logWarn("Unhandled unknown command ($description): cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
+    }
+}
+
+private void parseAttributeReport(Map descMap) {
+    Map map = [:]
+
+    logTrace("Parsing attribute report: cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
+
+    // Main switch over all available cluster IDs inClusters: '0000,0003,0004,0005,0201,0204,0402,0702,0B05,FF01'
+    //
+    switch (descMap.clusterInt) {
+        case 0x0000: // Basic cluster
+        case 0x0003: // Identify cluster
+        case 0x0004: // Groups cluster
+        case 0x0005: // Scenes cluster
+            break
+
+        case 0x0201: // Thermostat cluster
+            switch (descMap.attrInt) {
+                case 0x0000:
+                    int raw0000 = hexToSignedInt16(descMap.value)
+                    if (raw0000 == 0x7FFD || raw0000 == 0x7FFF || raw0000 == -32768) {
+                        logWarn("Sensor error on cluster ${descMap.cluster}")
+                        map = [:]
+                        break
+                    }
+                    map.name = 'temperature'
+                    map.value = getTemperature(descMap.value)
+                    map.unit = getTemperatureScale()
+                    map.descriptionText = "Temperature of ${device.displayName} is at ${map.value}${map.unit}"
+                    runIn(1, 'refreshSecondTemp')  // floor and room temperatures follow each local temperature report
+                    break
+
+                case 0x0008:
+                    map.name = 'thermostatOperatingState'
+                    map.value = getHeatingDemand(descMap.value)
+                    map.descriptionText = "${device.displayName} is at ${map.value}% heating demand"
+                    sendEvent(name: 'heatingDemand', value: map.value, unit: '%', descriptionText: "${device.displayName} is heating at ${map.value}% of its capacity")
+                    map.value = (map.value < 5) ? 'idle' : 'heating'
+                    break
+
+                case 0x0012:
+                    int raw0012 = hexToSignedInt16(descMap.value)
+                    if (raw0012 == 0x7FFD || raw0012 == 0x7FFF || raw0012 == -32768) {
+                        logWarn("Invalid heating setpoint: ${descMap.value}")
+                        break
+                    }
+                    map.name = 'heatingSetpoint'
+                    map.value = getTemperature(descMap.value)
+                    map.unit = getTemperatureScale()
+                    // 5s digital window — chained write+read produces two echoes
+                    long sincedigital = now() - ((state.lastDigitalSetpointAt ?: 0L) as long)
+                    map.type = (sincedigital < 5000L) ? 'digital' : 'physical'
+                    map.descriptionText = "${device.displayName} heating setpoint is ${map.value}${map.unit} [${map.type}]"
+                    sendEvent(name: 'thermostatSetpoint', value: map.value, unit: getTemperatureScale()) // For interoperability with SharpTools
+                    break
+
+                case 0x001C:
+                    map.name = 'thermostatMode'
+                    map.value = constThermostatModes[descMap.value]
+                    map.descriptionText = "${device.displayName} mode is set to ${map.value}"
+                    break
+
+                case 0x0010: // local temperature calibration
+                    Double offset = getTemperatureOffset(descMap.value)
+                    logTrace("Local temperature calibration is ${offset}")
+                    if (offset != null) {
+                        device.updateSetting('prefTempCalibration', [value: offset, type: 'number'])
+                    }
+                    break
+
+                case 0x0401: // main output cycle length, seconds
+                    int mainCycle = Integer.parseInt(descMap.value, 16)
+                    map.name = 'mainCycleOutput'
+                    map.value = cycleLabel(mainCycle)
+                    map.descriptionText = "${device.displayName} main output cycle is ${map.value}"
+                    if (constMainCycleOptions.containsKey(mainCycle.toString())) {
+                        device.updateSetting('prefCycleLength', [value: mainCycle.toString(), type: 'enum'])
+                    } else {
+                        logWarn("Unexpected main output cycle length: ${mainCycle} s")
+                    }
+                    break
+
+                case 0x0404: // auxiliary output cycle length, seconds, 65535 = off
+                    int auxCycle = Integer.parseInt(descMap.value, 16)
+                    map.name = 'auxCycleOutput'
+                    map.value = cycleLabel(auxCycle)
+                    map.descriptionText = "${device.displayName} auxiliary output cycle is ${map.value}"
+                    if (constAuxCycleOptions.containsKey(auxCycle.toString())) {
+                        device.updateSetting('prefAuxCycleLength', [value: auxCycle.toString(), type: 'enum'])
+                    } else {
+                        logWarn("Unexpected auxiliary output cycle length: ${auxCycle} s")
+                    }
+                    break
+
+                case 0x0402: // display backlight echo — no updateSetting; 'adaptive'/'on' collide on 0x1
+                    logTrace("Display backlight echo: ${descMap.value}")
+                    break
+
+                default:
+                    logTrace("Unhandled thermostat cluster attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
+                    break
+            }
+            break
+
+        case 0x0204: // thermostat user interface config
+            switch (descMap.attrInt) {
+                case 0x0000: // temperature display mode echo — no event, no setting drift to sync
+                    logTrace("Temperature display mode echo: ${descMap.value}")
+                    break
+                case 0x0001:
+                    map.name = 'keypad'
+                    map.value = constKeypadLockoutMap[descMap.value]
+                    map.descriptionText = "${device.displayName} is ${map.value}"
+                    break
+                default:
+                    logTrace("Unhandled thermostat UI cluster attribute - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
+                    break
+            }
+            break
+
+        case 0x0402: // Temperature measurement cluster
+            if (descMap.attrInt == 0x0000) {
+                int raw0402 = hexToSignedInt16(descMap.value)
+                if (raw0402 == 0x7FFD || raw0402 == 0x7FFF || raw0402 == -32768) {
+                    logWarn("Sensor error on cluster ${descMap.cluster}")
+                    map = [:]
+                    break
+                }
+                map.name = 'temperature' // TODO - already sending a temperature event on cluster 0x0201 attr 0x0000
+                map.value = getTemperature(descMap.value)
+                map.unit = getTemperatureScale()
+                map.descriptionText = "${device.displayName} temperature is ${map.value}${map.unit}"
+                break
+            }
+            break
+
+        case 0x0702: // listed in the fingerprint but not used: the thermostat does not measure its load
+        case 0x0B05: // Diagnostics cluster
+            break
+
+        case 0xFF01: // Sinope custom cluster
+            switch (descMap.attrInt) {
+                case 0x0003: // firmware number (uint16)
+                    String fwNumber = Integer.parseInt(descMap.value, 16).toString()
+                    logTrace("Firmware number: ${fwNumber}")
+                    device.updateDataValue('firmwareNumber', fwNumber)
+                    break
+
+                case 0x0004: // firmware version (CharacterString)
+                    String fwVersion = decodeZigbeeCharString(descMap.value)
+                    logTrace("Firmware version: ${fwVersion} (raw=${descMap.value})")
+                    if (fwVersion != null && !fwVersion.isEmpty()) {
+                        device.updateDataValue('firmwareVersion', fwVersion)
+                    }
+                    break
+
+                case 0x0010: // outdoor temperature update
+                    logTrace("Outdoor temperature updated to ${descMap.value}")
+                    // no event needed
+                    break
+
+                case 0x010C: // Floor limit status
+                    String floorLimit = constFloorLimitStatus[Integer.parseInt(descMap.value, 16)]
+                    if (floorLimit == null) {
+                        logWarn("Unknown floor limit status code: ${descMap.value}")
+                        break
+                    }
+                    map.name = 'floorLimitStatus'
+                    map.value = floorLimit
+                    map.descriptionText = "${device.displayName} floor limit status is ${map.value}"
+                    break
+
+                case 0x010D:
+                    int raw010D = hexToSignedInt16(descMap.value)
+                    if (raw010D == 0x7FFD || raw010D == 0x7FFF || raw010D == -32768) {
+                        logWarn("Room sensor error")
+                        break
+                    }
+                    map.name = 'roomTemperature'
+                    map.value = getTemperature(descMap.value)
+                    map.unit = getTemperatureScale()
+                    map.descriptionText = "${device.displayName} room temperature is ${map.value}${map.unit}"
+                    break
+
+                case 0x0012: // secondary temperature display update
+                    String secondTempMode = constSecondTempDisplayModes[Integer.parseInt(descMap.value, 16)]
+                    logTrace("Secondary temp display mode is ${secondTempMode}")
+                    if (secondTempMode != null) {
+                        device.updateSetting('prefSecondTempDisplay', [value: secondTempMode, type: 'enum'])
+                    }
+                    // no event needed
+                    break
+
+                case 0x0020: // clock time update
+                    logTrace("Clock time is ${descMap.value}")
+                    break
+
+                case 0x0107:
+                    int raw0107 = hexToSignedInt16(descMap.value)
+                    if (raw0107 == 0x7FFD || raw0107 == 0x7FFF || raw0107 == -32768) {
+                        logWarn("Floor sensor error")
+                        break
+                    }
+                    map.name = 'floorTemperature'
+                    map.value = getTemperature(descMap.value)
+                    map.unit = getTemperatureScale()
+                    map.descriptionText = "${device.displayName} floor temperature is ${map.value}${map.unit}"
+                    break
+
+                case 0x0106: // auxiliary output mode
+                    int auxModeCode = Integer.parseInt(descMap.value, 16)
+                    String auxMode = constAuxOutputModes[auxModeCode]
+                    if (auxMode == null) {
+                        logWarn("Unknown auxiliary output mode code: ${descMap.value}")
+                        break
+                    }
+                    map.name = 'auxOutputMode'
+                    map.value = auxMode
+                    map.descriptionText = "${device.displayName} auxiliary output mode is ${auxMode}"
+                    device.updateSetting('prefAuxOutputMode', [value: auxModeCode.toString(), type: 'enum'])
+                    break
+
+                case 0x0118: // auxiliary connected load, W, 65535 = off
+                    int auxLoadRaw = Integer.parseInt(descMap.value, 16)
+                    map.name = 'auxConnectedLoad'
+                    map.value = (auxLoadRaw == 0xFFFF) ? 0 : auxLoadRaw
+                    map.unit = 'W'
+                    map.descriptionText = "${device.displayName} auxiliary connected load is " + ((auxLoadRaw == 0xFFFF) ? 'off' : "${auxLoadRaw}W")
+                    if (auxLoadRaw != 0xFFFF) {
+                        device.updateSetting('prefAuxConnectedLoad', [value: auxLoadRaw, type: 'number'])
+                    }
+                    break
+
+                case 0x0128: // pump protection
+                    boolean pumpOn = Integer.parseInt(descMap.value, 16) != 0
+                    map.name = 'pumpProtection'
+                    map.value = pumpOn ? 'on' : 'off'
+                    map.descriptionText = "${device.displayName} pump protection is ${map.value}"
+                    device.updateSetting('prefPumpProtection', [value: pumpOn, type: 'bool'])
+                    break
+
+                case 0x0200: // device status bitmap32 — bit 5 = floor sensor, bit 6 = temp sensor (bit set = error)
+                    long status = Long.parseLong(descMap.value, 16)
+                    String floorState = ((status & 0x20L) != 0L) ? 'error' : 'OK'
+                    String tempState  = ((status & 0x40L) != 0L) ? 'error' : 'OK'
+                    logTrace("device status bitmap: 0x${descMap.value} (floor=${floorState}, temp=${tempState})")
+                    sendEvent(name: 'floorSensorStatus', value: floorState, descriptionText: "${device.displayName} floor sensor is ${floorState}")
+                    sendEvent(name: 'tempSensorStatus',  value: tempState,  descriptionText: "${device.displayName} temperature sensor is ${tempState}")
+                    break
+
+                default:
+                    logRx("unhandled custom attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
+                    break
+            }
+            break
+
+        default:
+            logRx("Unhandled attribute report - cluster ${descMap.cluster} attribute ${descMap.attrId} value ${descMap.value}")
+            break
+    }
+
+    if (map) {
+        // descriptionText already includes the device label — bypass logInfo() to avoid doubling.
+        // The thermostat re-reports an unchanged setpoint every few minutes and the output settings on each refresh;
+        // floor and room temperature are read back after every temperature report.
+        boolean routine = map.name in ['floorTemperature', 'roomTemperature'] ||
+                          (map.name in ['heatingSetpoint', 'mainCycleOutput', 'auxCycleOutput', 'auxOutputMode', 'auxConnectedLoad', 'pumpProtection'] &&
+                           map.value == device.currentValue(map.name as String))
+        if (map.descriptionText) {
+            if (routine) {
+                if (debugEnable) log.debug(map.descriptionText)
+            } else if (txtEnable != false) {
+                log.info(map.descriptionText)
+            }
+        }
+        sendEvent(map)
+    }
+}
+
+// Custom commands
+
+void setClockTime() {
+    Date thermostatDate = new Date()
+    long thermostatTimeSec = thermostatDate.getTime().intdiv(1000)
+    int thermostatTimezoneOffsetSec = thermostatDate.getTimezoneOffset() * 60
+    int currentTimeToDisplay = Math.round(thermostatTimeSec - thermostatTimezoneOffsetSec - 946684800) //time from 2000-01-01 00:00
+
+    List<String> cmds = []
+    cmds += zigbee.writeAttribute(0xFF01, 0x0020, 0x23, currentTimeToDisplay, [mfgCode: '0x119C'])
+    sendZigbeeCommands(cmds)
+}
+
+void setDynamicRatingMode(String drState) {
+    List<String> cmds = []
+
+    switch (drState) {
+        case 'on':
+            cmds += zigbee.writeAttribute(0xFF01, 0x0071, 0x28, (int) 0, [mfgCode: '0x119C'])
+            cmds += zigbee.writeAttribute(0xFF01, 0x0072, 0x20, (int) Integer.parseInt((prefDynamicRatingPI ?: '255') as String), [mfgCode: '0x119C'])
+            break
+        case 'off':
+            cmds += zigbee.writeAttribute(0xFF01, 0x0071, 0x28, (int) -128, [mfgCode: '0x119C'])
+            cmds += zigbee.writeAttribute(0xFF01, 0x0072, 0x20, (int) 255, [mfgCode: '0x119C'])
+            cmds += zigbee.writeAttribute(0xFF01, 0x0073, 0x20, (int) 255, [mfgCode: '0x119C'])
+            break
+        default:
+            logError("Invalid DR state ${drState}")
+            return
+    }
+
+    sendZigbeeCommands(cmds)
+}
+
+void setKeypadLockoutMode(String lockoutMode) {
+    List<String> cmds = []
+
+    switch (lockoutMode) {
+        case 'lock':
+            cmds += zigbee.writeAttribute(0x0204, 0x0001, 0x30, 0x01)
+            break
+
+        case 'unlock':
+            cmds += zigbee.writeAttribute(0x0204, 0x0001, 0x30, 0x00)
+            break
+
+        default:
+            logError("Invalid keypad lockout request ${lockoutMode}")
+            return
+    }
+
+    sendZigbeeCommands(cmds)
+}
+
+void setOutdoorTemperature(BigDecimal outdoorTemperature) {
+    if (outdoorTemperature == null) {
+        return
+    }
+
+    double outdoorTemp = outdoorTemperature.toDouble()
+    String tempScale = getTemperatureScale()
+    logCmd("Received outdoor weather report : ${outdoorTemp} ${tempScale}")
+
+    sendEvent(name: 'outdoorTemperature', value: outdoorTemp, unit: tempScale, descriptionText: "${device.displayName} outdoor temperature set to ${outdoorTemp}${tempScale}")
+
+    // the value sent to the thermostat must be in C
+    if (tempScale == 'F') {
+        outdoorTemp = fahrenheitToCelsius(outdoorTemp).toDouble()
+    }
+
+    int outdoorTempDevice = (int)(outdoorTemp * 100)  // device expects hundredths
+    List<String> cmds = []
+    cmds += zigbee.writeAttribute(0xFF01, 0x0010, 0x29, outdoorTempDevice, [mfgCode: '0x119C'])
+    sendZigbeeCommands(cmds)
+}
+
+void setBacklightMode(String mode = (prefBacklightMode ?: 'adaptive')) {
+    Integer backlightModeAttr = constBacklightModes[mode] as Integer
+
+    if (backlightModeAttr == null) {
+        logWarn("invalid display mode ${mode}")
+        return
+    }
+
+    logDebug("setting display backlight to ${mode} (${backlightModeAttr})")
+
+    List<String> cmds = []
+    cmds += zigbee.writeAttribute(0x0201, 0x0402, 0x30, backlightModeAttr, [mfgCode: '0x119C'])
+    sendZigbeeCommands(cmds)
+}
+
+
+// Private methods
+
+private void refreshClockTime() {
+    setClockTime()
+    runIn(3*3600, 'refreshClockTime')
+}
+
+private void refreshSecondTemp() {
+    List<String> cmds = []
+    cmds += zigbee.readAttribute(0xFF01, 0x0107, [mfgCode: '0x119C'])  // Read Floor Temperature
+    cmds += zigbee.readAttribute(0xFF01, 0x010D, [mfgCode: '0x119C'])  // Read Room Temperature
+    sendZigbeeCommands(cmds)
+}
+
+private void setSecondTempDisplay(String mode = (prefSecondTempDisplay ?: 'auto')) {
+    Integer secondDisplaySetting = constSecondTempDisplayModes[mode] as Integer
+
+    if (secondDisplaySetting != null) {
+        logDebug("setting secondary temperature display to ${mode} (${secondDisplaySetting})")
+
+        List<String> cmds = []
+        cmds += zigbee.writeAttribute(0xFF01, 0x0012, 0x30, secondDisplaySetting, [mfgCode: '0x119C'])
+        sendZigbeeCommands(cmds)
+    } else {
+        logWarn("invalid secondary temperature display mode ${mode}")
+    }
+}
+
+// Cycle length in seconds -> display label; 65535 (0xFFFF) means the output is off
+@CompileStatic
+private static String cycleLabel(int seconds) {
+    if (seconds == 0xFFFF) return 'off'
+    return (seconds < 60) ? "${seconds} sec".toString() : "${seconds.intdiv(60)} min".toString()
+}
+
+private Double getTemperature(String value) {
+    if (value == null) {
+        return null
+    }
+    // Cluster 0x0201 LocalTemperature: signed int16, hundredths of °C
+    double celsius = hexToSignedInt16(value) / 100.0d
+    if (getTemperatureScale() == 'C') {
+        return celsius
+    } else {
+        return roundToTwoDecimalPlaces(celsiusToFahrenheit(celsius) as Double)
+    }
+}
+
+private Double getTemperatureOffset(String value) {
+    if (value == null) return null
+    // delta in tenths of °C — scale linearly °C↔°F, no 32° offset
+    double celsius = hexToSignedInt8(value) / 10.0d
+    return (getTemperatureScale() == 'C') ? celsius : roundToTwoDecimalPlaces(celsius * 9.0d / 5.0d)
+}
+
+@CompileStatic
+private static String decodeZigbeeCharString(String raw) {
+    if (raw == null || raw.isEmpty()) return null
+    if (!raw.matches('[0-9A-Fa-f]+')) return raw
+    if (raw.length() < 2) return null
+    int length = Integer.parseInt(raw.substring(0, 2), 16)
+    if (raw.length() < 2 + length * 2) return null
+    StringBuilder sb = new StringBuilder(length)
+    for (int i = 0; i < length; i++) {
+        int code = Integer.parseInt(raw.substring(2 + i * 2, 4 + i * 2), 16)
+        sb.append((char) code)
+    }
+    return sb.toString()
+}
+
+@CompileStatic
+private static int hexToSignedInt16(String hex) {
+    int v = Integer.parseInt(hex, 16)
+    return v > 0x7FFF ? v - 0x10000 : v
+}
+
+@CompileStatic
+private static int hexToSignedInt8(String hex) {
+    int v = Integer.parseInt(hex, 16)
+    return v > 0x7F ? v - 0x100 : v
+}
+
+@CompileStatic
+private Integer getHeatingDemand(String value) {
+    if (value == null) {
+        return null
+    }
+    return Integer.parseInt(value, 16)
+}
+
+private void sendZigbeeCommands(List cmds) {
+    hubitat.device.HubMultiAction hubAction = new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE)
+    sendHubCommand(hubAction)
+}
+
+@CompileStatic
+private Double roundToTwoDecimalPlaces(Double val) {
+    return Math.round(val * 100) / 100.0d
+}
+
+void logsOff() {
+    device.updateSetting("debugEnable", [value: "false", type: "bool"])
+    device.updateSetting("traceEnable", [value: "false", type: "bool"])
+    logWarn "debug and trace logging disabled"
+}
+
+// ── Logging ───────────────────────────────────────────────────────────
+//   ⬇️ Rx  ⬆️ Cmd  🔧 Cfg  🌐 Net  ⏰ Sched  📦 Ota  🏷️ Ver  ·  ⚠️ Warn  🛑 Error  🔬 Trace
+private String logp(String e) { "${e} ${device.displayName}: " }
+
+void logRx   (String m) { if (debugEnable) log.debug logp('⬇️') + m }
+void logCmd  (String m) { if (txtEnable != false) log.info  logp('⬆️') + m }
+void logCfg  (String m) { if (txtEnable != false) log.info  logp('🔧') + m }
+void logNet  (String m) { if (debugEnable) log.debug logp('🌐') + m }
+void logSched(String m) { if (debugEnable) log.debug logp('⏰') + m }
+void logOta  (String m) { if (txtEnable != false) log.info  logp('📦') + m }
+void logVer  (String m) { log.warn  logp('🏷️') + m }
+
+void logWarn (String m) { log.warn  logp('⚠️') + m }
+void logError(String m) { log.error logp('🛑') + m }
+void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
+void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
+void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }
