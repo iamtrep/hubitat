@@ -9,6 +9,15 @@ Turns plain switches (smart plugs or relays feeding resistive heaters) into a th
 
 The app reads one or more temperature sensors and feeds the combined reading to a Virtual Thermostat. It turns the heater switches on and off as that thermostat's operating state changes. It protects against frost whatever the thermostat mode, and it raises an alert when a heater does not respond or draws the wrong power, when the heaters run without warming the room or past a time limit, or when no sensor reports.
 
+## Safety
+
+A Hubitat hub is not a safety device, and this app is not certified to control heaters. A lost radio message, a stuck relay, a hub restart or a bug can leave a heater on or off. The alerts report some of these faults after they happen; they do not prevent them. You use this app at your own risk; it comes with no warranty (MIT License).
+
+- Use heaters with their own protection: a built-in thermostat or overheat cut-out, and a tip-over switch on portable heaters. The heater must stay safe if its switch stays on.
+- Use switches rated for the heater's load, with margin. A plug or relay running near its rating gets hot.
+- Follow the heater maker's instructions on what it may be plugged into and on leaving it unattended. Many portable heaters must go straight into a wall outlet; a smart plug sits in between.
+- Have a relay on a hardwired heater installed to your local electrical code.
+
 ## Files
 
 | File | Type | Name on the hub |

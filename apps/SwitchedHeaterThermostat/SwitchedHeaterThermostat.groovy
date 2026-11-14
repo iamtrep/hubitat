@@ -71,6 +71,9 @@ Map mainPage() {
             label title: "Name", required: true
             if (app.getInstallationState() == "COMPLETE") paragraph statusHtml()
         }
+        section {
+            paragraph "<small>A Hubitat hub is not a safety device, and this app is not certified to control heaters: a lost message, a stuck relay or a hub restart can leave a heater on. Use heaters with their own overheat protection and switches rated for their load. Use at your own risk; see Safety in the documentation.</small>"
+        }
         section("Thermostat") {
             input "thermostat", "capability.thermostat", title: "Virtual Thermostat (built-in driver)", required: false, submitOnChange: true
             if (!thermostat) input "createThermostat", "bool", title: "Create a Virtual Thermostat for this app", defaultValue: false, submitOnChange: true
