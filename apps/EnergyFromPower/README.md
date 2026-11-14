@@ -43,6 +43,8 @@ Most installs pick the power meter and press **Done**. The settings that only so
 
 The total starts at the energy meter's value when the app is first saved, so a device that already holds a reading counts on from it. A value set on the energy meter outside the app, such as its **Reset Energy** or **Set Energy** command, becomes the new total. The app tells its own values apart from these by how far they are from what it last published.
 
+Picking another power meter keeps the total: the old meter's last reading counts up to the save, and the new meter's reading from then on. Picking another energy meter starts the total from that device's value, as on the first save.
+
 Across a hub restart, the power read before the restart counts for the time the hub was down. **Stop counting when the power meter goes offline** limits that.
 
 ## Using it with the Power and Energy Tracker
@@ -53,7 +55,7 @@ The tracker's first reading counts the whole total as that hour's usage, so sele
 
 ## Tests
 
-`tests/test_core.groovy` runs the app's pure core off-hub: integration over step loads, readings handled late, the offline limit, the publish rule and telling its own values from outside ones.
+`tests/test_core.groovy` runs the app's pure core off-hub: integration over step loads, readings handled late, the offline limit, the publish rule, telling its own values from outside ones, and a change of power meter or energy meter.
 
 ## References
 

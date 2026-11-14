@@ -17,7 +17,7 @@ import groovy.transform.Field
 import java.math.RoundingMode
 import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.1.1"
+@Field static final String CODE_VERSION = "0.1.2"
 @Field static final long HOUR_MS = 3600000L
 @Field static final String OUTPUT_DRIVER = "Virtual Power/Energy Meter"
 
@@ -183,8 +183,17 @@ void initialize() {
     // The fallback for a meter that goes quiet: hourly, at a minute and second picked at random.
     Random rng = new Random()
     schedule("${rng.nextInt(60)} ${rng.nextInt(60)} * ? * *", "hourlyHandler")
-    // unschedule() above cancelled the step timer, so the record must forget it.
-    change("settings saved", "save") { Map rec -> rec.remove("wakeAt"); rec }
+    // unschedule() above cancelled the step timer, so the record must forget it. A power meter or
+    // energy meter picked in place of the one before changes the record (rebind).
+    String rebound = null
+    change("settings saved", "save") { Map rec ->
+        Map next = rebind(rec, meterId(), outputId(), meterWatts(), outputKwh(), now(), maxHoldMs())
+        if (next.oid != rec.oid && rec.oid != null) rebound = "new energy meter: starting at ${fmtNum(next.pub)} kWh"
+        else if (next.mid != rec.mid && rec.mid != null) rebound = "new power meter: counting ${fmtNum(next.p)} W from now"
+        next.remove("wakeAt")
+        return next
+    }
+    if (rebound) logCfg rebound
     // Left by 0.1.0: the step timer and the end-of-hour setting are gone.
     state.remove("published")
     state.remove("wakeAt")
@@ -277,7 +286,8 @@ void appButtonHandler(String btn) {
 String recKey() { app.id.toString() }
 
 // The record as it stands, from memory or, after a reboot or code push, from atomicState.
-// [wh: Wh, p: W held, t: counted up to, r: when that power was read, pub: kWh published]
+// [wh: Wh, p: W held, t: counted up to, r: when that power was read, pub: kWh published,
+//  mid: power meter id, oid: energy meter id]
 Map record() { RECORDS.get(recKey()) ?: loadRecord() }
 
 Map loadRecord() {
@@ -291,13 +301,24 @@ Map loadRecord() {
 // Starts from the energy meter's current total, so a device that already holds a reading counts
 // on from it, and from the meter's current power, counted from now.
 Map newRecord() {
-    BigDecimal startKwh = numOrNull(outputDevice()?.currentValue("energy")) ?: 0.0G
-    State s = (meter as DeviceWrapper).currentState("power")
-    BigDecimal w = toWatts(numOrNull(s?.value), s?.unit as String) ?: 0.0G
-    long t = now()
+    BigDecimal startKwh = outputKwh()
+    BigDecimal w = meterWatts()
     logCfg "starting at ${fmtNum(startKwh)} kWh, ${fmtNum(w)} W"
-    return [wh: startKwh * 1000.0G, p: w, t: t, r: t, pub: startKwh]
+    return freshRecord(startKwh, w, now(), meterId(), outputId())
 }
+
+String meterId() { (meter as DeviceWrapper)?.id?.toString() }
+
+String outputId() { outputDevice()?.id?.toString() }
+
+// The power meter's reading as it stands, in W.
+BigDecimal meterWatts() {
+    State s = (meter as DeviceWrapper)?.currentState("power")
+    return toWatts(numOrNull(s?.value), s?.unit as String) ?: 0.0G
+}
+
+// The energy meter's total as it stands, in kWh.
+BigDecimal outputKwh() { numOrNull(outputDevice()?.currentValue("energy")) ?: 0.0G }
 
 // The one way the record changes. Inside compute(), one at a time for this instance: apply the
 // change, count the energy up to now, publish by the rule for what triggered it (shouldPublish),
@@ -423,6 +444,36 @@ Map takeReading(Map acc, BigDecimal w, long t, long maxHoldMs) {
     next.t = from
     next.r = t
     return next
+}
+
+// A record that starts at startKwh (kWh), holding w (W) from t, for these devices.
+@CompileStatic
+Map freshRecord(BigDecimal startKwh, BigDecimal w, long t, String meterId, String outId) {
+    BigDecimal nw = w < 0.0G ? 0.0G : w
+    return [wh: startKwh * 1000.0G, p: nw, t: t, r: t, pub: startKwh, mid: meterId, oid: outId]
+}
+
+// The record for the devices now selected (meterId, outId). A record that names no devices (saved
+// before 0.1.2) takes these. A new energy meter starts a fresh record from its own total
+// (startKwh), so its first echo is not taken for an outside value. A new power meter keeps the
+// total: the old meter's reading counts up to t, then the new meter's reading (w, W) is held from t.
+@CompileStatic
+Map rebind(Map acc, String meterId, String outId, BigDecimal w, BigDecimal startKwh, long t, long maxHoldMs) {
+    if (acc.mid == null && acc.oid == null) {
+        Map next = new LinkedHashMap(acc)
+        next.mid = meterId
+        next.oid = outId
+        return next
+    }
+    if (acc.oid?.toString() != outId) return freshRecord(startKwh, w, t, meterId, outId)
+    if (acc.mid?.toString() != meterId) {
+        Map next = integrate(acc, t, maxHoldMs)
+        next.p = w < 0.0G ? 0.0G : w
+        next.r = t
+        next.mid = meterId
+        return next
+    }
+    return acc
 }
 
 // A power reading publishes when the total has grown by the step since the last publish. The

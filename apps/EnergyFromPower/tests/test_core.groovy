@@ -78,6 +78,23 @@ check('takeReading keeps other keys', core.takeReading(extra, 0.0G, H, 0L).subMa
 check('a late reading keeps other keys', core.takeReading(core.integrate(extra, H, 0L), 0.0G, 10L, 0L).pub, 1.5G)
 check('integrate copies', core.integrate(extra, H, 0L).is(extra), false)
 
+// ── a power meter or energy meter picked in place of the one before ──
+Map bound = [wh: 5000.0G, p: 4500.0G, t: 0L, r: 0L, pub: 5.0G, mid: '10', oid: '20']
+Map legacy = core.rebind([wh: 5000.0G, p: 4500.0G, t: 0L, r: 0L, pub: 5.0G], '10', '20', 0.0G, 99.0G, H, 0L)
+check('a record from before 0.1.2 takes the devices', legacy.subMap(['mid', 'oid', 'wh', 'p', 't']), [mid: '10', oid: '20', wh: 5000.0G, p: 4500.0G, t: 0L])
+check('same devices: unchanged', core.rebind(bound, '10', '20', 0.0G, 99.0G, H, 0L).is(bound), true)
+Map newMeter = core.rebind(bound, '11', '20', 600.0G, 99.0G, H, 0L)
+check('new power meter: the old reading counts up to the switch', newMeter.wh, 9500)
+check('new power meter: its reading is held from then', newMeter.subMap(['p', 'r', 't', 'mid']), [p: 600.0G, r: H, t: H, mid: '11'])
+check('new power meter: then only its power counts', core.integrate(newMeter, 2L * H, 0L).wh, 10100)
+check('new power meter keeps what was published', newMeter.pub, 5.0G)
+check('new power meter: a negative reading holds 0', core.rebind(bound, '11', '20', -3.0G, 99.0G, H, 0L).p, 0)
+Map newOut = core.rebind(bound, '10', '21', 600.0G, 12.5G, H, 0L)
+check('new energy meter: starts from its own total', newOut, [wh: 12500.0G, p: 600.0G, t: H, r: H, pub: 12.5G, mid: '10', oid: '21'])
+check('new energy meter: its total is not taken for an outside value', core.isForeignTotal(12.5G, newOut.pub as BigDecimal, 1.0G), false)
+check('both changed: a fresh record', core.rebind(bound, '11', '21', 0.0G, 0.0G, H, 0L).subMap(['wh', 'mid', 'oid']), [wh: 0.0G, mid: '11', oid: '21'])
+check('ids saved as numbers still match', core.rebind([wh: 1.0G, p: 0.0G, t: 0L, r: 0L, pub: 0.0G, mid: 10, oid: 20], '10', '20', 0.0G, 0.0G, H, 0L).wh, 1)
+
 // ── publishing ──
 check('a reading publishes at the step', core.shouldPublish('reading', 2.0G, 1.0G, 1.0G, 0L, H), true)
 check('a reading below the step does not', core.shouldPublish('reading', 1.999G, 1.0G, 1.0G, 0L, H), false)
