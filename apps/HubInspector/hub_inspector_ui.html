@@ -219,7 +219,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "6.3.2";
+const CODE_VERSION = "6.3.3";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -235,7 +235,11 @@ const MOCK_DATA = {
   'reports': {"lastReport":"hub_diagnostics_report_20260328_142000.html","reports":[{"name":"hub_diagnostics_report_20260328_142000.html","size":"498717","date":"1774722000536"}]}
 };
 
-const T='${access_token}', B='${api_base}', REPORT=window.REPORT_DATA||null, cache={}, inflight={};
+// The hub fills in its http://<IP> API address, but a page opened at another address of the same hub
+// (hostname, https, port 8080) can't call it: the app API sends no CORS headers. So a page served from
+// /apps/api/<id>/ calls the API at its own origin. Reports and the cloud relay keep the hub's value.
+const API_PATH=location.pathname.match(/^\/apps\/api\/\d+(?=\/)/);
+const T='${access_token}', B=API_PATH?location.origin+API_PATH[0]:'${api_base}', REPORT=window.REPORT_DATA||null, cache={}, inflight={};
 // Token in the Authorization header, not the URL — keeps it out of hub and proxy
 // access logs. The platform matches the scheme case-sensitively: exactly "Bearer".
 const AUTH=(x)=>Object.assign({'Authorization':'Bearer '+T},x||{});

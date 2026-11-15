@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
 <!-- AUTO:hubinspector-version -->
-**Current version:** 6.3.2
+**Current version:** 6.3.3
 <!-- /AUTO -->
 
 ---
@@ -70,7 +70,7 @@ The dashboard URL follows the pattern:
 http://{hub-ip}/apps/api/{app-id}/ui.html?access_token={token}
 ```
 
-Bookmark this URL for direct access. The access token is tied to the app instance and does not expire unless OAuth is re-configured.
+The dashboard also works at any other local address of the hub, such as a hostname, `https://` or port 8080. Bookmark this URL for direct access. The access token is tied to the app instance and does not expire unless OAuth is re-configured.
 
 An **ⓘ** next to a label or an alert explains it: what the figure is, where it comes from, and the threshold Hub Inspector colours it by. Click or tap it, or focus it and press Enter; Esc or a click outside closes it. The explanation links to the matching section of this document.
 
