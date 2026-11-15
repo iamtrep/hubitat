@@ -219,7 +219,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "6.3.3";
+const CODE_VERSION = "6.3.4";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -1370,6 +1370,7 @@ const HELP={
   // Network configuration
   'net.limited':{t:'Limited Access',d:'When on, only the listed IP addresses and subnets can open the hub\'s web interface. When off, any device on the LAN can.',doc:'network-configuration'},
   'net.subnets':{t:'Extra Allowed Subnets',d:'Subnets outside the private address ranges that the hub also accepts connections from. The private ranges are always allowed.',doc:'network-configuration'},
+  'net.hostRedirect':{t:'Local Hostname',d:'Whether the hub sends a browser that opens it by its .local name on to its IP address. On, it avoids the periodic slowdowns some routers cause by caching .local lookups too briefly. Off, the page keeps the name, so an https certificate made for that name works without a warning. Either setting is fine.',doc:'network-configuration'},
   'net.cloud':{t:'Hubitat Cloud',d:'Disabled means the hub is set up for local-only operation.',doc:'network-configuration'},
   'net.ntp':{t:'NTP Server',d:'The time server the hub sets its clock from, or "(not configured)" when none is set.',doc:'network-configuration'},
   // Zigbee
@@ -1664,10 +1665,31 @@ function composeAlerts(d){
 // Assemble the forum-export data object from the tab-endpoint payloads — the same shape the hub
 // used to ship from /api/forum/data. Same source of truth: these endpoints and the old aggregator
 // both derive from analyzeDevices/analyzeApps/analyzeNetwork on the hub; this just reshapes for the
-// markdown builder. r = { dashboard, devices, apps, network, health, performance, settings }.
+// Radio and transport states for the Network tab badges and the export, from an /api/network payload:
+// 'disabled', 'online', 'offline' or 'unknown'. Hub Mesh with no peers is online: the feature is up.
+function radioStates(d){
+  const rh=d.radioHealth||{};
+  const radio=(enabled,health)=>enabled===false?'disabled':health===true?'online':health===false?'offline':'unknown';
+  return {
+    zwave: radio(d.zwave&&d.zwave.enabled,rh.zwave),
+    zigbee: radio(d.zigbee&&d.zigbee.enabled,rh.zigbee),
+    matter: !d.matter||d.matter.enabled===false?'disabled':d.matter.networkState==='Online'?'online':'offline',
+    hubMesh: !d.hubMesh||d.hubMesh.enabled===false?'disabled':(d.hubMesh.peers||[]).some(p=>p.offline)?'offline':'online'
+  };
+}
+const FORUM_LIST_CAP=15, FORUM_NODE_ROWS=10;
+// Dotted quads in free text (alert messages). Only home-network addresses are replaced: private,
+// carrier-grade NAT (Tailscale) and link-local. Firmware versions (2.5.0.146) look the same and stay.
+const IPV4_RE=/\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
+function isPrivateIpv4(ip,wide){
+  const m=String(ip||'').match(/^(\d+)\.(\d+)\./);if(!m)return false;
+  const a=+m[1],b=+m[2];
+  return a===10||(a===172&&b>=16&&b<=31)||(a===192&&b===168)||(!!wide&&((a===100&&b>=64&&b<=127)||(a===169&&b===254)));
+}
+// markdown builder. r = { dashboard, devices, apps, code, network, health, performance, settings }.
 function assembleForumData(r){
   const dash=r.dashboard||{}, dev=r.devices||{}, app=r.apps||{}, net=r.network||{},
-        hlth=r.health||{}, perf=r.performance||{}, set=r.settings||{};
+        hlth=r.health||{}, perf=r.performance||{}, set=r.settings||{}, code=r.code||null;
   const ds=dev.summary||{}, as=app.summary||{};
   const zw=net.zwave||null, zb=net.zigbee||null;
   zbMeshDetails(zb);zwMeshStats(zw);
@@ -1695,7 +1717,16 @@ function assembleForumData(r){
       labels: (app.allApps||[]).filter(a=>a&&a.name&&a.name!==a.type).map(a=>a.name),
       builtInInstances: app.builtInInstances||{}
     },
-    networkData: { network: net.network||{}, zwave: zw, zigbee: zb, hubMesh: net.hubMesh||null, matter: net.matter||null },
+    codeStats: code?{
+      appTypes:(code.appTypes||[]).length, driverTypes:(code.driverTypes||[]).length,
+      bundles:(code.bundles||[]).length, libraries:code.libraries?code.libraries.length:null,
+      hubVariables:code.hubVariables&&code.hubVariables.count!=null?code.hubVariables.count:null
+    }:null,
+    backups: hlth.backups||null,
+    storage: hlth.storage||null,
+    radioStates: net.radioHealth&&net.radioHealth.supported?radioStates(net):null,
+    networkData: { network: net.network||{}, zwave: zw, zigbee: zb, hubMesh: net.hubMesh||null, matter: net.matter||null,
+                   security: net.security||null, ntpServer: net.ntpServer },
     zwaveMesh: (zw&&zw.mesh)||null,
     ghostNodes: (zw&&zw.ghostNodes)||[],
     zigbeeMesh: (zb&&zb.mesh) ? {...zb.mesh, neighbors: zb.mesh.neighborDetails||[], routesParsed: zb.mesh.routeDetails||[]} : null,
@@ -1705,6 +1736,8 @@ function assembleForumData(r){
     uptimeMin: net.uptimeSeconds!=null ? net.uptimeSeconds/60 : null,
     // On unless the user turned it off; the dashboard toggle doesn't apply here.
     obfuscate: set.forumObfuscate!==false,
+    // Off unless the user turns it on: addresses and network names stay out of a public paste.
+    networkDetails: set.forumNetworkDetails===true,
     aliasSalt: set.aliasSalt||''
   };
 }
@@ -1747,6 +1780,8 @@ function forumMarkdownBody(d){
   const stats=d.stats||null;
   const allRadioDevices=flattenRadioDevices(d.radioStats);
   const uptimeMin=d.uptimeMin!=null?d.uptimeMin:0;
+  const showNet=d.networkDetails===true;
+  const ipText=t=>showNet?t:String(t).replace(IPV4_RE,m=>isPrivateIpv4(m,true)?'<IP>':m);
 
   // ── 1. System & Health ──
   L('### System & Health');
@@ -1760,14 +1795,27 @@ function forumMarkdownBody(d){
   if(bothActive)connType='Ethernet + WiFi active';
   if(networkConfig.hasEthernet)connType+=(networkConfig.usingStaticIP?' (Static)':' (DHCP)');
   L(`| Connection | ${connType} |`);
-  if(networkConfig.lanAddr)          L(`| IP Address | ${networkConfig.lanAddr} |`);
+  // Addresses and the WiFi name only with "include network details"; otherwise the kind of value.
+  if(networkConfig.lanAddr)          L(`| IP Address | ${showNet?networkConfig.lanAddr:(isPrivateIpv4(networkConfig.lanAddr)?'private range (hidden)':'not a private range (hidden)')} |`);
   // static* fields are the saved static-IP settings, not the DHCP lease; meaningless on DHCP
-  if(networkConfig.usingStaticIP&&networkConfig.staticGateway)    L(`| Gateway    | ${networkConfig.staticGateway} |`);
+  if(networkConfig.usingStaticIP&&networkConfig.staticGateway)    L(`| Gateway    | ${showNet?networkConfig.staticGateway:'set (hidden)'} |`);
   if(networkConfig.usingStaticIP){if(networkConfig.staticSubnetMask) L(`| Subnet     | ${networkConfig.staticSubnetMask} |`);}
   else                               L(`| Subnet     | via DHCP |`);
   const dnsList=networkConfig.dnsServers||[];
-  if(dnsList.length)                 L(`| DNS        | ${dnsList.join(', ')} |`);
-  if(networkConfig.hasWiFi&&networkConfig.wifiNetwork) L(`| WiFi SSID  | ${networkConfig.wifiNetwork} |`);
+  if(dnsList.length)                 L(`| DNS        | ${showNet?dnsList.join(', '):dnsList.length+' server'+(dnsList.length===1?'':'s')+' (hidden)'} |`);
+  if(showNet&&networkConfig.hasWiFi&&networkConfig.wifiNetwork) L(`| WiFi SSID  | ${networkConfig.wifiNetwork} |`);
+  // Access settings: whether a limit or list is set and its size, never the entries.
+  const sec=networkData.security||null;
+  if(sec){
+    const la=sec.limitedAccess;
+    if(la!=null)L(`| Limited Access | ${la.enabled?'On ('+la.addresses.length+' entr'+(la.addresses.length===1?'y':'ies')+')':'Off'} |`);
+    if(sec.allowedSubnets!=null)L(`| Extra Allowed Subnets | ${sec.allowedSubnets.length?sec.allowedSubnets.length:'None'} |`);
+    if(sec.dnsFallback!=null)L(`| DNS Fallback | ${sec.dnsFallback?'Enabled':'Disabled'} |`);
+    if(sec.hostnameRedirect!=null)L(`| Local Hostname Redirect | ${sec.hostnameRedirect?'On':'Off'} |`);
+    if(sec.cloudController)L(`| Hubitat Cloud | ${sec.cloudController==='enabled'?'Enabled':'Disabled (local-only)'} |`);
+  }
+  if(networkData.ntpServer!==undefined)L(`| NTP Server | ${networkData.ntpServer?(showNet?networkData.ntpServer:'set (hidden)'):'not configured'} |`);
+  if(d.radioStates){const rs=d.radioStates;L(`| Radio Health | Z-Wave ${rs.zwave}, Zigbee ${rs.zigbee}, Matter ${rs.matter}, Hub Mesh ${rs.hubMesh} |`);}
   L(`| CPU Load (5m) | ${resources?Number(resources.cpuAvg5min).toFixed(2):'N/A'} |`);
   L(`| Free OS Memory | ${resources?fmem(resources.freeOSMemory):'N/A'} |`);
   if(resources&&resources.freeJavaMemory)  L(`| Free Java Heap  | ${fmem(resources.freeJavaMemory)} |`);
@@ -1775,6 +1823,11 @@ function forumMarkdownBody(d){
   L(`| Temperature | ${ftemp(d.temperature)} |`);
   L(`| Database | ${d.databaseSize!=null?d.databaseSize+' MB':'N/A'} |`);
   L(`| State Compression | ${d.stateCompression&&d.stateCompression.enabled?'Enabled':'Disabled'} |`);
+  const bk=d.backups||null;
+  if(bk&&bk.local)L(`| Local Backups | ${bk.local.count}${bk.local.latestCreateTime?', latest '+bk.local.latestCreateTime:''} |`);
+  if(bk&&bk.cloud)L(`| Cloud Backups (this hub) | ${bk.cloud.thisHubCount||0}${bk.cloud.latestThisHubCreateTime?', latest '+bk.cloud.latestThisHubCreateTime:''} |`);
+  const fm=d.storage||null;
+  if(fm&&fm.fileCount!=null)L(`| File Manager | ${fm.fileCount} files, ${(Number(fm.usedBytes||0)/1048576).toFixed(1)} MB |`);
   const esl=d.eventStateLimits||null;
   if(esl){
     if(esl.maxEvents)        L(`| Max Events/Device | ${esl.maxEvents} |`);
@@ -1787,7 +1840,7 @@ function forumMarkdownBody(d){
   // Alerts
   if(alerts&&alerts.length){
     L('');L('### Alerts');
-    alerts.forEach(a=>L(`- **${a.severity}**: ${Obf.scrub(a.name)}`));
+    alerts.forEach(a=>L(`- **${a.severity}**: ${ipText(Obf.scrub(a.name))}`));
   }else{
     L('');L('No active alerts.');
   }
@@ -1839,12 +1892,17 @@ function forumMarkdownBody(d){
     });
   }
   const builtInInstances=appStats.builtInInstances||{};
-  if(Object.keys(builtInInstances).length){
-    L('');L('**Installed Built-in Apps:**');
-    Object.keys(builtInInstances).sort().forEach(name=>{
-      const count=builtInInstances[name];
-      L(`- ${name}${count>1?` (×${count})`:''}`);
-    });
+  const builtInTypes=Object.keys(builtInInstances);
+  if(builtInTypes.length){
+    const n=builtInTypes.reduce((t,k)=>t+(builtInInstances[k]||0),0);
+    L('');L(`**Built-in Apps:** ${n} instance${n===1?'':'s'} of ${builtInTypes.length} type${builtInTypes.length===1?'':'s'}`);
+  }
+  const cs=d.codeStats||null;
+  if(cs){
+    const parts=[`${cs.appTypes} app type${cs.appTypes===1?'':'s'}`,`${cs.driverTypes} driver${cs.driverTypes===1?'':'s'}`,`${cs.bundles} bundle${cs.bundles===1?'':'s'}`];
+    if(cs.libraries!=null)parts.push(`${cs.libraries} librar${cs.libraries===1?'y':'ies'}`);
+    if(cs.hubVariables!=null)parts.push(`${cs.hubVariables} hub variable${cs.hubVariables===1?'':'s'}`);
+    L('');L(`**User Code:** ${parts.join(', ')}`);
   }
 
   // ── 4. Z-Wave Network ──
@@ -1868,28 +1926,30 @@ function forumMarkdownBody(d){
       const gSig=g.signals?` [${g.signals.join(', ')}]`:'';
       L(`- Node ${g.id}: ${gName}${gSig}`);
     };
+    // Lists stop at FORUM_LIST_CAP rows; the heading keeps the full count.
+    const capped=(list,fn)=>{list.slice(0,FORUM_LIST_CAP).forEach(fn);if(list.length>FORUM_LIST_CAP)L(`- … and ${list.length-FORUM_LIST_CAP} more`);};
     if(ghosts.length){
       L('');L(`**Ghost Nodes (${ghosts.length}, no Hubitat device):**`);
-      ghosts.forEach(renderNode);
+      capped(ghosts,renderNode);
     }
     if(failed.length){
       L('');L(`**Failed Nodes (${failed.length}, recoverable — try battery/range):**`);
-      failed.forEach(renderNode);
+      capped(failed,renderNode);
     }
     if(unlisted.length){
       L('');L(`**Not in Radio List (${unlisted.length}, Hubitat device the radio doesn't report):**`);
-      unlisted.forEach(renderNode);
+      capped(unlisted,renderNode);
     }
     if(longRange.length){
       L('');L(`**Long Range Devices (${longRange.length}, no signal details from the hub):**`);
-      longRange.forEach(renderNode);
+      capped(longRange,renderNode);
     }
     // Problem nodes
     const zwNodes=zwaveMesh&&zwaveMesh.nodes?zwaveMesh.nodes:[];
     const problemNodes=zwNodes.filter(n=>n.state!=='OK'||(n.per||0)>1);
     if(problemNodes.length){
       L('');L(`**Problem Nodes (${problemNodes.length}):**`);
-      problemNodes.forEach(n=>{
+      capped(problemNodes,n=>{
         const issues=[];
         if(n.state!=='OK')issues.push(`State: ${n.state}`);
         if((n.per||0)>1)issues.push(`PER: ${n.per}%`);
@@ -1905,16 +1965,19 @@ function forumMarkdownBody(d){
     const isolatedNodes=zwNodes.filter(n=>(n.neighbors||0)===0&&n.state!=='FAILED');
     if(isolatedNodes.length){
       L('');L(`**Isolated Nodes (0 neighbors, ${isolatedNodes.length}):**`);
-      isolatedNodes.forEach(n=>{
+      capped(isolatedNodes,n=>{
         const label=Obf.nm(n.name||`Node ${n.nodeId}`);
         L(`- Node ${n.nodeId}: ${label}`);
       });
     }
-    // Full node table
+    // Node table: every node on a small mesh, else the FORUM_NODE_ROWS worst by PER.
     if(zwNodes.length){
-      L('');L('| Node | Name | Security | RTT | PER | RSSI | Route | Msgs/min | Driver |');
+      const worst=zwNodes.length>FORUM_NODE_ROWS;
+      const rows=worst?[...zwNodes].sort((a,b)=>(b.per||0)-(a.per||0)||a.nodeId-b.nodeId).slice(0,FORUM_NODE_ROWS):[...zwNodes].sort((a,b)=>a.nodeId-b.nodeId);
+      L('');if(worst){L(`**${FORUM_NODE_ROWS} nodes with the highest PER (of ${zwNodes.length}):**`);L('');}
+      L('| Node | Name | Security | RTT | PER | RSSI | Route | Msgs/min | Driver |');
       L('|---:|---|---|---:|---:|---|---|---:|---|');
-      [...zwNodes].sort((a,b)=>a.nodeId-b.nodeId).forEach(n=>{
+      rows.forEach(n=>{
         const rttStr=n.rtt!=null?`${n.rtt}ms`:'—';
         const drvStr=n.driverType==='usr'?'User':n.driverType==='sys'?'Built-in':'—';
         const rateStr=uptimeMin>0?Number(n.msgCount/uptimeMin).toFixed(1):'—';
@@ -1954,7 +2017,7 @@ function forumMarkdownBody(d){
     const matterCount=(matterRaw.devices||[]).length;
     if(matterCount>0)L(`- **Devices:** ${matterCount}`);
     if(matterRaw.networkState)L(`- **Network State:** ${matterRaw.networkState}`);
-    if(matterRaw.fabricId)    L(`- **Fabric:** ${matterRaw.fabricId}`);
+    if(showNet&&matterRaw.fabricId)L(`- **Fabric:** ${matterRaw.fabricId}`);
   }
 
   // ── 6. Hub Mesh ──
@@ -1964,14 +2027,14 @@ function forumMarkdownBody(d){
     const peers=hubMeshRaw.peers||hubMeshRaw.hubList||[];
     if(peers.length){
       L('');L('### Hub Mesh');
-      L('| Hub | IP | Status | Devices | Vars |');
-      L('|---|---|---|---:|---:|');
+      L(showNet?'| Hub | IP | Status | Devices | Vars |':'| Hub | Status | Devices | Vars |');
+      L(showNet?'|---|---|---|---:|---:|':'|---|---|---:|---:|');
       peers.forEach(hub=>{
         const status=hub.offline?'Offline':'Online';
         const ip=hub.ip||hub.ipAddress||'';
         const devs=hub.deviceCount!=null?hub.deviceCount:(hub.deviceIds?hub.deviceIds.length:0);
         const vars=hub.varCount!=null?hub.varCount:(hub.hubVarNames?hub.hubVarNames.length:0);
-        L(`| ${Obf.nm(hub.name)} | ${ip} | ${status} | ${devs} | ${vars} |`);
+        L(showNet?`| ${Obf.nm(hub.name)} | ${ip} | ${status} | ${devs} | ${vars} |`:`| ${Obf.nm(hub.name)} | ${status} | ${devs} | ${vars} |`);
       });
     }
   }
@@ -2792,7 +2855,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
     try{
       // Build the export entirely client-side from the tab endpoints (batched 3 at a time to
       // respect the hub's HTTP pool, like the report path), then shape via assembleForumData.
-      const eps=['dashboard','devices','apps','network','health','performance','settings'];
+      const eps=['dashboard','devices','apps','code','network','health','performance','settings'];
       const BATCH=3, results={};
       for(let i=0;i<eps.length;i+=BATCH){
         const batch=eps.slice(i,i+BATCH);
@@ -3100,13 +3163,11 @@ async function rNetwork(){const P='p-network';loading(P);try{
         const clk=target?' clk" onclick="scrollToCard(\''+target+'\')" title="Show '+name+' details':'';
         return '<span class="badge '+cls+clk+'">'+name+': '+lbl+'</span>';
       };
-      const radioState=(enabled,health)=>enabled===false?'disabled':health===true?'online':health===false?'offline':'unknown';
-      const matterState=()=>!d.matter||d.matter.enabled===false?'disabled':d.matter.networkState==='Online'?'online':'offline';
-      const hubMeshState=()=>!d.hubMesh||d.hubMesh.enabled===false?'disabled':(d.hubMesh.peers||[]).some(p=>p.offline)?'offline':'online';
-      let badges=badge('Z-Wave',radioState(d.zwave&&d.zwave.enabled,rh.zwave),'nc-zwave')
-               + badge('Zigbee',radioState(d.zigbee&&d.zigbee.enabled,rh.zigbee),'nc-zigbee')
-               + badge('Matter',matterState(),'nc-matter')
-               + badge('Hub Mesh',hubMeshState(),'nc-hubmesh');
+      const rs=radioStates(d);
+      let badges=badge('Z-Wave',rs.zwave,'nc-zwave')
+               + badge('Zigbee',rs.zigbee,'nc-zigbee')
+               + badge('Matter',rs.matter,'nc-matter')
+               + badge('Hub Mesh',rs.hubMesh,'nc-hubmesh');
       // mDNS/Bonjour is always up (the platform has no off switch), so the pill carries no
       // ON/OFF word — bare "mDNS" when healthy. The one thing that varies is whether periodic
       // Bonjour restarts are scheduled (a LAN multicast footgun); that surfaces as amber
@@ -3142,6 +3203,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
       else if(sec.allowedSubnets.length)o+=ni('Extra Allowed Subnets',sec.allowedSubnets.join(', '),null,sec.allowedSubnets.length>2,'net.subnets');
       else o+=ni('Extra Allowed Subnets','None (private ranges always allowed)',null,false,'net.subnets');
       if(sec.dnsFallback!=null)o+=ni('DNS Fallback',sec.dnsFallback?'Enabled':'Disabled');
+      if(sec.hostnameRedirect!=null)o+=ni('Local Hostname',(sec.mdnsName?sec.mdnsName+': ':'')+(sec.hostnameRedirect?'redirects to the IP address':'answers directly'),null,false,'net.hostRedirect');
       if(sec.cloudController)o+=ni('Hubitat Cloud',sec.cloudController==='enabled'?'Enabled':'Disabled (local-only)',null,false,'net.cloud');
     }
     o+='</div>';
@@ -4035,6 +4097,7 @@ function computeSnapshotDiff(older, newer){
     // snapshots taken before the fix stored the hub's "Not set" reply as a subnet
     const subs=a=>(a||[]).filter(x=>!/^not set$/i.test(x));const oSub=subs(oSec.allowedSubnets);const nSub=subs(nSec.allowedSubnets);
     if(!setEq(oSub,nSub))securityChanges.allowedSubnets={from:oSub,to:nSub};
+    if(oSec.hostnameRedirect!=null&&nSec.hostnameRedirect!=null&&oSec.hostnameRedirect!==nSec.hostnameRedirect)securityChanges.hostnameRedirect={from:oSec.hostnameRedirect,to:nSec.hostnameRedirect};
     if(oSec.dnsFallback!==nSec.dnsFallback)securityChanges.dnsFallback={from:oSec.dnsFallback,to:nSec.dnsFallback};
     if(oSec.cloudController!==nSec.cloudController&&(oSec.cloudController!=null||nSec.cloudController!=null))
       securityChanges.cloudController={from:oSec.cloudController,to:nSec.cloudController};
@@ -4142,6 +4205,7 @@ function renderDiff(d,elId){
     if(secCh.limitedAccess)o+='<div class="diff-item diff-chg">Limited Access: '+(secCh.limitedAccess.from?'enabled':'off')+' → '+(secCh.limitedAccess.to?'enabled':'off')+'</div>';
     if(secCh.limitedAddresses)o+='<div class="diff-item diff-chg">Allowed IPs: ['+secCh.limitedAddresses.from.map(h).join(', ')+'] → ['+secCh.limitedAddresses.to.map(h).join(', ')+']</div>';
     if(secCh.allowedSubnets)o+='<div class="diff-item diff-chg">Extra Allowed Subnets: ['+secCh.allowedSubnets.from.map(h).join(', ')+'] → ['+secCh.allowedSubnets.to.map(h).join(', ')+']</div>';
+    if(secCh.hostnameRedirect)o+='<div class="diff-item diff-chg">Local hostname redirect: '+(secCh.hostnameRedirect.from?'on':'off')+' → '+(secCh.hostnameRedirect.to?'on':'off')+'</div>';
     if(secCh.dnsFallback)o+='<div class="diff-item diff-chg">DNS Fallback: '+(secCh.dnsFallback.from?'on':'off')+' → '+(secCh.dnsFallback.to?'on':'off')+'</div>';
     if(secCh.cloudController)o+='<div class="diff-item diff-chg">Hubitat Cloud: '+h(secCh.cloudController.from||'?')+' → '+h(secCh.cloudController.to||'?')+'</div>';
   }
@@ -4290,6 +4354,8 @@ async function rConfig(){const P='p-config';loading(P);try{
   o+=`<label><input type="checkbox" id="cfg_obfuscate" ${s.obfuscateForumExport?'checked':''}> Obfuscate device/app names in the dashboard (uses stable random aliases)</label>`;
   o+='</div><div class="cfg-row">';
   o+=`<label><input type="checkbox" id="cfg_forumObfuscate" ${s.forumObfuscate!==false?'checked':''}> Obfuscate device/app names in the AI/forum export</label>`;
+  o+='</div><div class="cfg-row">';
+  o+=`<label><input type="checkbox" id="cfg_forumNetworkDetails" ${s.forumNetworkDetails===true?'checked':''}> Include IP addresses, DNS servers, the WiFi name and the Matter fabric in the AI/forum export</label>`;
   o+='</div></div></div>';
 
   // Alert Thresholds
@@ -4369,6 +4435,7 @@ async function rConfig(){const P='p-config';loading(P);try{
 
   document.getElementById('cfg_debugLogging').onchange=async function(){await saveSetting({debugLogging:this.checked});flash('cfg_debugStatus','Saved ✓')};
   document.getElementById('cfg_forumObfuscate').onchange=async function(){await saveSetting({forumObfuscate:this.checked});drop('settings')};
+  document.getElementById('cfg_forumNetworkDetails').onchange=async function(){await saveSetting({forumNetworkDetails:this.checked});drop('settings')};
   document.getElementById('cfg_obfuscate').onchange=async function(){
     const on=this.checked;
     await saveSetting({obfuscateForumExport:on});drop('settings');

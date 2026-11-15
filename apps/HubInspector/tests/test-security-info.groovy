@@ -34,11 +34,13 @@ String harness = """
 @groovy.transform.Field static final String LIMITED_ACCESS_PATH = "/hub/advanced/getLimitedAccessAddresses"
 @groovy.transform.Field static final String ALLOW_SUBNETS_PATH = "/hub/allowSubnets"
 @groovy.transform.Field static final String DNS_FALLBACK_PATH = "/hub/advanced/getDNSFallback"
+@groovy.transform.Field static final String HOSTNAME_REDIRECT_PATH = "/hub/advanced/localHostnameRedirectEnabled"
 ${extract(src, 'Map fetchSecurityInfo(Map prefetchedHubData = null) {')}
 this
 """
 def app = new GroovyShell().evaluate(harness)
 app.metaClass.hubRequest = { String path, String label, String type, int timeout -> replies[path] }
+app.metaClass.fetchMdnsName = { -> 'hub-test.local' }
 
 Map hubData = [disableCloudController: false]
 
@@ -67,6 +69,16 @@ assert r.limitedAccess.addresses == ['192.0.2.1', '192.0.2.2', '192.0.2.3']
 replies['/hub/allowSubnets'] = '192.0.2.0/24, 198.51.100.0/24'
 r = app.fetchSecurityInfo(hubData)
 assert r.allowedSubnets == ['192.0.2.0/24', '198.51.100.0/24']
+
+// Local hostname redirect: true/false as the hub answers, null for anything else (older firmware).
+assert r.hostnameRedirect == null
+assert r.mdnsName == 'hub-test.local'
+replies['/hub/advanced/localHostnameRedirectEnabled'] = 'true'
+assert app.fetchSecurityInfo(hubData).hostnameRedirect == true
+replies['/hub/advanced/localHostnameRedirectEnabled'] = 'false\n'
+assert app.fetchSecurityInfo(hubData).hostnameRedirect == false
+replies['/hub/advanced/localHostnameRedirectEnabled'] = '<html><body>Not Found</body></html>'
+assert app.fetchSecurityInfo(hubData).hostnameRedirect == null
 
 // Failed fetches stay null, so the UI shows "Unknown".
 replies = [:]

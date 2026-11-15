@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
 <!-- AUTO:hubinspector-version -->
-**Current version:** 6.3.3
+**Current version:** 6.3.4
 <!-- /AUTO -->
 
 ---
@@ -348,6 +348,7 @@ Strip at the very top with a badge for **Z-Wave, Zigbee, Matter, and Hub Mesh** 
 - **Limited Access** — green when the hub UI is limited to an allowlist of IPs and subnets (with the entries listed), orange-warn when off ("any LAN IP can reach the hub UI")
 - **Extra Allowed Subnets** — non-private subnets the hub also accepts connections from, or "None (private ranges always allowed)"
 - **DNS Fallback** — Enabled / Disabled
+- **Local Hostname** — the hub's `.local` name, and whether the hub redirects a browser that opens it by that name to its IP address or answers under the name. Shown on firmware that has the setting (2.5.3).
 - **Hubitat Cloud** — Enabled, or "Disabled (local-only)" when the hub is configured for local-only operation
 
 Shows a warning if both Ethernet and WiFi are active simultaneously (known to cause instability on some hub models).
@@ -564,7 +565,7 @@ The scan crawls every device via `/device/fullJson/{id}` — one call per device
 
 ## Settings Tab
 
-Most settings are accessible from the Hubitat admin UI under **Apps → Hub Inspector → Settings**. Four settings are available only through the dashboard's Settings tab and are not shown in the Hubitat admin UI: **Auto-refresh interval** (Live Data section), **Obfuscate device/app names in the dashboard** and **Obfuscate device/app names in the AI/forum export** (Privacy section), and **Clear Enrichment Cache** (Maintenance section).
+Most settings are accessible from the Hubitat admin UI under **Apps → Hub Inspector → Settings**. Five settings are available only through the dashboard's Settings tab and are not shown in the Hubitat admin UI: **Auto-refresh interval** (Live Data section), **Obfuscate device/app names in the dashboard**, **Obfuscate device/app names in the AI/forum export** and **Include IP addresses, DNS servers, the WiFi name and the Matter fabric in the AI/forum export** (Privacy section), and **Clear Enrichment Cache** (Maintenance section).
 
 ### Config Snapshot Scheduling
 - Enable automatic snapshots: on/off
@@ -613,6 +614,7 @@ Debug and trace logging switch off after 30 minutes.
 ### Privacy
 - **Obfuscate device/app names in the dashboard** — Off by default. Replaces every device, app and file name throughout the dashboard with a stable adjective-noun alias (for example `amber-otter`). The same name always gets the same alias on a given hub, so a screenshot and a forum post still line up. Aliases are mixed with a random value generated on each install, so they can't be worked out from guessed names. The CSV export keeps real names, since it is for local use.
 - **Obfuscate device/app names in the AI/forum export** — On by default. Replaces device, app and hub names in the forum export with the same aliases, including names inside alert text.
+- **Include IP addresses, DNS servers, the WiFi name and the Matter fabric in the AI/forum export** — Off by default. See [AI and Forum Export](#ai-and-forum-export).
 
 ### Maintenance
 - **Clear Enrichment Cache** — Clears the cached per-device classification data (controller type, parent app). The next analysis re-fetches this from the hub. Use this if device classifications appear stale after adding or re-pairing devices.
@@ -627,16 +629,19 @@ The export generates a concise Markdown summary of the hub to paste into a commu
 
 **Contents of the export:**
 
-- System basics: model, firmware, uptime, network config, CPU, memory, temperature, database size
+- System basics: model, firmware, uptime, connection type, CPU, memory, temperature, database size, local and cloud backups, File Manager use
+- Network access settings: Limited Access (on/off and number of entries), extra allowed subnets (count), DNS Fallback, local hostname redirect, Hubitat Cloud, NTP server (set or not), radio health
 - Active alerts (all severities)
 - Device inventory: counts by status, connection type, and integration; low battery and inactive devices
-- App inventory: counts by source; installed user and built-in app types
-- Z-Wave: health, ghost nodes, problem nodes, S0 flag, mesh quality stats
+- App inventory: counts by source; installed user app types; built-in apps as one count; user code (app types, drivers, bundles, libraries, hub variables)
+- Z-Wave: health, ghost nodes, problem nodes, S0 flag, mesh quality stats, and a node table (on a mesh of more than 10 nodes, the 10 with the highest PER). Node lists stop at 15 entries.
 - Zigbee: health, channel, LQI stats, weak/stale neighbors
 - Hub Mesh and Matter status
 - Performance: device and app runtime, top devices and apps by CPU, top talkers
 
 **Obfuscation:** The export replaces device, app and hub names with stable aliases unless "Obfuscate device/app names in the AI/forum export" is turned off. Enable "Obfuscate device/app names in the dashboard" in Settings to use the same aliases across the dashboard, for screenshots.
+
+**Network details:** By default the export leaves out the hub's IP address, gateway and DNS server addresses, the WiFi network name, the NTP server, Hub Mesh peer addresses and the Matter fabric ID, and shows what kind of value each is instead (for example "private range (hidden)", "2 servers (hidden)"). Home-network addresses inside alert text become `<IP>`. Turn on "Include IP addresses, DNS servers, the WiFi name and the Matter fabric in the AI/forum export" in Settings to include them. Limited Access entries and allowed subnets are never listed, only counted.
 
 ---
 

@@ -121,14 +121,15 @@ function t(n, fn) { queue.push([n, fn]); }
 // ---- B1-6 forum export table
 {
   const HELPERS = ['makeObf', 'assembleForumData', 'buildForumMarkdown', 'forumMarkdownBody', 'composeAlerts', 'flattenRadioDevices',
-    'fmem', 'ftemp', 'tScale', 'tSym', 'c2u', 'splitGhostNodes', 'zbWeakNeighbors', 'zbStaleNeighbors', 'zbMeshDetails', 'zwMeshStats', 'noTags', 'isNewer', 'relSummary', 'relLabel'];
+    'fmem', 'ftemp', 'tScale', 'tSym', 'c2u', 'splitGhostNodes', 'zbWeakNeighbors', 'zbStaleNeighbors', 'zbMeshDetails', 'zwMeshStats', 'noTags', 'isNewer', 'relSummary', 'relLabel', 'radioStates', 'isPrivateIpv4'];
   const CD = (src.match(/const CD=\{[^;]*\};/) || [])[0];
   const THRESHOLDS = (src.match(/const ZWAVE_PER_CRIT=[^;]+;/) || [])[0];
   const REL_T = (src.match(/const REL_T=\{[^;]*\};/) || [])[0];
-  assert(CD && THRESHOLDS && REL_T, 'forum constants not found');
+  const FORUM_C = (src.match(/const FORUM_LIST_CAP=[^;]+;/) || [])[0] + '\n' + (src.match(/const IPV4_RE=[^\n]+/) || [])[0];
+  assert(CD && THRESHOLDS && REL_T && !FORUM_C.includes('undefined'), 'forum constants not found');
   const F = load('forum',
     'const CODE_VERSION="6.3.0";\nlet TH={temperatureScale:"C",critMemMb:75,warnMemMb:100,warnCpuLoad:4,critCpuLoad:8,warnTempC:50,critTempC:60,chattyDeviceThreshold:10};\n' +
-    THRESHOLDS + '\n' + CD + '\n' + REL_T + '\n' + HELPERS.map(n => extractFn(n)).join('\n') + '\nconst Obf = makeObf();',
+    THRESHOLDS + '\n' + CD + '\n' + REL_T + '\n' + FORUM_C + '\n' + HELPERS.map(n => extractFn(n)).join('\n') + '\nconst Obf = makeObf();',
     ['assembleForumData', 'buildForumMarkdown']);
   const payload = (net) => ({
     dashboard: { appVersion: '6.3.0', hub: { name: 'Hub', hardware: 'C-8 Pro', firmware: '2.5.3.1' } },

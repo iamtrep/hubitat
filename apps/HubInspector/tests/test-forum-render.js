@@ -22,17 +22,19 @@ function extractFn(name) {
   return src.slice(s, i);
 }
 const HELPERS = ['makeObf', 'assembleForumData', 'buildForumMarkdown', 'forumMarkdownBody', 'composeAlerts', 'flattenRadioDevices',
-  'fmem', 'ftemp', 'tScale', 'tSym', 'c2u', 'splitGhostNodes', 'zbWeakNeighbors', 'zbStaleNeighbors', 'zbMeshDetails', 'zwMeshStats', 'noTags', 'isNewer', 'relSummary', 'relLabel'];
+  'fmem', 'ftemp', 'tScale', 'tSym', 'c2u', 'splitGhostNodes', 'zbWeakNeighbors', 'zbStaleNeighbors', 'zbMeshDetails', 'zwMeshStats', 'noTags', 'isNewer', 'relSummary', 'relLabel', 'radioStates', 'isPrivateIpv4'];
 const CD = (src.match(/const CD=\{[^;]*\};/) || [])[0];
 assert(CD, 'CD const not found');
 const THRESHOLDS = (src.match(/const ZWAVE_PER_CRIT=[^;]+;/) || [])[0];
 assert(THRESHOLDS, 'threshold consts not found');
 const REL_T = (src.match(/const REL_T=\{[^;]*\};/) || [])[0];
 assert(REL_T, 'REL_T const not found');
+const FORUM_C = (src.match(/const FORUM_LIST_CAP=[^;]+;/) || [])[0] + '\n' + (src.match(/const IPV4_RE=[^\n]+/) || [])[0];
+assert(!FORUM_C.includes('undefined'), 'forum export constants not found');
 const harness =
   'const CODE_VERSION="5.58.0";\n' +
   'let TH={temperatureScale:"C",critMemMb:75,warnMemMb:100,warnCpuLoad:4,critCpuLoad:8,warnTempC:50,critTempC:60,chattyDeviceThreshold:10};\n' +
-  THRESHOLDS + '\n' + CD + '\n' + REL_T + '\n' + HELPERS.map(extractFn).join('\n') +
+  THRESHOLDS + '\n' + CD + '\n' + REL_T + '\n' + FORUM_C + '\n' + HELPERS.map(extractFn).join('\n') +
   '\nconst Obf = makeObf();' +
   '\nmodule.exports = { assembleForumData, buildForumMarkdown, Obf };';
 const tmp = path.join(os.tmpdir(), 'hd_render_' + process.pid + '.js');
@@ -123,7 +125,8 @@ has('**Low Battery:** Fuite Piano (0%)');
 has('Apple TV Salon', 'inactive device listed');
 // Apps
 has('- **Total:** 339 (Built-in: 282, User: 57)');
-has('- Rule-5.1 (×160)', 'built-in instance count');
+has('**Built-in Apps:** ', 'built-in apps as one count line');
+if (!md.includes('- Rule-5.1 (×160)')) { pass++; console.log('  ok   built-in apps not listed one by one'); } else { fail++; console.log('  FAIL built-in apps listed one by one'); }
 has('- Hub Inspector', 'user app listed');
 // Z-Wave — the node table path (the second baseline exercised this; the first had 0 nodes)
 has('### Z-Wave');
@@ -141,10 +144,10 @@ has('**Devices:** 111');
 has('**LQI:** avg 251, min 239, max 255');
 // Matter
 has('### Matter');
-has('**Fabric:** 12FC7CD609B9D214');
+if (!md.includes('12FC7CD609B9D214')) { pass++; console.log('  ok   Matter fabric left out by default'); } else { fail++; console.log('  FAIL Matter fabric printed by default'); }
 // Hub Mesh — the bug the baseline caught (reshaped peers vs raw hubList)
 has('### Hub Mesh');
-has('| Hub B | 192.0.2.30 | Online | 5 | 1 |', 'hub mesh peer row');
+has('| Hub B | Online | 5 | 1 |', 'hub mesh peer row, no IP column by default');
 // Performance
 has('### Performance');
 has('**Device Runtime:** 4h 40m 56s (5.1% busy)');
@@ -207,7 +210,7 @@ hasNot2('No active alerts.', 'no "No active alerts" line when alerts exist');
 has2('(2 stale)', 'neighbor line notes stale count');
 has2('**Stale Neighbors:** 39E4, B44B', 'stale neighbor short IDs');
 hasNot2('### Hub Mesh', 'Hub Mesh section omitted (no peers)');
-has2('**Fabric:** 9F93BB6F02A43E79', 'Matter still renders');
+has2('### Matter', 'Matter still renders');
 
 // --- obfuscation: names become aliases; prose shows alias ALONE (no appended type) ---
 {
@@ -288,6 +291,42 @@ has2('**Fabric:** 9F93BB6F02A43E79', 'Matter still renders');
   assert.ok(!/Hall Sensor|Test Rule/.test(mdRel), 'no names in the forum line');
   pass++;
   console.log('  ok   reliability forum line (absent/null/unavailable/empty add nothing; payload adds one line after Alerts)');
+}
+
+// --- size caps: lists stop at 15 with a remainder line; a big mesh shows the 10 worst nodes by PER ---
+{
+  const big = JSON.parse(JSON.stringify(r));
+  big.network.zwave.mesh.nodes = Array.from({ length: 20 }, (_, i) => ({ nodeId: 30 + i, name: 'N' + i, security: 'None', per: i, rssiStr: '10dB',
+    route: '01 -> ' + (30 + i), msgCount: 0, driverType: 'sys', state: 'OK', neighbors: 2 }));
+  big.network.zwave.ghostNodes = Array.from({ length: 20 }, (_, i) => ({ id: 100 + i, name: 'G' + i, kind: 'ghost', signals: ['no device'] }));
+  const out = buildForumMarkdown(assembleForumData(big));
+  const check = (cond, label) => { if (cond) { pass++; console.log('  ok   ' + label); } else { fail++; console.log('  FAIL ' + label); } };
+  check(out.includes('**Ghost Nodes (20, no Hubitat device):**') && out.includes('- Node 114: G14') && !out.includes('- Node 115: G15') && out.includes('- … and 5 more'), 'ghost list capped at 15 with the full count in the heading');
+  check(out.includes('**10 nodes with the highest PER (of 20):**') && out.includes('| 49 | N19 |') && !out.includes('| 30 | N0 |'), 'node table: the 10 worst by PER');
+  check((out.match(/^\| \d+ \| N\d+ \|/gm) || []).length === 10, 'node table has 10 rows');
+}
+
+// --- network details: hidden by default, shown when the user opts in; access settings as counts ---
+{
+  const base = JSON.parse(JSON.stringify(r));
+  base.network.network = { hasEthernet: true, hasWiFi: true, usingStaticIP: true, lanAddr: '192.168.1.20',
+    staticGateway: '192.168.1.1', staticSubnetMask: '255.255.255.0', dnsServers: ['192.168.1.1', '9.9.9.9'], wifiNetwork: 'HomeNet' };
+  base.network.security = { limitedAccess: { enabled: true, addresses: ['192.168.1.0/24', '192.168.2.5'] }, allowedSubnets: [],
+    dnsFallback: true, hostnameRedirect: false, mdnsName: 'hub-x.local', cloudController: 'enabled' };
+  base.network.ntpServer = 'time.example.org';
+  base.health.alertSignals = { hubMessages: ['Device at 192.168.1.44 is not responding; update 2.5.0.146 ready'] };
+  const off = buildForumMarkdown(assembleForumData(base));
+  const optIn = JSON.parse(JSON.stringify(base)); optIn.settings = { forumObfuscate: false, forumNetworkDetails: true };
+  const on = buildForumMarkdown(assembleForumData(optIn));
+  const check = (cond, label) => { if (cond) { pass++; console.log('  ok   ' + label); } else { fail++; console.log('  FAIL ' + label); } };
+  check(!/192\.168\.|9\.9\.9\.9|HomeNet|time\.example\.org|12FC7CD609B9D214|192\.0\.2\.30/.test(off), 'default: no address, WiFi name, NTP host, fabric or peer IP');
+  check(off.includes('| IP Address | private range (hidden) |') && off.includes('| Gateway    | set (hidden) |') && off.includes('| DNS        | 2 servers (hidden) |'), 'default: kinds of value instead of addresses');
+  check(off.includes('Device at <IP> is not responding; update 2.5.0.146 ready'), 'alert text: home address replaced, firmware version kept');
+  check(off.includes('| Limited Access | On (2 entries) |') && off.includes('| Extra Allowed Subnets | None |') && off.includes('| DNS Fallback | Enabled |')
+    && off.includes('| Local Hostname Redirect | Off |') && off.includes('| Hubitat Cloud | Enabled |') && off.includes('| NTP Server | set (hidden) |'), 'access settings as counts and states');
+  check(!/192\.168\.2\.5|192\.168\.1\.0\/24/.test(on), 'opt-in still never prints Limited Access entries');
+  check(on.includes('| IP Address | 192.168.1.20 |') && on.includes('| WiFi SSID  | HomeNet |') && on.includes('| NTP Server | time.example.org |')
+    && on.includes('**Fabric:** 12FC7CD609B9D214') && on.includes('| Hub B | 192.0.2.30 | Online | 5 | 1 |') && on.includes('Device at 192.168.1.44'), 'opt-in: addresses and names shown');
 }
 
 console.log(`\n${pass}/${pass + fail} passed${fail ? `, ${fail} failed` : ''}`);

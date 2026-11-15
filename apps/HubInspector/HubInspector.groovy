@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "6.3.3"
+@Field static final String CODE_VERSION = "6.3.4"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -73,6 +73,8 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final String LIMITED_ACCESS_PATH = "/hub/advanced/getLimitedAccessAddresses"
 @Field static final String ALLOW_SUBNETS_PATH = "/hub/allowSubnets"
 @Field static final String DNS_FALLBACK_PATH = "/hub/advanced/getDNSFallback"
+@Field static final String HOSTNAME_REDIRECT_PATH = "/hub/advanced/localHostnameRedirectEnabled"  // 2.5.3; absent before
+@Field static final String HUB_DETAILS_PATH = "/hub/details/json"
 @Field static final String ZIGBEE_CHANNEL_SCAN_PATH = "/hub/zigbeeChannelScanJson"
 @Field static final String ZWAVE_TOPOLOGY_PATH = "/hub/zwaveTopology"
 @Field static final String HUB_EVENTS_PATH = "/hub/eventsJson"
@@ -186,6 +188,7 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final long       RADIO_CACHE_TTL_MS = 60_000L
 @Field static final long       HUB_LIST_CACHE_TTL_MS = 120_000L
 @Field static final long       HUB_DATA_CACHE_TTL_MS = 30_000L
+@Field static final long       MDNS_NAME_CACHE_TTL_MS = 600_000L
 @Field static final long       SYSTEM_RESOURCES_CACHE_TTL_MS = 10_000L
 // /logs/json is the most expensive read the app makes. Tab loads (Network, Apps, Performance)
 // share one build per window; checkpoints and Compare -> Now read it fresh and refresh the slot.
@@ -1224,6 +1227,8 @@ Map apiGetSettings() {
         // forumObfuscate is the forum export's, on until the user turns it off.
         obfuscateForumExport:    settings.obfuscateForumExport ?: false,
         forumObfuscate:          settings.forumObfuscate != false,
+        // Addresses and network names in the forum export: off until the user turns it on.
+        forumNetworkDetails:     settings.forumNetworkDetails == true,
         aliasSalt:               aliasSalt(),
         liveRefreshSec:          (settings.liveRefreshSec ?: 30) as int,
         cacheSize:               controllerTypeCache().size()
@@ -1246,7 +1251,7 @@ Map apiUpdateSettings() {
     }
     if (!body) return jsonResponse([success: false, error: "Empty or invalid body"])
 
-    Set boolKeys    = ["autoSnapshot", "autoCheckpoint", "debugLogging", "obfuscateForumExport", "forumObfuscate"] as Set
+    Set boolKeys    = ["autoSnapshot", "autoCheckpoint", "debugLogging", "obfuscateForumExport", "forumObfuscate", "forumNetworkDetails"] as Set
     Set numberKeys  = ["maxSnapshots", "maxCheckpoints", "inactivityDays", "lowBatteryThreshold",
                         "chattyDeviceThreshold", "warnMemMb", "critMemMb",
                         "snapshotInterval", "liveRefreshSec"] as Set
@@ -2541,6 +2546,7 @@ Map fetchSecurityInfo(Map prefetchedHubData = null) {
     String laRaw = (String) hubRequest(LIMITED_ACCESS_PATH, "limited access addresses", "text", 5)
     String subnets = (String) hubRequest(ALLOW_SUBNETS_PATH, "allowed subnets", "text", 5)
     String dnsFb = (String) hubRequest(DNS_FALLBACK_PATH, "DNS fallback", "text", 5)
+    String redirRaw = ((String) hubRequest(HOSTNAME_REDIRECT_PATH, "hostname redirect", "text", 5))?.toLowerCase()?.trim()
     Map hubData = prefetchedHubData
     if (!hubData) hubData = fetchHubData()
     // null laRaw/subnets means the fetch itself failed — distinguish from a successfully-fetched "no restriction"
@@ -2563,8 +2569,20 @@ Map fetchSecurityInfo(Map prefetchedHubData = null) {
         limitedAccess: limitedAccess,
         allowedSubnets: allowedSubnets,
         dnsFallback: dnsFb == null ? null : (dnsFb.toLowerCase().trim() == "true"),
+        // null on firmware without the setting: anything but true/false is not an answer
+        hostnameRedirect: redirRaw == "true" ? true : (redirRaw == "false" ? false : null),
+        mdnsName: fetchMdnsName(),
         cloudController: cloudDisabled == null ? null : (cloudDisabled ? "disabled" : "enabled")
     ]
+}
+
+// The hub's advertised .local name. /hub/details/json also carries the MAC and other ids: keep only the name.
+private String fetchMdnsName() {
+    return (String) cachedFetch('mdnsName', MDNS_NAME_CACHE_TTL_MS) {
+        Map r = hubMapRequest(HUB_DETAILS_PATH, "hub details", 5)
+        String n = r.ok ? (r.data?.mdnsName as String) : null
+        return n ? "${n}.local".toString() : null
+    }
 }
 
 // ===== Z-Wave Topology neighbour matrix (Phase 6 sub-3, v5.12.0) =====
