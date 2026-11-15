@@ -218,7 +218,11 @@
 (function () {
   "use strict";
 
-  var API = "${api_base}";
+  // The hub fills in its http://<IP> API address, but a page opened at another address of the same hub
+  // (hostname, https, port 8080) can't call it: the app API sends no CORS headers. So a page served from
+  // /apps/api/<id>/ calls the API at its own origin; elsewhere it keeps the hub's value.
+  var API_PATH = location.pathname.match(/^\/apps\/api\/\d+(?=\/)/);
+  var API = API_PATH ? location.origin + API_PATH[0] : "${api_base}";
   var TOKEN = "${access_token}";
 
   // Two independent shuttles; the tabs swap which one the panes are showing.

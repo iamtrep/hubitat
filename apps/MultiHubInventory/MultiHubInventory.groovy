@@ -6,7 +6,7 @@ import groovy.transform.Field
 import java.util.concurrent.ConcurrentHashMap
 import java.nio.file.NoSuchFileException
 
-@Field static final String CODE_VERSION = "0.9.1"
+@Field static final String CODE_VERSION = "0.9.2"
 @Field static final String UI_FILE = "multi_hub_inventory_ui.html"
 @Field static final String IMPORT_URL_APP = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/MultiHubInventory.groovy"
 @Field static final String IMPORT_URL_WEB = "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/apps/MultiHubInventory/multi_hub_inventory_ui.html"
