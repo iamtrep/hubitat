@@ -66,7 +66,11 @@ const MOCK_DATA = { 'inventory': {"generatedAt":1787300000000,"appVersion":"0.2.
   'hpm/status': {"mode":"observe","instanceId":"1","importedAt":1787299910000,"autoUpdateMode":"Never","dangling":0,"typeId":"100","disabled":false,"packages":1},
   'settings': {"txtEnable":true,"debugEnable":false,"traceEnable":false,"labelBadge":true,"driftMaxInflight":6,"brokenAfter":3,"appVersion":"0.2.0","uiVersion":"0.2.0"},
   'version/check': {"currentVersion":"0.2.0","latestVersion":"0.2.0","updateAvailable":false} };
-const T='${access_token}', B='${api_base}', APP_VERSION='${app_version}', cache={};
+// The hub fills in its http://<IP> API address, but a page opened at another address of the same hub
+// (hostname, https, port 8080) can't call it: the app API sends no CORS headers. So a page served from
+// /apps/api/<id>/ calls the API at its own origin; elsewhere it keeps the hub's value.
+const API_PATH=location.pathname.match(/^\/apps\/api\/\d+(?=\/)/);
+const T='${access_token}', B=API_PATH?location.origin+API_PATH[0]:'${api_base}', APP_VERSION='${app_version}', cache={};
 // Token in the Authorization header, not the URL — keeps it out of hub and proxy
 // access logs. The platform matches the scheme case-sensitively: exactly "Bearer".
 const AUTH=(x)=>Object.assign({'Authorization':'Bearer '+T},x||{});

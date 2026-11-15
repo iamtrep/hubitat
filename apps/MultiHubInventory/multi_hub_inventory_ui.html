@@ -150,7 +150,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "0.9.1";
+const CODE_VERSION = "0.9.2";
 const APP_VERSION = '${app_version}';   // injected by serveUI; stays literal in workbench/dev
 
 // ===== Z-WAVE MANUFACTURER TABLE (decimal maker-id -> name, from zwave-js) =====
@@ -172,7 +172,11 @@ function fwTargetsLabel(r){
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // true for hub-free local development
-const T = '${access_token}', B = '${api_base}';
+// The hub fills in its http://<IP> API address, but a page opened at another address of the same hub
+// (hostname, https, port 8080) can't call it: the app API sends no CORS headers. So a page served from
+// /apps/api/<id>/ calls the API at its own origin; elsewhere it keeps the hub's value.
+const API_PATH=location.pathname.match(/^\/apps\/api\/\d+(?=\/)/);
+const T = '${access_token}', B = API_PATH ? location.origin + API_PATH[0] : '${api_base}';
 // Token in the Authorization header, not the URL — keeps it out of hub and proxy
 // access logs. The platform matches the scheme case-sensitively: exactly "Bearer".
 const AUTH = () => ({ 'Authorization': 'Bearer ' + T });
