@@ -79,7 +79,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.1.1"
+@Field static final String CODE_VERSION = "0.1.2"
 
 // A pending version reconfigure older than this is treated as lost and re-armed.
 @Field static final long RECONFIGURE_RETRY_MS = 60000L
@@ -135,6 +135,11 @@ void initialize() {
 
     unschedule()
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
+    // unschedule() also cancels a pending accelerationInactive; re-arm it so
+    // acceleration can't stay active until the next vibration.
+    if (device.currentValue("acceleration") == "active") {
+        runIn((settings.vibrationTimeout ?: 90) as int, "accelerationInactive")
+    }
 
     // Seed to install/upgrade time so the normal "overdue" grace window
     // applies cleanly even if the device has never spoken — without it,
