@@ -110,6 +110,8 @@ void installed() { logDebug "installed"; state.version = CODE_VERSION; initializ
 void updated() {
     logDebug "updated"
     unschedule()
+    // unschedule() also cancels a pending pushHeldSetpoint; re-arm it rather than wait for the next poll.
+    if (state.heldSetpoint) sendHeldSetpoint()
     initialize()
     applyOffsetChange()
     if (settings.debugEnable || settings.traceEnable) runIn(DEBUG_LOG_TIMEOUT, "logsOff")

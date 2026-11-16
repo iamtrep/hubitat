@@ -25,7 +25,7 @@ import groovy.transform.Field
 import groovy.transform.CompileStatic
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.3"
+@Field static final String CODE_VERSION = "0.0.4"
 
 @Field static final List<String> SUPPORTED_THERMOSTAT_MODES     = ['"off"', '"heat"']
 @Field static final List<String> SUPPORTED_THERMOSTAT_FAN_MODES = ['"auto"']
@@ -132,6 +132,8 @@ void configure() {
     sendEvent(name: 'supportedThermostatModes',    value: SUPPORTED_THERMOSTAT_MODES)
 
     unschedule()
+    // unschedule() also cancels a setpoint still in its 500 ms debounce; re-arm it so the command isn't lost.
+    if (state.setPointPending) runInMillis(500, 'applyHeatingSetpoint')
 
     // Left by 0.0.1, which exposed them
     device.deleteCurrentState('voltage')
@@ -318,11 +320,13 @@ void setHeatingSetpoint(BigDecimal preciseDegrees) {
     if (preciseDegrees != null) {
         unschedule('applyHeatingSetpoint')
         state.setPoint = preciseDegrees
+        state.setPointPending = true
         runInMillis(500, 'applyHeatingSetpoint')
     }
 }
 
 private void applyHeatingSetpoint() {
+    state.remove('setPointPending')
     if (state.setPoint != device.currentValue('heatingSetpoint')) {
         String temperatureScale = getTemperatureScale()
         BigDecimal degrees = state.setPoint as BigDecimal
