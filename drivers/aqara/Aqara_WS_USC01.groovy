@@ -68,7 +68,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "1.5.4"
+@Field static final String CODE_VERSION = "1.5.5"
 
 // A pending version reconfigure older than this is treated as lost and re-armed.
 @Field static final long RECONFIGURE_RETRY_MS = 60000L
@@ -106,6 +106,9 @@ void updated() {
     logCfg "Preferences updated"
     unschedule()
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
+    // unschedule() also cancelled a pending clearSwitchTypeDigital; re-arm it so a
+    // device that misses configure's read-back can't label the next press digital.
+    if (state.switchTypeDigital) runInMillis(5000, "clearSwitchTypeDigital")
     configure()
 }
 

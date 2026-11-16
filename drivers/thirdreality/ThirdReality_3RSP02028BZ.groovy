@@ -26,7 +26,7 @@ import com.hubitat.hub.domain.Event
 import hubitat.zigbee.zcl.DataType
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.10"
+@Field static final String CODE_VERSION = "0.0.11"
 
 // Third Reality proprietary cluster (no Hubitat constant). The mfg code differs by
 // generation; resolve per-device via mfgCode() rather than a single constant.
@@ -255,6 +255,9 @@ void installed() {
 void updated() {
     logCfg "updated"
     unschedule()
+    // unschedule() also cancelled a pending clearIsDigital; re-arm it so a plug
+    // that misses configure's read-back can't label the next press digital.
+    if (state.isDigital) runInMillis(5000, "clearIsDigital")
 
     logDebug "settings: ${settings}"
     if (debugEnable || traceEnable) runIn(1800, "logsOff")

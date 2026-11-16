@@ -30,7 +30,7 @@ import com.hubitat.app.DeviceWrapper
 import hubitat.zigbee.zcl.DataType
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.5"
+@Field static final String CODE_VERSION = "0.0.6"
 
 // Both outlets. Kept as strings to match descMap.endpoint / child DNI suffixes.
 @Field static final List<String> ENDPOINTS = ["01", "02"]
@@ -206,6 +206,9 @@ void installed() {
 void updated() {
     logCfg "updated"
     unschedule()
+    // unschedule() also cancelled a pending clearIsDigital; re-arm it so a plug
+    // that misses configure's read-back can't label the next press digital.
+    if (state.pendingDigital) runInMillis(5000, "clearIsDigital")
     ensureChildren()
 
     logDebug "settings: ${settings}"

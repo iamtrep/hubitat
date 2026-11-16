@@ -26,7 +26,7 @@ import groovy.transform.Field
 import hubitat.zigbee.zcl.DataType
 import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 
 metadata {
     definition(
@@ -135,6 +135,9 @@ void installed() {
 void updated() {
     unschedule()
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
+    // unschedule() also cancelled a pending settle (refresh or updateFinalState);
+    // re-arm it so a blind that misses configure's read-back can't stay opening/closing.
+    if (device.currentValue("windowShade") in ["opening", "closing"]) runIn(3, "updateFinalState", [overwrite: true])
     configure()
 }
 
