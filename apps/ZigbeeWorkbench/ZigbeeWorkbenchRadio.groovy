@@ -195,6 +195,7 @@ void installed() {
 
 void updated() {
     logCfg "updated"
+    // safety-lint:ok unschedule-kills-timers — disconnectSocket() below does what endSessionNow and afterReload would
     unschedule()
     Long ends = sessionEnds[device.id.toString()]
     disconnectSocket()

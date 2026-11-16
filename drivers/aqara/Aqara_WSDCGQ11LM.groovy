@@ -139,6 +139,7 @@ void initialize() {
     // Idempotent setup — entered from installed(), updated(), and runInMillis on
     // version-change. Does NOT issue device-side Zigbee reporting (that's configure()).
 
+    // safety-lint:ok unschedule-kills-timers — recovery stops here on purpose; checkHealth restarts it
     unschedule()
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
     state.recoveryActive = false

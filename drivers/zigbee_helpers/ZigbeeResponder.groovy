@@ -96,6 +96,7 @@ void installed() {
 
 void updated() {
     logCfg "updated"
+    // safety-lint:ok unschedule-kills-timers — checkCodeVersion only calls updated(), which this run is
     unschedule()
     disconnectZigbeeLogSocket()
     initialize()

@@ -125,6 +125,7 @@ void installed() {
 void updated() {
     logDebug "updated()"
     storePassword()
+    // safety-lint:ok unschedule-kills-timers — the reconnect below re-arms connectionStable
     unschedule()      // before disconnect(), which schedules its own close check
     disconnect()
     initialize()
