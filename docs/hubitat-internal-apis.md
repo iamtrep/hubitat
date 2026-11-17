@@ -302,7 +302,7 @@ The Logs page (`/logs`, tabs `?tab=past` etc.) is a Vue chunk (`/ui2/js/vue-hub2
 
 ### Climate scheduler JSON API
 
-The built-in Climate Scheduler app (behaviour in [platform notes](hubitat-platform-notes.md#climate-scheduler)) keeps its configuration in one JSON document, not in app settings *(probed 2.5.3.107–2.5.3.124, C-8 Pro)*.
+The built-in Climate Scheduler app (behaviour in [built-in apps](hubitat-builtin-apps.md#climate-scheduler)) keeps its configuration in one JSON document, not in app settings *(probed 2.5.3.107–2.5.3.124, C-8 Pro)*.
 
 - Its app page is a redirect: `/installedapp/configure/json/{id}` returns a `mainPage` with one paragraph, `<script>window.location.href='/app/climateScheduler/{id}';</script>`, and that hub page sets `globalCurrentVueUIPage = 'climateScheduler'` and `window.HubitatClimateSchedulerAppId` *(probed 2.5.3.107–2.5.3.124, C-8 Pro)*.
 - `GET /app/climateSchedulerJson/{installedAppId}` returns `{document, revision, status}`. A `POST` of JSON `{document, revision}` to the same path saves, and answers `{success: true, document, revision, status}`. A save with an old `revision` is refused with HTTP 200 and `{success: false, errors: ["Settings changed. Reload before saving."]}`. A new instance starts at revision 0 *(probed 2.5.3.107–2.5.3.124, C-8 Pro)*.

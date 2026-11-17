@@ -19,6 +19,7 @@ Every fact in the platform reference set (`docs/hubitat-*.md`) says how it was e
 |---|---|
 | [`hubitat-internal-apis.md`](hubitat-internal-apis.md) | The hub as a client off the hub sees it: admin HTTP endpoints, websockets, port 8081, payloads, authentication, status codes |
 | [`hubitat-platform-notes.md`](hubitat-platform-notes.md) | What Groovy code on the hub can do and see: sandbox, `state`, events, scheduling, outbound HTTP, app pages, platform objects |
+| [`hubitat-builtin-apps.md`](hubitat-builtin-apps.md) | What a built-in app or integration does: Climate Scheduler, Google Home, Rule Machine, … |
 | [`hubitat-zigbee-helper.md`](hubitat-zigbee-helper.md) | The `zigbee` object injected into drivers, and ZDO |
 | [`hubitat-device-reference.md`](hubitat-device-reference.md) | Per-device and per-vendor protocol facts: cluster maps, encodings, quirks; and the hub models' hardware |
 
