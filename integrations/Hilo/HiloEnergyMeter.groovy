@@ -50,7 +50,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.1.1"
+@Field static final String CODE_VERSION = "0.1.2"
 
 // Event descriptions and preference titles, in the language the parent app sets. Logs stay in
 // English and never come from here.
@@ -91,14 +91,17 @@ metadata {
 @Field static final int STREAM_READ_TIMEOUT = 40
 @Field static final int BACKOFF_MIN_SECS = 5
 @Field static final int BACKOFF_MAX_SECS = 300
-// Failed reconnects in a row before the device reports offline.
-@Field static final int STREAM_OFFLINE_AFTER = 3
-// No power update for this long while the stream should be open: reconnect.
+// No power update for this long while the stream should be open: reconnect, and report offline.
+// Short outages (a late STOP, a few seconds of lost uplink) pass without a warning.
 @Field static final long STALE_DATA_MS = 300_000L
+// A STOP this soon after the driver's own close belongs to the closed stream.
+@Field static final long CLOSE_GRACE_MS = 5_000L
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
-// Per device: time of an intentional close, so the closed stream's STOP is not taken for a
-// failure. The next START clears it: a STOP after that belongs to the new stream. In memory:
-// a driver's atomicState write after the first state access is lost.
+// Per device: time of an intentional close. The first STOP within CLOSE_GRACE_MS of it is the
+// closed stream's and is not a failure. START does not clear it: the hub reports START from
+// connect() itself, within milliseconds and before the server answers, so the old stream's
+// STOP can come after the new stream's START. In memory: a driver's atomicState write after
+// the first state access is lost.
 @Field static final ConcurrentHashMap<String, Long> CLOSING = new ConcurrentHashMap<>()
 // Per device: time of the last stream data, kept off the database.
 @Field static final ConcurrentHashMap<String, Long> LAST_DATA = new ConcurrentHashMap<>()
@@ -141,9 +144,9 @@ void refresh() {
     if (liveEnabled() && streamStale()) connectStream()
 }
 
-private void checkVersion(boolean reinit = true) {
+void checkVersion(boolean reinit = true) {
     if (state.version == CODE_VERSION) return
-    logVer "new version: ${CODE_VERSION} (was: ${state.version})"
+    logVer "New version: ${CODE_VERSION} (was: ${state.version})"
     state.version = CODE_VERSION
     if (reinit) runIn(1, "updated")
 }
@@ -237,22 +240,28 @@ private void closeStream() {
 
 void eventStreamStatus(String s) {
     logNet "stream status: ${s}"
-    if (s.startsWith("START")) { CLOSING.remove(device.id.toString()); return }
     if (s.startsWith("STOP")) {
         Long closedAt = CLOSING.remove(device.id.toString())
-        if (closedAt != null && now() - closedAt < 10_000L) return
+        if (closedAt != null && now() - closedAt < CLOSE_GRACE_MS) { logDebug "closed stream stopped"; return }
         streamFailed("stream stopped")
     } else if (s.startsWith("ERROR")) {
         logDebug "stream error: ${s}"
     }
 }
 
-// Backstop for a stream that ended without a status the driver acted on.
+// Reports offline once live power has been missing for STALE_DATA_MS, and reconnects: also the
+// backstop for a stream that ended without a status the driver acted on.
 void checkStream() {
-    if (liveEnabled() && streamStale()) {
-        logDebug "no stream data for ${(now() - lastData()).intdiv(1000L)} s"
-        streamFailed("no data from Hilo")
+    if (!liveEnabled() || !streamStale()) return
+    long secs = (now() - lastData()).intdiv(1000L)
+    if (!state.streamDown) {
+        state.streamDown = true
+        logWarn "live power lost (no data for ${secs} s); reconnecting with backoff up to ${BACKOFF_MAX_SECS} s"
+        updateHealth("offline", tr("why.streamDown", [:], "en"), tr("why.streamDown"))
+    } else {
+        logDebug "no stream data for ${secs} s"
     }
+    streamFailed("no data from Hilo")
 }
 
 private long lastData() { return (LAST_DATA.get(device.id.toString()) ?: 0L) as long }
@@ -265,9 +274,7 @@ private void streamFailed(String why) {
     int delay = (state.reconnectDelay ?: BACKOFF_MIN_SECS) as int
     state.streamFailures = n
     state.reconnectDelay = Math.min(delay * 2, BACKOFF_MAX_SECS)
-    if (n < STREAM_OFFLINE_AFTER) logDebug "${why}; reconnecting in ${delay} s"
-    else if (n == STREAM_OFFLINE_AFTER) { logWarn "live power lost (${why}); retrying every ${delay}–${BACKOFF_MAX_SECS} s"; updateHealth("offline", tr("why.streamDown", [:], "en"), tr("why.streamDown")) }
-    else logDebug "${why}; reconnect ${n} in ${delay} s"
+    logDebug "${why}; reconnect ${n} in ${delay} s"
     runIn(delay, "connectStream")
 }
 
@@ -287,10 +294,12 @@ void parse(String s) {
     int watts = (kw * 1000).setScale(0, BigDecimal.ROUND_HALF_UP).intValue()
     sendEvent(name: "power", value: watts, unit: "W")
     if (state.streamFailures) {
-        boolean wasOffline = (state.streamFailures as int) >= STREAM_OFFLINE_AFTER
         state.remove("streamFailures")
         state.remove("reconnectDelay")
-        if (wasOffline) updateHealth("online", tr("why.streamBack", [:], "en"), tr("why.streamBack"))
+    }
+    if (state.streamDown) {
+        state.remove("streamDown")
+        updateHealth("online", tr("why.streamBack", [:], "en"), tr("why.streamBack"))
     }
 }
 

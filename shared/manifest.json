@@ -2219,6 +2219,12 @@
             "items": [
                 "logsOff"
             ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
         }
     },
     "integrations/Hilo/HiloManager.groovy": {
