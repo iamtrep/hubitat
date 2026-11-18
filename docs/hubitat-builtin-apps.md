@@ -48,15 +48,21 @@ The built-in Google Home integration shares hub devices with Google Home. Linkin
 
 - **The built-in Virtual Thermostat is accepted.** A new Virtual Thermostat and one an app was driving both appeared in Google Home, showing mode `heat` and their setpoint. Adding a device to the app's device list and saving logged `updated...` and the device appeared without a re-sync *(probed 2.5.3.124, C-8 Pro)*. This contradicts a [forum report](https://community.hubitat.com/t/167286) that it doesn't appear.
 - **Setpoint changes from Google reach the device in heat mode.** A change to 22.5 from the Google Home app's dial set `heatingSetpoint` and `thermostatSetpoint` to 22.5 °C about a second later, and the mode stayed `heat` *(probed 2.5.3.124, C-8 Pro, hub scale °C)*.
-- **Google Home shows half degrees.** On a hub set to °C, the Google Home app showed the setpoint and the temperature rounded up to the next tenth, then to the nearest 0.5 °C; a value can therefore show up to 0.3 °C off, more often above the real value than below *(probed 2.5.3.124, C-8 Pro)*. Whether the integration or Google does the rounding was not established:
+- **The app's debug log shows each report.** With "Enable debug logging" on, the app logs every report it sends as `postReportState payload:[devices:[states:[<deviceId>:[online:true, thermostatTemperatureSetpoint:21.8, thermostatTemperatureSetpointHigh:25, thermostatTemperatureSetpointLow:21.8, thermostatTemperatureAmbient:22.8, thermostatMode:heat], ...]]]`, all shared devices in one report *(probed 2.5.3.124–2.5.3.130, C-8 Pro)*.
+- **The integration rounds up to one decimal.** Setpoints and temperatures are sent rounded toward +∞ to one decimal place: 21.01 is sent as 21.1, 21.73 as 21.8, 18.99 as 19.0, -5.55 as -5.5 and -0.05 as 0.0; whole numbers are sent as they are. Every value from 21.00 to 21.99 and 18.00 to 18.99 in 0.01 steps followed this *(probed 2.5.3.124–2.5.3.130, C-8 Pro, Virtual Thermostat, 222 values)*.
+- **On a hub set to °F, values are converted to °C and then rounded up.** 70.71 °F (21.506 °C) is sent as 21.6, 0 °F as -17.7 and 69 °F as 20.6, for 143 values including 70.00 to 70.99 °F in 0.01 steps *(probed 2.5.3.130, C-8 Pro, Virtual Thermostat)*. A reading from 70.35 to 70.49 °F is therefore sent as a value at or above 70.5 °F, which a display rounding to whole °F would show as 71; Google's °F display was not observed *(inferred: the conversion above)*. Whole and half °F setpoints from 65 to 75 come back to the same whole degree *(probed 2.5.3.130, C-8 Pro)*.
+- **A device Google hasn't synced yet is refused.** Reports for a device added to the app moments before were answered with HTTP 404, and the app logged `reportStateResponse Error: {"error": {"code": 404, "message": "Device ID cannot be found. This is usually an indication that the device may have been removed. Send a Request Sync to re-sync the device in Google.", "status": "NOT_FOUND"}}, giving up for now.` once per report; the errors stopped once Google had synced the device *(probed 2.5.3.130, C-8 Pro)*.
+- **The Google Home app shows half degrees.** On a hub set to °C, the phone app showed what it was sent to the nearest 0.5 °C, so a value can show up to 0.3 °C off, more often above the real value than below *(probed 2.5.3.124, C-8 Pro)*:
 
-| On the hub | Google Home app shows |
-|---|---|
-| setpoint 21.2, 21.3, 21.5 | 21, 21.5, 21.5 |
-| setpoint 21.71, 21.73 | 22, 22 |
-| temperature 19.1, 19.37, 22.3, 22.72 | 19, 19.5, 22.5, 23 |
+| On the hub | Sent | Google Home app shows |
+|---|---|---|
+| setpoint 21.2, 21.3, 21.5 | 21.2, 21.3, 21.5 | 21, 21.5, 21.5 |
+| setpoint 21.71, 21.73 | 21.8, 21.8 | 22, 22 |
+| temperature 19.1, 19.37, 22.3, 22.72 | 19.1, 19.4, 22.3, 22.8 | 19, 19.5, 22.5, 23 |
 
-The table is the probe above *(probed 2.5.3.124, C-8 Pro, Virtual Thermostat)*. Not tested: a hub set to °F, mode changes from Google, setpoints sent by voice, sharing from a device's Assistants tab, and a component child device.
+The table is the probe above *(probed 2.5.3.124, C-8 Pro, Virtual Thermostat)*. The rounded value never comes back: the device kept 21.73 while Google showed 22 *(probed 2.5.3.124, C-8 Pro)*.
+
+- **Modes.** The app tells Google a thermostat supports `off`, `heat`, `cool` and `heatcool`, in unit `C` on a °C hub. `auto` is sent as `heatcool` and `emergency heat` as `heat`. `thermostatTemperatureSetpointLow` and `High` are the heating and cooling setpoints. `thermostatTemperatureSetpoint` was the heating setpoint in `heat` and the cooling setpoint in `cool`, `heatcool` and `off`. In `emergency heat` entered after `cool`, it was the cooling setpoint, so Google got mode `heat` with the cooling setpoint *(probed 2.5.3.130, C-8 Pro, Virtual Thermostat)*. Not tested: `emergency heat` entered from `heat`, how the Google Home app displays values from a °F hub, mode changes from Google, setpoints sent by voice, sharing from a device's Assistants tab, and a component child device.
 
 ## Google TV Integration
 
