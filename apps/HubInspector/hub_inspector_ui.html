@@ -254,8 +254,6 @@ const DIAG_TOOL_URL=HUB_ORIGIN?'http://'+new URL(HUB_ORIGIN).hostname+':8081/':'
   if (m && el) el.href = m[1]+'/installedapp/configure/'+m[2]; else if (el) el.style.display='none'; })();
 let curTab = localStorage.getItem('hub_diag_tab') || 'dashboard';
 let activePerfComp = null;
-let liveIntervalSec = ${live_refresh_sec} || 30;
-let liveTimer = null; // declared here: the Settings save handler runs outside the startup block
 
 // ===== API =====
 const CACHE_TTL_MS=120000;
@@ -2676,7 +2674,7 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
 
   // Resources
   if(d.resources){const r=d.resources;
-    o+='<div class="card"><div class="card-h">Resources<span id="res-dash-ts" style="float:right;font-size:11px;font-weight:normal;opacity:.6"></span></div><div class="card-b"><div id="res-dash" class="metrics">'+renderDashRes(r,d)+'</div></div></div>'}
+    o+='<div class="card"><div class="card-h">Resources<span style="float:right;font-size:11px;font-weight:normal;opacity:.6"><span id="res-dash-ts">'+liveTs(LIVE_TS_EP['res-dash-ts'])+'</span>'+(REPORT?'':' <button class="btn btn-s" data-live-refresh title="Fetch current memory, CPU, temperature and database size">Refresh</button>')+'</span></div><div class="card-b"><div id="res-dash" class="metrics">'+renderDashRes(r,d)+'</div></div></div>'}
   // Connection Types + Integrations (side by side)
   o+='<div class="two-col" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
   o+='<div class="card"><div class="card-h">Connection Types</div><div class="card-b"><div class="pills">';
@@ -2833,8 +2831,8 @@ async function rDashboard(){const P='p-dashboard';loading(P);try{
       html=embedReportData(html,reportData);
       // Strip the hub's runtime placeholders. The placeholder strings are assembled at
       // runtime so the hub's own serve-time substitution does not rewrite them in this source.
-      const PH_TOK='$'+'{access_token}', PH_BASE='$'+'{api_base}', PH_REFRESH='$'+'{live_refresh_sec}';
-      html=html.replace(PH_TOK,'').replace(PH_BASE,'').replace(PH_REFRESH,'0');
+      const PH_TOK='$'+'{access_token}', PH_BASE='$'+'{api_base}';
+      html=html.replace(PH_TOK,'').replace(PH_BASE,'');
       // Filename matches old format: hub_diagnostics_report_YYYYMMDD_HHmmss.html
       const stamp=ts.getFullYear()+pad(ts.getMonth()+1)+pad(ts.getDate())+'_'+pad(ts.getHours())+pad(ts.getMinutes())+pad(ts.getSeconds());
       const filename='hub_diagnostics_report_'+stamp+'.html';
@@ -3548,7 +3546,7 @@ async function rHealth(){const P='p-health';loading(P);try{
   const rs=relSummary(d.reliability);if(rs){let rr=[];if(Obf.enabled&&rs.available){try{rr=(await api('devices')).deviceRows}catch(e){}}o+=relCard(rs,rr)}
   // Resources
   if(d.resources){const r=d.resources;
-    o+='<div class="card"><div class="card-h">System Resources<span id="res-health-ts" style="float:right;font-size:11px;font-weight:normal;opacity:.6"></span></div><div class="card-b"><div id="res-health">'+renderHealthRes(r,d)+'</div></div></div>'}
+    o+='<div class="card"><div class="card-h">System Resources<span style="float:right;font-size:11px;font-weight:normal;opacity:.6"><span id="res-health-ts">'+liveTs(LIVE_TS_EP['res-health-ts'])+'</span>'+(REPORT?'':' <button class="btn btn-s" data-live-refresh title="Fetch current memory, CPU, temperature and database size">Refresh</button>')+'</span></div><div class="card-b"><div id="res-health">'+renderHealthRes(r,d)+'</div></div></div>'}
   // Memory chart placeholder
   o+='<div class="card"><div class="card-h">Resource History</div><div class="card-b"><div id="memChart"><div class="loading"><div class="spinner"></div><div>Loading history...</div></div></div></div></div>';
   // Database
@@ -4343,12 +4341,6 @@ async function rConfig(){const P='p-config';loading(P);try{
   o+=`<label><input type="checkbox" id="cfg_debugLogging" ${s.debugLogging?'checked':''}><span>Enable debug logging</span></label><span id="cfg_debugStatus" style="font-size:12px;color:var(--ok)"></span>`;
   o+='</div></div></div>';
 
-  // Live Data
-  o+='<div class="card"><div class="card-h">Live Data</div><div class="card-b"><div class="cfg-row">';
-  o+=`<label>Auto-refresh interval: <input type="number" id="cfg_liveRefreshSec" value="${s.liveRefreshSec||30}" min="10" max="300" class="cfg-n"> seconds</label>`;
-  o+=`<button class="btn btn-p btn-s" id="cfg_saveLive">Save</button><span id="cfg_liveStatus" style="font-size:12px;color:var(--ok)"></span>`;
-  o+='</div></div></div>';
-
   // Export
   o+='<div class="card"><div class="card-h">Privacy</div><div class="card-b"><div class="cfg-row">';
   o+=`<label><input type="checkbox" id="cfg_obfuscate" ${s.obfuscateForumExport?'checked':''}> Obfuscate device/app names in the dashboard (uses stable random aliases)</label>`;
@@ -4443,13 +4435,6 @@ async function rConfig(){const P='p-config';loading(P);try{
     if(on)await seedObfRegistry();
     document.querySelectorAll('.panel').forEach(p=>{p.innerHTML='';});
     go(curTab);
-  };
-
-  document.getElementById('cfg_saveLive').onclick=async()=>{
-    const v=Math.max(10,Math.min(300,parseInt(document.getElementById('cfg_liveRefreshSec').value)||30));
-    await saveSetting({liveRefreshSec:v});
-    liveIntervalSec=v;clearInterval(liveTimer);liveTimer=setInterval(refreshLive,liveIntervalSec*1000);
-    flash('cfg_liveStatus','Saved ✓');
   };
 
   document.getElementById('cfg_clearCache').onclick=async function(){
@@ -5960,7 +5945,7 @@ function rcMatterConnect(){
   const m=RC.matter;
   m.state='polling';rcMatterUpdateBadge();
   // Kick off immediately, then on interval. Keep polling even when the tab is hidden so the
-  // recording stays continuous (capture semantics, unlike refreshLive which skips hidden tabs).
+  // recording stays continuous (capture semantics).
   rcMatterPoll();
   m.pollTimer=setInterval(rcMatterPoll, m.intervalMs);
 }
@@ -6353,8 +6338,13 @@ function go(t){
 document.getElementById('p-health').addEventListener('click',e=>{const a=e.target.closest('a[data-rg]');if(!a)return;e.preventDefault();const q=relQ[+a.dataset.rg];if(q)relGo(q.g,q.f)});
 document.getElementById('tabs').addEventListener('click',e=>{if(e.target.dataset.tab)go(e.target.dataset.tab)});
 
+// The resource tiles refresh only on request: Hub Inspector is a troubleshooting tool, not a monitor.
+// Each tile shows when its numbers were read; Refresh reads /api/live once.
+const LIVE_TS_EP={'res-dash-ts':'dashboard','res-health-ts':'health'};
+function liveTs(ep){const c=cache[ep];return 'Updated '+new Date(c?c.ts:Date.now()).toLocaleTimeString()}
+document.addEventListener('click',e=>{if(e.target.closest('[data-live-refresh]'))refreshLive()});
 async function refreshLive(){
-  if(document.hidden)return;
+  const btns=document.querySelectorAll('[data-live-refresh]');btns.forEach(b=>b.disabled=true);
   try{
     const resp=await fetch(B+'/api/live',{headers:AUTH()});
     if(!resp.ok)return;
@@ -6367,7 +6357,7 @@ async function refreshLive(){
     const health=document.getElementById('res-health');if(health)health.innerHTML=renderHealthRes(r,d);
     const ts=new Date().toLocaleTimeString();
     ['res-dash-ts','res-health-ts'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='Updated '+ts});
-  }catch(e){}
+  }catch(e){}finally{btns.forEach(b=>b.disabled=false)}
 }
 function refreshPage(){
   const keys={dashboard:['dashboard'],devices:['devices'],apps:['apps'],network:['network'],
@@ -6876,60 +6866,9 @@ const _inAuditMode = new URLSearchParams(window.location.search).has('audit');
 if (_inAuditMode) {
   renderAuditPage();
 } else {
-  liveTimer=setInterval(refreshLive,liveIntervalSec*1000);
-  document.addEventListener('visibilitychange',()=>{
-    clearInterval(liveTimer);
-    if(!document.hidden)liveTimer=setInterval(refreshLive,liveIntervalSec*1000)
-  });
   // Populate header hub info regardless of which tab opens first (cached for 2min, free on dashboard tab).
-  // Also seed the alert-aware favicon from the same payload.
-  api('dashboard').then(d=>{setHubInfoHeader(d&&d.hub);setFaviconSeverity(severityFromDashboard(d))}).catch(()=>{});
-  // Refresh favicon every 60s so the tab indicator stays useful even when the user is on a non-Dashboard tab.
-  // api('dashboard') is cached for 2min, so most ticks hit cache; actual hub fetches happen ~every 2min.
-  setInterval(()=>{api('dashboard').then(d=>setFaviconSeverity(severityFromDashboard(d))).catch(()=>{})},60000);
+  api('dashboard').then(d=>setHubInfoHeader(d&&d.hub)).catch(()=>{});
   go(curTab);
-}
-
-// ===== ALERT-AWARE FAVICON =====
-// Overlays a colored dot (green/amber/red) on the Hubitat favicon, reflecting the highest alert severity.
-// Lets the user spot a problem from the browser tab list without switching tabs.
-let __favBaseImg=null,__favLastSev=null,__favBaseLoading=null;
-function faviconBase(){
-  if(__favBaseImg)return Promise.resolve(__favBaseImg);
-  if(__favBaseLoading)return __favBaseLoading;
-  __favBaseLoading=new Promise(resolve=>{
-    const img=new Image();
-    img.onload=()=>{__favBaseImg=img;resolve(img)};
-    img.onerror=()=>resolve(null);
-    img.src='/ui2/images/favicon-32x32.png';
-  });
-  return __favBaseLoading;
-}
-async function setFaviconSeverity(sev){
-  if(sev===__favLastSev)return;
-  // Textual equivalent of the favicon dot for screen readers / icon-less browsers.
-  document.title=(sev==='critical'?'⛔ ':sev==='warning'?'⚠ ':'')+'Hub Inspector';
-  const img=await faviconBase();
-  if(!img)return;
-  const c=document.createElement('canvas');c.width=32;c.height=32;
-  const ctx=c.getContext('2d');
-  ctx.drawImage(img,0,0,32,32);
-  const color=sev==='critical'?'#e53935':sev==='warning'?'#fb8c00':'#43a047';
-  // White halo for legibility on any background, then severity-colored dot.
-  ctx.beginPath();ctx.arc(24,24,7,0,Math.PI*2);ctx.fillStyle='#ffffff';ctx.fill();
-  ctx.beginPath();ctx.arc(24,24,5.5,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();
-  let url;try{url=c.toDataURL('image/png')}catch(e){return}
-  let link=document.querySelector('link[rel="icon"][sizes="32x32"]');
-  if(!link){link=document.createElement('link');link.rel='icon';link.type='image/png';link.setAttribute('sizes','32x32');document.head.appendChild(link)}
-  link.href=url;
-  __favLastSev=sev;
-}
-function severityFromDashboard(d){
-  // Reuse composeAlerts to honor the same alert thresholds + signals as the Dashboard/Health tabs.
-  const alerts=(d&&typeof composeAlerts==='function')?composeAlerts(d):((d&&d.alerts)||[]);
-  if(alerts.some(a=>a.severity==='critical'))return 'critical';
-  if(alerts.some(a=>a.severity==='warning'))return 'warning';
-  return 'ok';
 }
 </script>
 </body>

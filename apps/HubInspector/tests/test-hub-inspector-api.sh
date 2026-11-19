@@ -686,7 +686,7 @@ else:
 
     sig = health.get("alertSignals") or {}
     # v5.38.0: ghostNodeCount split into zwaveGhostCount/zwaveFailedCount/zwaveProblemCount
-    # + zwaveRadioUpdate so the SPA roll-up (composeAlerts) and favicon reflect each distinctly.
+    # + zwaveRadioUpdate so the SPA roll-up (composeAlerts) reflects each distinctly.
     expected_sig_keys = ["platformAlerts", "hubMessages", "ethernetAndWifi",
                          "bonjourRestartsScheduled",
                          "zwaveGhostCount", "zwaveFailedCount", "zwaveProblemCount", "zwaveRadioUpdate"]

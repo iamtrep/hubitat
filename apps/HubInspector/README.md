@@ -160,7 +160,7 @@ The header bar contains a **Docs ↗** link (this document), a **Diagnostic Tool
 
 **Overview** — Device counts: total, active, inactive, disabled. Installed apps: total, built-in, community. Device counts and the installed-app total are linked to the filtered list.
 
-**Resources** — Free OS memory, CPU load (5-minute average), hub temperature, and database size. Values are color-coded against configurable thresholds (see [Settings](#settings-tab)). This card **auto-refreshes** in the background on a configurable interval (default 30 s); the last refresh time is shown in the card header.
+**Resources** — Free OS memory, CPU load (5-minute average), hub temperature, and database size. Values are color-coded against configurable thresholds (see [Settings](#settings-tab)). The card header shows when these values were read; **Refresh** reads them again. Nothing refreshes in the background.
 
 **Connection Types / Integrations** — Two independent breakdowns. **Connection** is how the hub reaches each device — the specific radio for commissioned devices (Zigbee, Z-Wave, Matter, Bluetooth), HomeKit for HAP-commissioned accessories, plus LAN (Direct), LAN (Bridge), Cloud, Virtual, and Hub Mesh. **Integrations** counts only devices managed by a parent integration (an app or a parent device) — e.g. Lutron, Blink, Kasa; standalone devices aren't listed here, so this breakdown won't sum to the device total. Counts are linked to the device list filtered to that group.
 
@@ -427,7 +427,7 @@ Lists devices visible to the hub via mDNS / Bonjour / Avahi (`/hub/mdnsDevices/j
 
 **Troubleshooting Center** (firmware 2.5.3 and later) — The findings from the hub's own Troubleshooting Center page (`/hub/reliability`): devices that went silent, low batteries, offline devices, weak Zigbee links, and rules with no trigger. The card shows the number of critical and warning findings, how many devices the hub monitors, a count for each kind of finding, and up to 10 findings, critical first, with links to the device or app page. Each finding also links to the part of Hub Inspector that shows more about it, such as the Devices list, Radio Capture, the Network tab or Performance, with the filter filled in; a Radio Capture link never starts a capture. It also links to the hub's page, where you can snooze a finding or exclude a device. Hub Inspector reads the findings and changes nothing. The hub runs a scan for each read, so Hub Inspector reuses a result for 5 minutes. These findings are not counted in Alerts or the browser tab icon. The Copy for Forum text adds one line with the counts, and no names. The hub rates batteries below 20% as a warning and below 10% as critical, so its battery findings can differ from the Devices tab, which flags 20% and below. On earlier firmware the card does not appear and Hub Inspector sends no request.
 
-**System Resources** — Free OS memory, CPU load (5-min avg), **Processors** (count, from `/hub/cpuInfo`), **Load Avg (1m)** (from `/hub/cpuInfo`), **Hub Load Threshold** (% from `/hub/advanced/getExcessiveLoadThreshold` — the level Hubitat itself considers "excessive"), Java heap usage (total/free/direct), temperature (°C and °F), and database size. Free memory, CPU load and temperature each get a bar showing the current reading against the range since the last restart and the warning and critical thresholds; temperature also lists its 30-day range. The other readings share one line, with the database size's 30-day range. Values are color-coded against configured thresholds. This card **auto-refreshes** in the background on a configurable interval (default 30 s); the last refresh time is shown in the card header.
+**System Resources** — Free OS memory, CPU load (5-min avg), **Processors** (count, from `/hub/cpuInfo`), **Load Avg (1m)** (from `/hub/cpuInfo`), **Hub Load Threshold** (% from `/hub/advanced/getExcessiveLoadThreshold` — the level Hubitat itself considers "excessive"), Java heap usage (total/free/direct), temperature (°C and °F), and database size. Free memory, CPU load and temperature each get a bar showing the current reading against the range since the last restart and the warning and critical thresholds; temperature also lists its 30-day range. The other readings share one line, with the database size's 30-day range. Values are color-coded against configured thresholds. The card header shows when these values were read; **Refresh** reads them again. Nothing refreshes in the background.
 
 **Resource History** — Time-series chart of free OS memory, CPU load and hub temperature since the last hub restart, each on its own axis. Horizontal reference lines mark the warning and critical memory thresholds. Hover for the values at any point; drag to zoom. The app samples temperature every 5 minutes and keeps hourly min/average/max summaries, along with the database size, for 30 days in File Manager (`hub_diagnostics_hourly.json`), so the temperature line fills in with hourly averages after a code update. Re-renders on browser resize.
 
@@ -565,7 +565,7 @@ The scan crawls every device via `/device/fullJson/{id}` — one call per device
 
 ## Settings Tab
 
-Most settings are accessible from the Hubitat admin UI under **Apps → Hub Inspector → Settings**. Five settings are available only through the dashboard's Settings tab and are not shown in the Hubitat admin UI: **Auto-refresh interval** (Live Data section), **Obfuscate device/app names in the dashboard**, **Obfuscate device/app names in the AI/forum export** and **Include IP addresses, DNS servers, the WiFi name and the Matter fabric in the AI/forum export** (Privacy section), and **Clear Enrichment Cache** (Maintenance section).
+Most settings are accessible from the Hubitat admin UI under **Apps → Hub Inspector → Settings**. Four settings are available only through the dashboard's Settings tab and are not shown in the Hubitat admin UI: **Obfuscate device/app names in the dashboard**, **Obfuscate device/app names in the AI/forum export** and **Include IP addresses, DNS servers, the WiFi name and the Matter fabric in the AI/forum export** (Privacy section), and **Clear Enrichment Cache** (Maintenance section).
 
 ### Config Snapshot Scheduling
 - Enable automatic snapshots: on/off
@@ -600,9 +600,6 @@ These thresholds control when resource metrics turn orange (warning) or red (cri
 | Hub temperature critical (°C) | 80 | 20–100 (68–212 on °F hubs) |
 
 Changes take effect immediately in the dashboard without a page reload.
-
-### Live Data
-- **Auto-refresh interval** — How frequently the Resources cards on the Dashboard and Health tabs update in the background (10–300 seconds, default 30). Changes take effect immediately on save without a page reload.
 
 ### Logging
 - **Info logging** — On by default.
@@ -649,7 +646,7 @@ The export generates a concise Markdown summary of the hub to paste into a commu
 
 Severity levels: **Critical** (red), **Warning** (orange), **Info** (blue), **OK** (green).
 
-The **alert-aware favicon** and the Dashboard *Platform Alerts* / Health *Alerts* lists share one roll-up: System Resource Alerts, Platform Alerts, Hub Messages, Ethernet + WiFi, mDNS/Bonjour periodic restart, cloud calls to a deleted app, the Z-Wave ghost / failed / problem-node counts, Z-Wave radio-firmware-update, hub-firmware-update, and app-update status. The remaining entries below — Matter reboot, the per-mesh quality metrics (Avg PER / RSSI, S0 overhead, Zigbee LQI), and the device-inventory alerts (low battery, stale devices, chatty devices) — are surfaced on their own tabs and do **not** affect the favicon or the *Alerts* count. The Performance tab's chatty-device banner is a separate, browser-computed metric (per-device messages/min vs the chatty-device threshold) and is distinct from the hub's *Spammy Devices Detected* flag; only the hub flag feeds the roll-up.
+The Dashboard *Platform Alerts* and Health *Alerts* lists share one roll-up: System Resource Alerts, Platform Alerts, Hub Messages, Ethernet + WiFi, mDNS/Bonjour periodic restart, cloud calls to a deleted app, the Z-Wave ghost / failed / problem-node counts, Z-Wave radio-firmware-update, hub-firmware-update, and app-update status. The remaining entries below — Matter reboot, the per-mesh quality metrics (Avg PER / RSSI, S0 overhead, Zigbee LQI), and the device-inventory alerts (low battery, stale devices, chatty devices) — are surfaced on their own tabs and do **not** affect the *Alerts* count. The Performance tab's chatty-device banner is a separate, browser-computed metric (per-device messages/min vs the chatty-device threshold) and is distinct from the hub's *Spammy Devices Detected* flag; only the hub flag feeds the roll-up.
 
 ### Hub Messages
 | Alert | Source | Severity |

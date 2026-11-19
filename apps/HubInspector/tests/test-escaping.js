@@ -2,7 +2,7 @@
 // Copyright (c) 2025-2026 PJ
 // SPDX-License-Identifier: MIT
 //
-// h() attribute-safe escaping, report embedding round trip, liveTimer scoping.
+// h() attribute-safe escaping, report embedding round trip.
 // Run: node apps/HubInspector/tests/test-escaping.js
 // HI_UI_SRC=<file> runs the same checks against another copy of the UI.
 'use strict';
@@ -42,13 +42,6 @@ t('embedding survives $&, $`, $\' , </SCRIPT> and <!--', () => {
   assert.deepStrictEqual(JSON.parse(m[1]), data);
   assert(out.indexOf('</head>') > out.indexOf('report-data'), '</head> kept after the block');
   assert.strictEqual(out.split('</head>').length, 2);
-});
-
-t('liveTimer declared at top level, not inside the startup block', () => {
-  const decl = src.indexOf('let liveTimer');
-  assert(decl >= 0 && decl === src.lastIndexOf('let liveTimer'), 'exactly one let liveTimer');
-  assert(decl < src.indexOf('cfg_saveLive'), 'declared before the save handler');
-  assert(decl < src.indexOf('// ===== STARTUP ====='), 'declared outside the startup block');
 });
 
 if (failed) { console.error(failed + ' failed'); process.exit(1); }

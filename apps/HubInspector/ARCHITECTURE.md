@@ -73,18 +73,18 @@ Caching is how the app honours the guiding principle: every avoided hub fetch is
 - `CACHE_TTL_MS = 120000` (2 min) applies uniformly to all cached endpoints.
 - Two endpoints deliberately bypass it:
   - `snapshot/view` — a view must never serve a snapshot deleted since the list was cached. Snapshots and checkpoints are addressed by their `timestampMs` key, never by list position: both lists are prepended to.
-  - `/api/live` — fetched via a raw `fetch()` in `refreshLive()`, never through `api()`, so the live tile's freshness is governed by the **server-side** TTLs below, not this cache.
+  - `/api/live` — fetched via a raw `fetch()` in `refreshLive()`, never through `api()`, so the resource tiles' freshness is governed by the **server-side** TTLs below, not this cache. It runs only when the user presses a tile's Refresh button.
 - Invalidation is mutation-driven, never time-pressured: the code that calls a mutating `post()` must `drop(ep)` every key the mutation affects (`post()` itself drops nothing), and `refreshPage()` drops the current tab's keys before re-rendering.
 
 Consequence to keep in mind: for every tab except Live, the 2-minute SPA cache is the outer gate. The server TTLs only take effect on an SPA cache miss — first load, after a `drop`, after 2 minutes, or an explicit Refresh.
 
-The SPA also calls `api('dashboard')` every 60 s on every tab, for the header and favicon severity. With the 2-minute cache, the hub rebuilds the dashboard payload about every 2 minutes for as long as a browser has the UI open.
+The page never polls the hub on its own: Hub Inspector is a troubleshooting tool, not a monitor. The only repeating timers are ones the user starts (audit progress, Matter log capture).
 
 ### Tier 2 — Server in-memory cache (`TTL_CACHE`)
 
 Cached values live in one `@Field static final ConcurrentHashMap TTL_CACHE`, as `{data, at}` slots read through `cachedFetch(key, ttl) { … }` (fetch on a miss) and `cachePeek(key, ttl)` (read only), with the check `now() - at < ttl`. Like every `@Field static`, the map is **wiped on hub reboot, app reload and code push**, and `updated()` also clears it. Use this tier only for data that is safe to lose on a push.
 
-TTLs are proportional to how fast the underlying metric actually moves, sized so the Live tile's poll of `apiLive()` (a user setting from 10 to 300 s, default 30 s; each call fans out to five hub calls) does not hammer slow-changing endpoints:
+TTLs are proportional to how fast the underlying metric actually moves, sized so repeated presses of the resource tiles' Refresh button (each `apiLive()` call fans out to five hub calls) do not hammer slow-changing endpoints:
 
 | Constant | TTL | Cached data | Why this TTL |
 |---|---|---|---|
@@ -206,7 +206,7 @@ Some methods have large blast radius and must not gain new fetches casually. The
 
 - `buildSharedCache()` — runs on every dashboard and health request
 - `getAlertSignals()` — feeds alert content across multiple tabs and endpoints
-- `apiLive()` — called automatically by the frontend on the Live poll interval (default 30 s)
+- `apiLive()` — called by the frontend when the user presses a resource tile's Refresh button; nothing calls it on a timer
 
 **High blast radius** — these run on common tab loads and already contain multiple HTTP calls; new additions need justification but are not forbidden:
 
