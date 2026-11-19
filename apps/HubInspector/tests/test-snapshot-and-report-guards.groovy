@@ -8,6 +8,8 @@
 //  - A-3  analyzeDevices / analyzeApps flag a failed fetch, snapshotFetchFailure names it, and
 //         createSnapshot stops before it builds or saves a snapshot.
 //  - A-5  reportSaveError: only the SPA's own report file name is accepted, size is capped.
+//  - A-9  fetchDevicesList: the Dashboard reuses a devices list up to 5 minutes old, deep reads
+//         want one under 2 minutes and refresh the slot, and a failed read is never cached.
 //  - A-8  fetchFirmwareUpdate remembers a failed check for a short time; the alert path's Z-Wave
 //         read does not retry.
 // Run: groovy apps/HubInspector/tests/test-snapshot-and-report-guards.groovy
@@ -40,6 +42,8 @@ import groovy.transform.Field
 @groovy.transform.Field static final long RUNTIME_STATS_CACHE_TTL_MS = 30000L
 @groovy.transform.Field static final String FIRMWARE_UPDATE_PATH = "/fw"
 @groovy.transform.Field static final String DEVICES_LIST_PATH = "/devices"
+@groovy.transform.Field static final long HUB_LIST_CACHE_TTL_MS = 120000L
+@groovy.transform.Field static final long DASHBOARD_DEVICES_MAX_AGE_MS = 300000L
 long now() { System.currentTimeMillis() }
 @groovy.transform.Field static final String FULL_JSON_PATH_PREFIX = "/device/fullJson/"
 @groovy.transform.Field static final Set<String> VALID_CONN = ['cloud', 'lan_direct'] as Set
@@ -52,6 +56,7 @@ ${extract('Map fetchFirmwareUpdate() {')}
 ${extract('Map enrichDevices(Map uncertainDevices, Set communityAppTypeNames = [] as Set) {')}
 ${extract('private String fullJsonControllerType(Map fj) {')}
 ${extract('String safeToString(value, String defaultValue = "") {')}
+${extractOpt('private Map fetchDevicesList(long maxAgeMs) {')}
 ${extract('Map analyzeDevices(boolean deep = true, Map prefetchedDevices = null) {')}
 ${extract('Map analyzeApps(boolean deep = true, long statsMaxAgeMs = RUNTIME_STATS_CACHE_TTL_MS) {')}
 ${connConstants}
@@ -172,6 +177,27 @@ t('A-8 the alert-path Z-Wave read does not retry') {
     assert at > 0
     String call = body.substring(at, body.indexOf('\n', at))
     assert call.trim().endsWith(', 8, false)') : call
+}
+
+// ---- A-9 devices list cache ages
+app.metaClass.hubMapRequest = { String path, String label, int timeout = 30, boolean retry = true -> fullCalls++; fullResult }
+t('A-9 a 3-minute-old list serves the Dashboard path, not the deep path') {
+    app.TTL_CACHE.clear(); fullCalls = 0
+    fullResult = [ok: true, data: [devices: [[key: 'DEV-1', data: [id: 1]]]]]
+    assert app.fetchDevicesList(app.DASHBOARD_DEVICES_MAX_AGE_MS) != null
+    assert fullCalls == 1
+    app.TTL_CACHE['devicesList'].at = System.currentTimeMillis() - 180000L
+    app.fetchDevicesList(app.DASHBOARD_DEVICES_MAX_AGE_MS)
+    assert fullCalls == 1 : 'Dashboard path must reuse a 3-minute-old list'
+    app.fetchDevicesList(app.HUB_LIST_CACHE_TTL_MS)
+    assert fullCalls == 2 : 'deep path must re-read a list older than 2 minutes'
+    assert System.currentTimeMillis() - (app.TTL_CACHE['devicesList'].at as long) < 1000 : 'a fresh read refreshes the slot'
+}
+t('A-9 a failed read is not cached') {
+    app.TTL_CACHE.clear(); fullCalls = 0
+    fullResult = [ok: false, data: [:]]
+    assert app.fetchDevicesList(app.DASHBOARD_DEVICES_MAX_AGE_MS) == null
+    assert !app.TTL_CACHE.containsKey('devicesList')
 }
 
 println "${pass} passed, ${fail} failed"
