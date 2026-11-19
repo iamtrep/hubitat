@@ -654,7 +654,6 @@ Map serveUI() {
 
         html = html.replace('${access_token}', state.accessToken)
             .replace('${api_base}', fullLocalApiServerUrl)
-            .replace('${live_refresh_sec}', (settings.liveRefreshSec ?: 30).toString())
         return render(status: 200, contentType: 'text/html', data: html)
     } catch (Exception e) {
         logError "Error serving UI: ${e.message}"
@@ -1235,7 +1234,6 @@ Map apiGetSettings() {
         // Addresses and network names in the forum export: off until the user turns it on.
         forumNetworkDetails:     settings.forumNetworkDetails == true,
         aliasSalt:               aliasSalt(),
-        liveRefreshSec:          (settings.liveRefreshSec ?: 30) as int,
         cacheSize:               controllerTypeCache().size()
     ])
 }
@@ -1259,7 +1257,7 @@ Map apiUpdateSettings() {
     Set boolKeys    = ["autoSnapshot", "autoCheckpoint", "debugLogging", "obfuscateForumExport", "forumObfuscate", "forumNetworkDetails"] as Set
     Set numberKeys  = ["maxSnapshots", "maxCheckpoints", "inactivityDays", "lowBatteryThreshold",
                         "chattyDeviceThreshold", "warnMemMb", "critMemMb",
-                        "snapshotInterval", "liveRefreshSec"] as Set
+                        "snapshotInterval"] as Set
     Set decimalKeys = ["warnCpuLoad", "critCpuLoad", "warnTempC", "critTempC"] as Set
     Set enumKeys    = ["checkpointInterval"] as Set
     boolean reschedule = false
@@ -5258,6 +5256,8 @@ void updated() {
     // always compared in Celsius, so a later hub scale change can never reinterpret them.
     if (settings.warnTempInput != null) updateDecimalSetting("warnTempC", scaleToC(settings.warnTempInput as BigDecimal))
     if (settings.critTempInput != null) updateDecimalSetting("critTempC", scaleToC(settings.critTempInput as BigDecimal))
+    // 6.4.0 dropped the resource tiles' auto-refresh; remove its interval setting from older installs.
+    if (settings.liveRefreshSec != null) app.removeSetting("liveRefreshSec")
     unsubscribe()
     unschedule()
     // clear session-scoped caches so config/hardware changes take effect immediately
