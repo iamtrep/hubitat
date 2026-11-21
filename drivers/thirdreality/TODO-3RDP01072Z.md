@@ -21,7 +21,9 @@ Remaining before release:
 - [ ] Per-outlet countdown timers (attr 0x0001 on→off, 0x0002 off→on) as preferences.
 - [ ] `resetEnergy` end-to-end: writes attr 0x0000 per endpoint and captures the
       driver-side offset. Verify the offset math against the metering summation.
-- [ ] LED brightness readback (genBasic 0xFF01) — confirm the value round-trips.
+- [x] LED brightness readback (genBasic 0xFF01) — round-trips with mfg 0x1407 on firmware 1.00.52.
+- [x] Per-outlet power rise/drop alerts (0x0040/0x0041) and metering-only mode (0x0050) as preferences.
+- [ ] Exercise a threshold crossing and a metering-only write on the plug.
 
 ## After validation
 - [x] Mirror-publish to the other hubs.

@@ -22,6 +22,9 @@
  *    0xFF03  Third Reality proprietary (mfg code 0x1407 on this Gen3 hardware):
  *            attr 0x0000 reset-energy, 0x0001 countdown-to-off, 0x0002 countdown-to-on.
  *            LED brightness lives on genBasic (0x0000) attr 0xFF01, mfg 0x1407.
+ *            Firmware 1.00.52 also has, per endpoint, power rise/drop report thresholds
+ *            (0x0040/0x0041) and metering-only mode (0x0050). Before 1.00.52 a write to an
+ *            attribute the plug lacks could restart it, so these are written only when set.
  */
 
 import groovy.transform.Field
@@ -57,6 +60,9 @@ import java.math.RoundingMode
 @Field static final int ATTR_MFG_RESET_ENERGY       = 0x0000
 @Field static final int ATTR_MFG_ON_TO_OFF_DELAY    = 0x0001
 @Field static final int ATTR_MFG_OFF_TO_ON_DELAY    = 0x0002
+@Field static final int ATTR_MFG_POWER_RISE_THRESHOLD = 0x0040    // W, UINT16, 1..3200; 3200 = off
+@Field static final int ATTR_MFG_POWER_DROP_THRESHOLD = 0x0041    // W, UINT16, 1..3200; 3200 = off
+@Field static final int ATTR_MFG_METERING_ONLY        = 0x0050    // UINT8, 1 = relay forced on
 // Gen3 LED brightness: genBasic (0x0000) attr 0xFF01, mfg 0x1407 (device-wide)
 @Field static final int ATTR_BASIC_LED_BRIGHTNESS   = 0xFF01
 
@@ -143,9 +149,23 @@ metadata {
                   options: constPowerRestoreOpts, defaultValue: 0xFF,
                   description: "State both outlets return to when power is restored.")
 
+            // No default: firmware 1.00.52+ ships at 2% and keeps its own value, so an empty
+            // setting leaves the plug alone.
             input(name: "prefLedBrightness", type: "number", title: "<b>LED Brightness</b>",
-                  range: "0..100", defaultValue: 100,
-                  description: "Indicator LED brightness (0-100%). Device-wide.")
+                  range: "0..100",
+                  description: "Indicator LED brightness (0-100%), both outlets. Leave empty to keep the plug's own setting.")
+
+            // Per outlet, no defaults: each is written only once set (see header).
+            [["1", "left/bottom"], ["2", "right/top"]].each { List o ->
+                input(name: "prefPowerRiseThreshold${o[0]}".toString(), type: "number", title: "<b>Outlet ${o[0]} Power Rise Alert (W)</b>",
+                      range: "1..3200",
+                      description: "Outlet ${o[0]} (${o[1]}) reports power at once when it rises by this many watts. 3200 = off. Plug firmware 1.00.52 or later; leave empty otherwise.")
+                input(name: "prefPowerDropThreshold${o[0]}".toString(), type: "number", title: "<b>Outlet ${o[0]} Power Drop Alert (W)</b>",
+                      range: "1..3200",
+                      description: "Outlet ${o[0]} (${o[1]}) reports power at once when it drops by this many watts. 3200 = off. Plug firmware 1.00.52 or later; leave empty otherwise.")
+                input(name: "prefMeteringOnly${o[0]}".toString(), type: "bool", title: "<b>Outlet ${o[0]} Metering Only Mode</b>",
+                      description: "Keeps outlet ${o[0]}'s relay on: it only measures, and on/off has no effect. Plug firmware 1.00.52 or later.")
+            }
 
             input(name: "prefDisableOnOff", type: "bool", title: "<b>Disable Power Commands</b>",
                   defaultValue: false,
@@ -224,8 +244,20 @@ void updated() {
         cmds += zigbee.writeAttribute(zigbee.ON_OFF_CLUSTER, ATTR_POWER_RESTORE, DataType.ENUM8, powerRestore, [destEndpoint: epInt(ep)])
     }
     // LED brightness is device-wide (endpoint 01).
-    int ledBrightness = intSetting(settings.prefLedBrightness, 100)
-    cmds += zigbee.writeAttribute(zigbee.BASIC_CLUSTER, ATTR_BASIC_LED_BRIGHTNESS, DataType.UINT8, ledBrightness, [mfgCode: MFG_CODE, destEndpoint: 1])
+    if (settings.prefLedBrightness != null) {
+        cmds += zigbee.writeAttribute(zigbee.BASIC_CLUSTER, ATTR_BASIC_LED_BRIGHTNESS, DataType.UINT8,
+                                      intSetting(settings.prefLedBrightness, 2), [mfgCode: MFG_CODE, destEndpoint: 1])
+    }
+    ENDPOINTS.each { String ep ->
+        int e = epInt(ep)
+        String n = outletNumber(ep)
+        def rise = settings["prefPowerRiseThreshold${n}".toString()]
+        def drop = settings["prefPowerDropThreshold${n}".toString()]
+        def meterOnly = settings["prefMeteringOnly${n}".toString()]
+        if (rise != null) cmds += zigbee.writeAttribute(CLUSTER_MFG, ATTR_MFG_POWER_RISE_THRESHOLD, DataType.UINT16, clampThreshold(rise), [mfgCode: MFG_CODE, destEndpoint: e])
+        if (drop != null) cmds += zigbee.writeAttribute(CLUSTER_MFG, ATTR_MFG_POWER_DROP_THRESHOLD, DataType.UINT16, clampThreshold(drop), [mfgCode: MFG_CODE, destEndpoint: e])
+        if (meterOnly != null) cmds += zigbee.writeAttribute(CLUSTER_MFG, ATTR_MFG_METERING_ONLY, DataType.UINT8, meterOnly == true ? 1 : 0, [mfgCode: MFG_CODE, destEndpoint: e])
+    }
 
     sendZigbeeCommands(cmds)
     runInMillis(1000, "configure")
@@ -356,6 +388,12 @@ void configure() {
         cmds += zigbee.readAttribute(zigbee.METERING_CLUSTER, ATTR_SUMMATION, [destEndpoint: e])
     }
     cmds += zigbee.readAttribute(zigbee.BASIC_CLUSTER, ATTR_FW_VERSION)
+    // Reads are safe on older firmware (an absent attribute answers Unsupported Attribute).
+    cmds += zigbee.readAttribute(zigbee.BASIC_CLUSTER, ATTR_BASIC_LED_BRIGHTNESS, [mfgCode: MFG_CODE])
+    ENDPOINTS.each { String ep ->
+        cmds += zigbee.readAttribute(CLUSTER_MFG, [ATTR_MFG_POWER_RISE_THRESHOLD, ATTR_MFG_POWER_DROP_THRESHOLD, ATTR_MFG_METERING_ONLY],
+                                     [mfgCode: MFG_CODE, destEndpoint: epInt(ep)])
+    }
 
     sendZigbeeCommands(cmds)
     runIn(5, "configureApply")
@@ -567,6 +605,7 @@ private void parseAttributeReport(Map descMap) {
         case "0006": handleOnOffCluster(ep, descMap);      return
         case "0B04": handleElectricalCluster(ep, descMap); return
         case "0702": handleMeteringCluster(ep, descMap);   return
+        case "FF03": handleMfgCluster(ep, descMap);        return
         default:
             logRx "Unhandled cluster ${cluster} ep ${ep} attr ${descMap.attrId} value ${descMap.value}"
             return
@@ -756,6 +795,37 @@ private void sendZigbeeCommands(List cmds) {
 
 @CompileStatic
 private static int epInt(String ep) { Integer.parseInt(ep, 16) }
+
+// "01" -> "1": the outlet number used in preference names.
+private static String outletNumber(String ep) { Integer.toString(Integer.parseInt(ep, 16)) }
+
+// Power rise/drop threshold in W, held to the device's 1..3200 range.
+private static int clampThreshold(def value) {
+    Math.max(1, Math.min(3200, intSetting(value, 3200)))
+}
+
+// Per-endpoint 0xFF03 read-backs keep the per-outlet preferences in step with the plug.
+private void handleMfgCluster(String ep, Map descMap) {
+    if (descMap.value == null) return
+    String n = outletNumber(ep)
+    int raw = Integer.parseInt(descMap.value, 16)
+    switch (descMap.attrId) {
+        case "0040":
+            device.updateSetting("prefPowerRiseThreshold${n}".toString(), [value: raw, type: "number"])
+            logRx "outlet ${n} power rise threshold is ${raw} W"
+            return
+        case "0041":
+            device.updateSetting("prefPowerDropThreshold${n}".toString(), [value: raw, type: "number"])
+            logRx "outlet ${n} power drop threshold is ${raw} W"
+            return
+        case "0050":
+            device.updateSetting("prefMeteringOnly${n}".toString(), [value: raw != 0, type: "bool"])
+            logRx "outlet ${n} metering-only mode is ${raw != 0 ? 'on' : 'off'}"
+            return
+        default:
+            logRx "Unhandled mfg ep ${ep} attr ${descMap.attrId} value ${descMap.value}"
+    }
+}
 
 @CompileStatic
 private static int parseSignedHex16(String hex) {

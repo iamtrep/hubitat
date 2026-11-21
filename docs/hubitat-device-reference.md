@@ -23,6 +23,7 @@ Every fact carries an evidence mark ([EVIDENCE.md](EVIDENCE.md)).
 - [Philips Hue](#philips-hue)
 - [ThirdReality 3RPL01084Z](#thirdreality-3rpl01084z)
 - [ThirdReality 3RSP plugs](#thirdreality-3rsp-plugs)
+- [ThirdReality 3RDP01072Z dual plug](#thirdreality-3rdp01072z-dual-plug)
 - [ThirdReality vibration sensor](#thirdreality-vibration-sensor)
 - [Linptech / Moes ES1 (Tuya TS0225 presence sensor)](#linptech--moes-es1-tuya-ts0225-presence-sensor)
 - [Universal Electronics / Visonic URC4460BC0 (Xfinity contact sensor)](#universal-electronics--visonic-urc4460bc0-xfinity-contact-sensor)
@@ -394,6 +395,28 @@ Gen3 firmware history for the `3RSP02064Z` (US), as the vendor's firmware page l
 *(reported: [vendor firmware page](https://www.thirdreality.com/pages/firmware/smart-plug-gen3-uz1))*
 
 The over-current cut-off has no attribute in Zigbee2MQTT or ZHA *(community: [zigbee-herdsman-converters `third_reality.ts`](https://github.com/Koenkk/zigbee-herdsman-converters/blob/master/src/devices/third_reality.ts); community: [zha-device-handlers `thirdreality/plug.py`](https://github.com/zigpy/zha-device-handlers/blob/dev/zhaquirks/thirdreality/plug.py))*. Both send LED brightness as UINT8 0–100 on Basic `0xFF01`, so the vendor's 0.01 % range is not reachable over Zigbee there *(community: [zigbee-herdsman-converters `third_reality.ts`](https://github.com/Koenkk/zigbee-herdsman-converters/blob/master/src/devices/third_reality.ts); community: [zha-device-handlers `thirdreality/plug.py`](https://github.com/zigpy/zha-device-handlers/blob/dev/zhaquirks/thirdreality/plug.py))*.
+
+## ThirdReality 3RDP01072Z dual plug
+
+Two outlets on endpoints 01 and 02, mfg code `0x1407` on cluster 0xFF03 and on Basic `0xFF01` *(probed 2.5.3.133, C-7, plug firmware 1.00.52)*.
+
+LED brightness is Basic `0xFF01` (UINT8, %) on endpoint 01 with manufacturer code `0x1407`: read with the code it answered 2, read without it the plug answered Unsupported Attribute (`0x86`). A write of 10 with the code read back 10, and 2 written back read 2 *(probed 2.5.3.133, C-7, plug firmware 1.00.52)*. ZHA sends the code, and Zigbee2MQTT sends none *(community: [zha-device-handlers `thirdreality/plug.py`](https://github.com/zigpy/zha-device-handlers/blob/dev/zhaquirks/thirdreality/plug.py); community: [zigbee-herdsman-converters `third_reality.ts`](https://github.com/Koenkk/zigbee-herdsman-converters/blob/master/src/devices/third_reality.ts))*.
+
+Cluster 0xFF03 on both endpoints holds `countdownToTurnOff` (`0x0001`), `countdownToTurnOn` (`0x0002`) and `meteringOnlyMode` (`0x0050`), all read 0, and `powerRiseThreshold` (`0x0040`) and `powerDropThreshold` (`0x0041`), both read 3200 W. The thresholds are per outlet: 50 W written to endpoint 01's `0x0040` read back 50 W while endpoint 02's stayed 3200 W. No Report Attributes followed the write *(probed 2.5.3.133, C-7, plug firmware 1.00.52)*. Neither Zigbee2MQTT nor ZHA lists the two thresholds for this model *(community: [zigbee-herdsman-converters `third_reality.ts`](https://github.com/Koenkk/zigbee-herdsman-converters/blob/master/src/devices/third_reality.ts); community: [zha-device-handlers `thirdreality/plug.py`](https://github.com/zigpy/zha-device-handlers/blob/dev/zhaquirks/thirdreality/plug.py))*. A `meteringOnlyMode` write, a threshold crossing and a countdown were not tested *(inferred: not written or exercised in that probe)*.
+
+Firmware history for the 3RDP01072Z (ZP1) and 3RWP01073Z (ZW1), as the vendor's firmware page lists it:
+
+| Version | Change |
+|---|---|
+| 1.00.52 | LED brightness control 0–100 %, default 2 %; power readings above 2,150 W fixed; state now updates when a bound device switches the plug; a write to an unsupported attribute no longer restarts the plug |
+| 1.00.45 | ZW1 only: voltage calibration coefficient corrected |
+| 1.00.42 | Reporting interval optimised |
+| 1.00.38 | Voltage calibration coefficient fixed |
+| 1.00.36 | Energy metering at low power fixed |
+
+*(reported: [vendor firmware page](https://www.thirdreality.com/pages/firmware/smart-dual-plug-zp1))*
+
+Before 1.00.52 a write to an attribute the plug lacks could restart it *(reported: [vendor firmware page](https://www.thirdreality.com/pages/firmware/smart-dual-plug-zp1))*. LED control first appears in 1.00.52, so on older firmware a Basic `0xFF01` write may be such a write *(inferred: from the two release notes)*.
 
 ## ThirdReality vibration sensor
 
