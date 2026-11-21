@@ -50,7 +50,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.1.2"
+@Field static final String CODE_VERSION = "0.1.3"
 
 // Event descriptions and preference titles, in the language the parent app sets. Logs stay in
 // English and never come from here.
@@ -91,9 +91,15 @@ metadata {
 @Field static final int STREAM_READ_TIMEOUT = 40
 @Field static final int BACKOFF_MIN_SECS = 5
 @Field static final int BACKOFF_MAX_SECS = 300
-// No power update for this long while the stream should be open: reconnect, and report offline.
-// Short outages (a late STOP, a few seconds of lost uplink) pass without a warning.
-@Field static final long STALE_DATA_MS = 300_000L
+// Offline is decided by the connection, not by data: Hilo can send no power update for minutes
+// on a live connection. Reconnects failing for this long report the device offline; a drop of a
+// few seconds, or a late STOP, passes without a warning.
+@Field static final long OFFLINE_AFTER_MS = 300_000L
+// A connection with no STOP this long after connect() is up: readTimeout (STREAM_READ_TIMEOUT)
+// ends a dead one sooner. A @Field initializer can't read another @Field.
+@Field static final int HEALTHY_AFTER_SECS = 55
+// No power update for this long: reconnect quietly, in case the connection is alive but stuck.
+@Field static final long STALE_DATA_MS = 900_000L
 // A STOP this soon after the driver's own close belongs to the closed stream.
 @Field static final long CLOSE_GRACE_MS = 5_000L
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
@@ -105,6 +111,11 @@ metadata {
 @Field static final ConcurrentHashMap<String, Long> CLOSING = new ConcurrentHashMap<>()
 // Per device: time of the last stream data, kept off the database.
 @Field static final ConcurrentHashMap<String, Long> LAST_DATA = new ConcurrentHashMap<>()
+// Per device: time of the last connect(), of the last STOP counted as a failure, and of the first
+// failure since the connection was last up.
+@Field static final ConcurrentHashMap<String, Long> CONNECT_AT = new ConcurrentHashMap<>()
+@Field static final ConcurrentHashMap<String, Long> LAST_STOP = new ConcurrentHashMap<>()
+@Field static final ConcurrentHashMap<String, Long> DOWN_SINCE = new ConcurrentHashMap<>()
 // Per device: the access token the manager last pushed. Empty after a boot or code push until the
 // manager pushes the next one.
 @Field static final ConcurrentHashMap<String, String> TOKENS = new ConcurrentHashMap<>()
@@ -113,7 +124,7 @@ void installed() { logDebug "installed"; state.version = CODE_VERSION }
 
 void updated() {
     logDebug "updated"
-    unschedule()
+    unschedule()   // safety-lint:ok unschedule-kills-timers: initialize() reconnects, and each connect re-arms connectionCheck
     closeStream()
     initialize()
     if (settings.debugEnable || settings.traceEnable) runIn(DEBUG_LOG_TIMEOUT, "logsOff")
@@ -127,6 +138,7 @@ void initialize() {
     checkVersion(false)
     state.remove("reconnectDelay")
     state.remove("streamFailures")
+    DOWN_SINCE.remove(device.id.toString())
     if (liveEnabled()) {
         // Counts from now, so checkStream() gives the first connect its full STALE_DATA_MS.
         LAST_DATA.put(device.id.toString(), now())
@@ -227,10 +239,32 @@ void connectStream() {
     String url = GRAPHQL_URL + "?query=" + enc(SUBSCRIPTION) + "&variables=" + enc(JsonOutput.toJson([locationHiloId: hiloId]))
     logNet "connecting to Hilo"
     LAST_DATA.put(device.id.toString(), now())
+    CONNECT_AT.put(device.id.toString(), now())
     interfaces.eventStream.connect(url, [
         headers    : ["Authorization": "Bearer ${token}", "Accept": "text/event-stream"],
         readTimeout: STREAM_READ_TIMEOUT
     ])
+    runIn(HEALTHY_AFTER_SECS, "connectionCheck")
+}
+
+// No counted STOP since the last connect(): the connection is up, with or without data.
+void connectionCheck() {
+    String id = device.id.toString()
+    Long connectedAt = CONNECT_AT.get(id)
+    Long stoppedAt = LAST_STOP.get(id)
+    if (connectedAt != null && (stoppedAt == null || stoppedAt < connectedAt)) streamUp()
+}
+
+private void streamUp() {
+    DOWN_SINCE.remove(device.id.toString())
+    if (state.streamFailures) {
+        state.remove("streamFailures")
+        state.remove("reconnectDelay")
+    }
+    if (state.streamDown) {
+        state.remove("streamDown")
+        updateHealth("online", tr("why.streamBack", [:], "en"), tr("why.streamBack"))
+    }
 }
 
 private void closeStream() {
@@ -243,38 +277,51 @@ void eventStreamStatus(String s) {
     if (s.startsWith("STOP")) {
         Long closedAt = CLOSING.remove(device.id.toString())
         if (closedAt != null && now() - closedAt < CLOSE_GRACE_MS) { logDebug "closed stream stopped"; return }
+        LAST_STOP.put(device.id.toString(), now())
         streamFailed("stream stopped")
     } else if (s.startsWith("ERROR")) {
         logDebug "stream error: ${s}"
     }
 }
 
-// Reports offline once live power has been missing for STALE_DATA_MS, and reconnects: also the
-// backstop for a stream that ended without a status the driver acted on.
+// Every 5 min: reports offline when reconnects have been failing for OFFLINE_AFTER_MS, and
+// reconnects quietly when no data has come for STALE_DATA_MS on a connection thought to be up.
 void checkStream() {
-    if (!liveEnabled() || !streamStale()) return
-    long secs = (now() - lastData()).intdiv(1000L)
-    if (!state.streamDown) {
-        state.streamDown = true
-        logWarn "live power lost (no data for ${secs} s); reconnecting with backoff up to ${BACKOFF_MAX_SECS} s"
-        updateHealth("offline", tr("why.streamDown", [:], "en"), tr("why.streamDown"))
-    } else {
-        logDebug "no stream data for ${secs} s"
+    if (!liveEnabled()) return
+    checkOffline()
+    if (DOWN_SINCE.get(device.id.toString()) == null && now() - lastData() > STALE_DATA_MS) {
+        logDebug "no stream data for ${(now() - lastData()).intdiv(1000L)} s; reconnecting"
+        connectStream()
     }
-    streamFailed("no data from Hilo")
 }
 
-private long lastData() { return (LAST_DATA.get(device.id.toString()) ?: 0L) as long }
+private void checkOffline() {
+    Long since = DOWN_SINCE.get(device.id.toString())
+    if (since == null || now() - since < OFFLINE_AFTER_MS || state.streamDown) return
+    state.streamDown = true
+    logWarn "live power lost (no connection to Hilo for ${(now() - since).intdiv(1000L)} s); retrying with backoff up to ${BACKOFF_MAX_SECS} s"
+    updateHealth("offline", tr("why.streamDown", [:], "en"), tr("why.streamDown"))
+}
+
+// After a code save the in-memory times are empty: start the clock instead of counting from 1970.
+private long lastData() {
+    String id = device.id.toString()
+    Long t = LAST_DATA.get(id)
+    if (t == null) { t = now(); LAST_DATA.put(id, t) }
+    return t as long
+}
 
 private boolean streamStale() { return now() - lastData() > STALE_DATA_MS }
 
 // Retries with a delay that doubles from BACKOFF_MIN_SECS to BACKOFF_MAX_SECS.
 private void streamFailed(String why) {
+    DOWN_SINCE.putIfAbsent(device.id.toString(), now())
     int n = ((state.streamFailures ?: 0) as int) + 1
     int delay = (state.reconnectDelay ?: BACKOFF_MIN_SECS) as int
     state.streamFailures = n
     state.reconnectDelay = Math.min(delay * 2, BACKOFF_MAX_SECS)
     logDebug "${why}; reconnect ${n} in ${delay} s"
+    checkOffline()
     runIn(delay, "connectStream")
 }
 
@@ -293,14 +340,7 @@ void parse(String s) {
     BigDecimal kw = (power.value as BigDecimal) * (kind in ["W", "WATT", "WATTS"] ? 0.001 : 1)
     int watts = (kw * 1000).setScale(0, BigDecimal.ROUND_HALF_UP).intValue()
     sendEvent(name: "power", value: watts, unit: "W")
-    if (state.streamFailures) {
-        state.remove("streamFailures")
-        state.remove("reconnectDelay")
-    }
-    if (state.streamDown) {
-        state.remove("streamDown")
-        updateHealth("online", tr("why.streamBack", [:], "en"), tr("why.streamBack"))
-    }
+    streamUp()
 }
 
 private static String enc(String s) { return URLEncoder.encode(s, "UTF-8").replace("+", "%20") }
