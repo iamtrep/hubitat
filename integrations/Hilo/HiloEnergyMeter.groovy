@@ -12,8 +12,9 @@
  * Hilo's stream goes silent near the access token's one-hour expiry without
  * closing, so the parent pushes a fresh token every 50 min (streamToken) and the
  * driver reopens the stream with it. The driver never calls the parent for a token.
- * Hilo sends a keepalive comment every 12 s; readTimeout ends a stream that
- * stops sending anything.
+ * Hilo sends a keepalive comment every 12 s. The stream is opened with rawStream so
+ * that keepalives reach parse(): the connection is judged by what it delivers, not by
+ * which STOP statuses the hub reports.
  */
 
 import groovy.json.JsonOutput
@@ -50,7 +51,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.1.3"
+@Field static final String CODE_VERSION = "0.1.4"
 
 // Event descriptions and preference titles, in the language the parent app sets. Logs stay in
 // English and never come from here.
@@ -87,36 +88,27 @@ metadata {
 
 @Field static final String GRAPHQL_URL = "https://platform.hiloenergie.com/api/digital-twin/v3/graphql"
 @Field static final String SUBSCRIPTION = 'subscription onAnyDeviceUpdated($locationHiloId: String!) { onAnyDeviceUpdated(locationHiloId: $locationHiloId) { deviceType transmissionTime device { ... on BasicSmartMeter { power { value kind } } } } }'
-// Three missed keepalives (12 s apart) end the stream with an ERROR status.
+// Three missed keepalives (12 s apart) end the stream with an ERROR status, then STOP.
 @Field static final int STREAM_READ_TIMEOUT = 40
 @Field static final int BACKOFF_MIN_SECS = 5
 @Field static final int BACKOFF_MAX_SECS = 300
-// Offline is decided by the connection, not by data: Hilo can send no power update for minutes
-// on a live connection. Reconnects failing for this long report the device offline; a drop of a
-// few seconds, or a late STOP, passes without a warning.
+// A live stream delivers a block (a keepalive or a power update) at least every 24 s: Hilo skips the
+// keepalive in a 12 s slot that carried an update. Checked this long after each connect() and each
+// STOP: nothing heard since then means the current stream is down. A STOP from a stream the driver
+// closed is then harmless, however late it comes, because the new stream has been heard.
+@Field static final int STREAM_CHECK_SECS = 30
+// Nothing heard for this long on a connection thought to be up: reconnect. readTimeout normally
+// ends such a stream first, and its STOP leads to the same reconnect.
+@Field static final long SILENT_AFTER_MS = 60_000L
+// Nothing heard for this long, with reconnects failing: report the device offline.
 @Field static final long OFFLINE_AFTER_MS = 300_000L
-// A connection with no STOP this long after connect() is up: readTimeout (STREAM_READ_TIMEOUT)
-// ends a dead one sooner. A @Field initializer can't read another @Field.
-@Field static final int HEALTHY_AFTER_SECS = 55
-// No power update for this long: reconnect quietly, in case the connection is alive but stuck.
-@Field static final long STALE_DATA_MS = 900_000L
-// A STOP this soon after the driver's own close() returns belongs to the closed stream. close()
-// can take 5 s to return, and the closed stream's STOP can come 1.5 s after that.
-@Field static final long CLOSE_GRACE_MS = 5_000L
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
-// Per device: time of an intentional close, set when close() is called (for a STOP while it
-// blocks) and again when it returns. The first STOP within CLOSE_GRACE_MS of it is the
-// closed stream's and is not a failure. START does not clear it: the hub reports START from
-// connect() itself, within milliseconds and before the server answers, so the old stream's
-// STOP can come after the new stream's START. In memory: a driver's atomicState write after
-// the first state access is lost.
-@Field static final ConcurrentHashMap<String, Long> CLOSING = new ConcurrentHashMap<>()
-// Per device: time of the last stream data, kept off the database.
-@Field static final ConcurrentHashMap<String, Long> LAST_DATA = new ConcurrentHashMap<>()
-// Per device: time of the last connect(), of the last STOP counted as a failure, and of the first
-// failure since the connection was last up.
+// Per device, in memory (a driver's atomicState write after the first state access is lost):
+// the time of the last block of any kind from the stream, of the last connect(), of the last STOP,
+// and the last time heard before the current run of failures.
+@Field static final ConcurrentHashMap<String, Long> LAST_HEARD = new ConcurrentHashMap<>()
 @Field static final ConcurrentHashMap<String, Long> CONNECT_AT = new ConcurrentHashMap<>()
-@Field static final ConcurrentHashMap<String, Long> LAST_STOP = new ConcurrentHashMap<>()
+@Field static final ConcurrentHashMap<String, Long> STOP_AT = new ConcurrentHashMap<>()
 @Field static final ConcurrentHashMap<String, Long> DOWN_SINCE = new ConcurrentHashMap<>()
 // Per device: the access token the manager last pushed. Empty after a boot or code push until the
 // manager pushes the next one.
@@ -126,7 +118,7 @@ void installed() { logDebug "installed"; state.version = CODE_VERSION }
 
 void updated() {
     logDebug "updated"
-    unschedule()   // safety-lint:ok unschedule-kills-timers: initialize() reconnects, and each connect re-arms connectionCheck
+    unschedule()   // safety-lint:ok unschedule-kills-timers: initialize() reconnects, and each connect re-arms streamCheck
     closeStream()
     initialize()
     if (settings.debugEnable || settings.traceEnable) runIn(DEBUG_LOG_TIMEOUT, "logsOff")
@@ -142,8 +134,6 @@ void initialize() {
     state.remove("streamFailures")
     DOWN_SINCE.remove(device.id.toString())
     if (liveEnabled()) {
-        // Counts from now, so checkStream() gives the first connect its full STALE_DATA_MS.
-        LAST_DATA.put(device.id.toString(), now())
         // After a boot there is no token yet: the manager's push connects.
         if (TOKENS.get(device.id.toString())) runIn(2, "connectStream")
         schedule("${new Random().nextInt(60)} */5 * ? * *", "checkStream")
@@ -155,7 +145,7 @@ void deviceTypeUpdated() { logDebug "driver change detected" }
 void refresh() {
     checkVersion()
     parent?.refreshNow()
-    if (liveEnabled() && streamStale()) connectStream()
+    if (liveEnabled() && silentFor() > SILENT_AFTER_MS) connectStream()
 }
 
 void checkVersion(boolean reinit = true) {
@@ -235,26 +225,37 @@ void connectStream() {
     if (!hiloId) { streamFailed("no Hilo location"); return }
     // Never asks the manager (see streamToken); a token past its life fails the connect, and the
     // backoff retries until the next push.
-    String token = TOKENS.get(device.id.toString())
+    String id = device.id.toString()
+    String token = TOKENS.get(id)
     if (!token) { logDebug "waiting for an access token from the manager"; return }
     closeStream()
     String url = GRAPHQL_URL + "?query=" + enc(SUBSCRIPTION) + "&variables=" + enc(JsonOutput.toJson([locationHiloId: hiloId]))
     logNet "connecting to Hilo"
-    LAST_DATA.put(device.id.toString(), now())
-    CONNECT_AT.put(device.id.toString(), now())
+    CONNECT_AT.put(id, now())
     interfaces.eventStream.connect(url, [
         headers    : ["Authorization": "Bearer ${token}", "Accept": "text/event-stream"],
-        readTimeout: STREAM_READ_TIMEOUT
+        readTimeout: STREAM_READ_TIMEOUT,
+        rawStream  : true
     ])
-    runIn(HEALTHY_AFTER_SECS, "connectionCheck")
+    runIn(STREAM_CHECK_SECS, "streamCheck")
 }
 
-// No counted STOP since the last connect(): the connection is up, with or without data.
-void connectionCheck() {
+// STREAM_CHECK_SECS after the last connect() or STOP, whichever is later: the stream is up if it
+// has delivered anything since. A closed stream delivers nothing after close() returns.
+void streamCheck() {
     String id = device.id.toString()
+    if (!liveEnabled() || !TOKENS.get(id)) return
     Long connectedAt = CONNECT_AT.get(id)
-    Long stoppedAt = LAST_STOP.get(id)
-    if (connectedAt != null && (stoppedAt == null || stoppedAt < connectedAt)) streamUp()
+    if (connectedAt == null) return
+    Long stoppedAt = STOP_AT.get(id)
+    long since = Math.max(connectedAt as long, (stoppedAt ?: 0L) as long)
+    Long heard = LAST_HEARD.get(id)
+    if (heard != null && heard > since) {
+        if (stoppedAt != null && stoppedAt > connectedAt) logDebug "stream still up after STOP"
+        streamUp()
+    } else {
+        streamFailed("nothing heard ${(now() - since).intdiv(1000L)} s after ${since == connectedAt ? 'connect' : 'STOP'}")
+    }
 }
 
 private void streamUp() {
@@ -270,57 +271,52 @@ private void streamUp() {
 }
 
 private void closeStream() {
-    String id = device.id.toString()
-    CLOSING.put(id, now())
     try { interfaces.eventStream.close() } catch (Exception e) { logDebug "close: ${e.message}" }
-    // Only while the marker is still there: a STOP during close() already took it.
-    if (CLOSING.containsKey(id)) CLOSING.put(id, now())
 }
 
+// A STOP is not sorted into ours or a failure: the check after it asks whether the current stream
+// still delivers. runIn replaces a pending check.
 void eventStreamStatus(String s) {
     logNet "stream status: ${s}"
     if (s.startsWith("STOP")) {
-        Long closedAt = CLOSING.remove(device.id.toString())
-        if (closedAt != null && now() - closedAt < CLOSE_GRACE_MS) { logDebug "closed stream stopped"; return }
-        LAST_STOP.put(device.id.toString(), now())
-        streamFailed("stream stopped")
+        STOP_AT.put(device.id.toString(), now())
+        runIn(STREAM_CHECK_SECS, "streamCheck")
     } else if (s.startsWith("ERROR")) {
         logDebug "stream error: ${s}"
     }
 }
 
-// Every 5 min: reports offline when reconnects have been failing for OFFLINE_AFTER_MS, and
-// reconnects quietly when no data has come for STALE_DATA_MS on a connection thought to be up.
+// Every 5 min: reports offline when nothing has been heard for OFFLINE_AFTER_MS, and reconnects a
+// connection thought to be up that has gone silent without a STOP.
 void checkStream() {
     if (!liveEnabled()) return
     checkOffline()
-    if (DOWN_SINCE.get(device.id.toString()) == null && now() - lastData() > STALE_DATA_MS) {
-        logDebug "no stream data for ${(now() - lastData()).intdiv(1000L)} s; reconnecting"
-        connectStream()
-    }
+    String id = device.id.toString()
+    if (DOWN_SINCE.get(id) == null && TOKENS.get(id) && silentFor() > SILENT_AFTER_MS)
+        streamFailed("nothing heard for ${silentFor().intdiv(1000L)} s")
 }
 
 private void checkOffline() {
     Long since = DOWN_SINCE.get(device.id.toString())
     if (since == null || now() - since < OFFLINE_AFTER_MS || state.streamDown) return
     state.streamDown = true
-    logWarn "live power lost (no connection to Hilo for ${(now() - since).intdiv(1000L)} s); retrying with backoff up to ${BACKOFF_MAX_SECS} s"
+    logWarn "live power lost (nothing from Hilo for ${(now() - since).intdiv(1000L)} s); retrying with backoff up to ${BACKOFF_MAX_SECS} s"
     updateHealth("offline", tr("why.streamDown", [:], "en"), tr("why.streamDown"))
 }
 
 // After a code save the in-memory times are empty: start the clock instead of counting from 1970.
-private long lastData() {
+private long silentFor() {
     String id = device.id.toString()
-    Long t = LAST_DATA.get(id)
-    if (t == null) { t = now(); LAST_DATA.put(id, t) }
-    return t as long
+    Long t = LAST_HEARD.get(id)
+    if (t == null) { t = now(); LAST_HEARD.put(id, t) }
+    return now() - (t as long)
 }
 
-private boolean streamStale() { return now() - lastData() > STALE_DATA_MS }
-
-// Retries with a delay that doubles from BACKOFF_MIN_SECS to BACKOFF_MAX_SECS.
+// Retries with a delay that doubles from BACKOFF_MIN_SECS to BACKOFF_MAX_SECS. The outage counts
+// from the last block heard.
 private void streamFailed(String why) {
-    DOWN_SINCE.putIfAbsent(device.id.toString(), now())
+    String id = device.id.toString()
+    DOWN_SINCE.putIfAbsent(id, now() - silentFor())
     int n = ((state.streamFailures ?: 0) as int) + 1
     int delay = (state.reconnectDelay ?: BACKOFF_MIN_SECS) as int
     state.streamFailures = n
@@ -330,12 +326,28 @@ private void streamFailed(String why) {
     runIn(delay, "connectStream")
 }
 
-// Default delivery: parse() gets the data of each `event: next`, nothing for keepalives.
+// rawStream delivery: parse() gets each SSE block whole, keepalive comments included. Kept cheap:
+// it runs every 12 s, and touches state only when the stream was down.
 void parse(String s) {
-    logTrace "stream: ${s}"
+    String id = device.id.toString()
+    long t = now()
+    Long prev = LAST_HEARD.put(id, t)
+    if (DOWN_SINCE.containsKey(id)) streamUp()
+    List<String> lines = s.readLines()
+    List<String> data = lines.findAll { it.startsWith("data:") }.collect { it.substring(5).trim() }
+    if (data.isEmpty()) {
+        if (lines.every { it.isEmpty() || it.startsWith(":") }) { logTrace "keepalive (+${prev == null ? '-' : (t - prev)} ms)"; return }
+        // A stream opened by an older version, before its reconnect, delivers the bare payload.
+        if (s.trim().startsWith("{")) data = [s.trim()]
+        else { logDebug "stream block without data: ${s.take(120)}"; return }
+    }
+    logTrace "stream: ${data.join('\n')}"
+    handleData(data.join("\n"))
+}
+
+private void handleData(String s) {
     Map msg
     try { msg = parseJson(s.trim()) as Map } catch (Exception e) { logDebug "unreadable stream data: ${s.take(120)}"; return }
-    LAST_DATA.put(device.id.toString(), now())
     if (msg?.errors) { logWarn "Hilo stream error: ${msg.errors}"; return }
     Map upd = msg?.data?.onAnyDeviceUpdated as Map
     Map power = upd?.device?.power as Map
@@ -345,7 +357,6 @@ void parse(String s) {
     BigDecimal kw = (power.value as BigDecimal) * (kind in ["W", "WATT", "WATTS"] ? 0.001 : 1)
     int watts = (kw * 1000).setScale(0, BigDecimal.ROUND_HALF_UP).intValue()
     sendEvent(name: "power", value: watts, unit: "W")
-    streamUp()
 }
 
 private static String enc(String s) { return URLEncoder.encode(s, "UTF-8").replace("+", "%20") }

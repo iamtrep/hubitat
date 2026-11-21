@@ -106,7 +106,7 @@ Consumption is read once an hour, at a minute between :10 and :50 picked at rand
 
 When Hilo can't be reached, each of the first two failed reads logs a warning. The third logs one error and marks the device offline, and a reminder follows every hour while the outage lasts. The first good read logs the recovery and marks the device online. When Hilo answers with `Retry-After`, polling pauses for that long, up to an hour.
 
-After a hub restart, the live stream connects 2 to 3 minutes after boot, once the manager has a fresh token. The manager renews the token every 50 minutes and the stream reopens with it. When it drops, it reconnects after a delay that doubles from 5 s to 5 min. Once reconnecting has failed for 5 minutes, the device is marked offline until the connection is back, so a drop of a few seconds raises no warning. Hilo can send no power update for several minutes on an open connection; after 15 minutes without one, the stream reconnects without a warning.
+After a hub restart, the live stream connects 2 to 3 minutes after boot, once the manager has a fresh token. The manager renews the token every 50 minutes and the stream reopens with it. When it drops, it reconnects after a delay that doubles from 5 s to 5 min. Hilo sends a keepalive every 12 s, and the driver judges the connection by them: a stream that has delivered nothing 30 s after it opened or stopped is reconnected. After 5 minutes with nothing from Hilo, the device is marked offline until the stream is back, so a drop of a few seconds raises no warning. Hilo can send no power update for several minutes on a live connection; that alone is not a fault.
 
 ## History files
 
