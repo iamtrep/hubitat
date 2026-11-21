@@ -17,6 +17,8 @@
  *            Gen2 = 0x1233, Gen3 = 0x1407. Writing FF03 with the wrong mfg code is
  *            rejected as Unsupported Attribute. Gen3 also moved LED brightness out of
  *            FF03 to genBasic (0x0000) attr 0xFF01. See mfgCode()/isGen3().
+ *            Gen3 adds power rise/drop report thresholds (0x0040/0x0041) and metering-only
+ *            mode (0x0050); firmware before 1.00.63 accepts writes to them and ignores them.
  */
 
 import groovy.transform.Field
@@ -26,7 +28,7 @@ import com.hubitat.hub.domain.Event
 import hubitat.zigbee.zcl.DataType
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.11"
+@Field static final String CODE_VERSION = "0.0.12"
 
 // Third Reality proprietary cluster (no Hubitat constant). The mfg code differs by
 // generation; resolve per-device via mfgCode() rather than a single constant.
@@ -58,6 +60,10 @@ import java.math.RoundingMode
 @Field static final int ATTR_MFG_ALLOW_BIND         = 0x0020
 // Gen3 relocated LED brightness to genBasic (0x0000) attr 0xFF01, mfg 0x1407
 @Field static final int ATTR_BASIC_LED_BRIGHTNESS_GEN3 = 0xFF01
+// Mfg proprietary attributes (Gen3 only)
+@Field static final int ATTR_MFG_POWER_RISE_THRESHOLD = 0x0040    // W, UINT16, 1..3200; 3200 = off
+@Field static final int ATTR_MFG_POWER_DROP_THRESHOLD = 0x0041    // W, UINT16, 1..3200; 3200 = off
+@Field static final int ATTR_MFG_METERING_ONLY        = 0x0050    // UINT8, 1 = relay forced on
 
 // Device-reported divisors are unreliable on this hardware; baked in.
 @Field static final int POWER_DIVISOR               = 10        // W
@@ -183,13 +189,33 @@ metadata {
                   range: "0..7200", defaultValue: 0,
                   description: "When commanded on, wait this many seconds before closing the relay. 0 = disabled.")
 
-            input(name: "prefLedBrightness", type: "number", title: "<b>LED Brightness</b>",
-                  range: "0..100", defaultValue: 100,
-                  description: "Indicator LED brightness (0-100%).")
+            if (device && isGen3()) {
+                // No default: Gen3 firmware 1.00.56+ ships at 2% and keeps its own value,
+                // so an empty setting leaves the plug alone.
+                input(name: "prefLedBrightness", type: "number", title: "<b>LED Brightness</b>",
+                      range: "0..100",
+                      description: "Indicator LED brightness (0-100%). Leave empty to keep the plug's own setting.")
+            } else {
+                input(name: "prefLedBrightness", type: "number", title: "<b>LED Brightness</b>",
+                      range: "0..100", defaultValue: 100,
+                      description: "Indicator LED brightness (0-100%).")
+            }
 
             input(name: "prefDisableOnOff", type: "bool", title: "<b>Disable Power Commands</b>",
                   defaultValue: false,
                   description: "When true, on()/off()/toggle() become no-ops. Safety lockout.")
+
+            if (device && isGen3()) {
+                input(name: "prefPowerRiseThreshold", type: "number", title: "<b>Power Rise Alert (W)</b>",
+                      range: "1..3200", defaultValue: 3200,
+                      description: "Report power at once when it rises by this many watts. 3200 = off. Plug firmware 1.00.63 or later.")
+                input(name: "prefPowerDropThreshold", type: "number", title: "<b>Power Drop Alert (W)</b>",
+                      range: "1..3200", defaultValue: 3200,
+                      description: "Report power at once when it drops by this many watts. 3200 = off. Plug firmware 1.00.63 or later.")
+                input(name: "prefMeteringOnly", type: "bool", title: "<b>Metering Only Mode</b>",
+                      defaultValue: false,
+                      description: "Keeps the relay on: the plug only measures, and on/off has no effect. Plug firmware 1.00.63 or later.")
+            }
 
             input(name: "prefPowerDelta", type: "number", title: "<b>Power Minimum Change (W)</b>",
                   range: "1..1500", defaultValue: 1.0,
@@ -278,8 +304,17 @@ void updated() {
     int offToOn = intSetting(settings.prefOffToOnDelay, 0)
     cmds += zigbee.writeAttribute(CLUSTER_MFG, ATTR_MFG_OFF_TO_ON_DELAY, DataType.UINT16, offToOn, [mfgCode: mfg])
 
-    int ledBrightness = intSetting(settings.prefLedBrightness, 100)
-    cmds += ledBrightnessWrite(ledBrightness)
+    if (isGen3()) {
+        if (settings.prefLedBrightness != null) cmds += ledBrightnessWrite(intSetting(settings.prefLedBrightness, 2))
+        cmds += zigbee.writeAttribute(CLUSTER_MFG, ATTR_MFG_POWER_RISE_THRESHOLD, DataType.UINT16,
+                                      clampThreshold(settings.prefPowerRiseThreshold), [mfgCode: mfg])
+        cmds += zigbee.writeAttribute(CLUSTER_MFG, ATTR_MFG_POWER_DROP_THRESHOLD, DataType.UINT16,
+                                      clampThreshold(settings.prefPowerDropThreshold), [mfgCode: mfg])
+        cmds += zigbee.writeAttribute(CLUSTER_MFG, ATTR_MFG_METERING_ONLY, DataType.UINT8,
+                                      settings.prefMeteringOnly == true ? 1 : 0, [mfgCode: mfg])
+    } else {
+        cmds += ledBrightnessWrite(intSetting(settings.prefLedBrightness, 100))
+    }
 
     sendZigbeeCommands(cmds)
     runInMillis(1000, "configure")
@@ -348,6 +383,11 @@ void configure() {
     cmds += zigbee.readAttribute(zigbee.ELECTRICAL_MEASUREMENT_CLUSTER, [ATTR_AC_FREQUENCY, ATTR_RMS_VOLTAGE, ATTR_RMS_CURRENT, ATTR_ACTIVE_POWER, ATTR_POWER_FACTOR])
     cmds += zigbee.readAttribute(zigbee.METERING_CLUSTER, ATTR_SUMMATION)
     cmds += zigbee.readAttribute(zigbee.BASIC_CLUSTER, ATTR_FW_VERSION)
+    if (isGen3()) {
+        cmds += zigbee.readAttribute(zigbee.BASIC_CLUSTER, ATTR_BASIC_LED_BRIGHTNESS_GEN3, [mfgCode: MFG_CODE_GEN3])
+        cmds += zigbee.readAttribute(CLUSTER_MFG, [ATTR_MFG_POWER_RISE_THRESHOLD, ATTR_MFG_POWER_DROP_THRESHOLD, ATTR_MFG_METERING_ONLY],
+                                     [mfgCode: MFG_CODE_GEN3])
+    }
 
     sendZigbeeCommands(cmds)
     runIn(5, "configureApply")
@@ -735,6 +775,25 @@ private void handleMfgCluster(Map descMap) {
             logRx "led brightness is ${raw}%"
             return
 
+        // Gen3 answers reads of these and also reports them unprompted after a write.
+        case "0040": // power rise threshold
+            int raw = Integer.parseInt(descMap.value, 16)
+            device.updateSetting("prefPowerRiseThreshold", [value: raw, type: "number"])
+            logRx "power rise threshold is ${raw} W"
+            return
+
+        case "0041": // power drop threshold
+            int raw = Integer.parseInt(descMap.value, 16)
+            device.updateSetting("prefPowerDropThreshold", [value: raw, type: "number"])
+            logRx "power drop threshold is ${raw} W"
+            return
+
+        case "0050": // metering-only mode
+            boolean on = Integer.parseInt(descMap.value, 16) != 0
+            device.updateSetting("prefMeteringOnly", [value: on, type: "bool"])
+            logRx "metering-only mode is ${on ? 'on' : 'off'}"
+            return
+
         default:
             logRx "Unhandled mfg attr ${descMap.attrId} value ${descMap.value}"
             return
@@ -845,6 +904,11 @@ private static int intSetting(def value, int defaultValue) {
 
 private static BigDecimal decSetting(def value, BigDecimal defaultValue) {
     value != null ? (value as BigDecimal) : defaultValue
+}
+
+// Power rise/drop threshold in W, held to the device's 1..3200 range; unset = 3200 (off).
+private static int clampThreshold(def value) {
+    Math.max(1, Math.min(3200, intSetting(value, 3200)))
 }
 
 // ── Logging ───────────────────────────────────────────────────────────

@@ -381,6 +381,20 @@ Seen in a capture: `AC_PowerFactor` is not subject to the power floor and floods
 
 On a 3RSP02064Z with plug firmware 1.00.47, writes to `powerRiseThreshold` (0x0040), `powerDropThreshold` (0x0041) and `meteringOnlyMode` (0x0050) return Success and are discarded: read-back stays 3200 W, 3200 W and 0. Both thresholds ship at 3200 W, so on-change power reporting is off and power follows the maximum interval *(probed firmware not recorded, plug firmware 1.00.47)*.
 
+On a 3RSP02064Z with plug firmware 1.00.63, writes to `powerRiseThreshold` and `powerDropThreshold` are kept: 50 W read back as 50 W, and 3200 W restored read back as 3200 W. After each write the plug also sends a Report Attributes frame for that attribute without the manufacturer code *(probed 2.5.3.133, C-7, plug firmware 1.00.63)*. Read with manufacturer code `0x1407` after the update: both thresholds 3200 W, `meteringOnlyMode` 0, the two countdowns (`0x0001`, `0x0002`) 0, and LED brightness (Basic `0xFF01`) 2 *(probed 2.5.3.133, C-7, plug firmware 1.00.63)*. Whether the plug now keeps a `meteringOnlyMode` write, and whether a threshold crossing sends power at once, was not tested *(inferred: not written or exercised in that probe)*.
+
+Gen3 firmware history for the `3RSP02064Z` (US), as the vendor's firmware page lists it; the UK `3RSPU01080Z` has only 1.00.47 there:
+
+| Version | Change |
+|---|---|
+| 1.00.63 | Over-current protection: the relay opens on excess current, also in metering-only mode or with no hub; a button press or power cycle closes it. Over-current alert on the LEDs. Countdown timer fixed after the button is re-enabled. Metering-only mode improved. Current, voltage and power reported promptly after power returns; current, power and power factor reported as 0 while the output is off |
+| 1.00.56 | LED brightness control (0.01–100 %); default LED brightness 2 %, kept across a power cycle; energy reports on join and timer start-up improved |
+| 1.00.47 | Firmware version display and scheduled turn-off fixed on the Hue platform |
+
+*(reported: [vendor firmware page](https://www.thirdreality.com/pages/firmware/smart-plug-gen3-uz1))*
+
+The over-current cut-off has no attribute in Zigbee2MQTT or ZHA *(community: [zigbee-herdsman-converters `third_reality.ts`](https://github.com/Koenkk/zigbee-herdsman-converters/blob/master/src/devices/third_reality.ts); community: [zha-device-handlers `thirdreality/plug.py`](https://github.com/zigpy/zha-device-handlers/blob/dev/zhaquirks/thirdreality/plug.py))*. Both send LED brightness as UINT8 0–100 on Basic `0xFF01`, so the vendor's 0.01 % range is not reachable over Zigbee there *(community: [zigbee-herdsman-converters `third_reality.ts`](https://github.com/Koenkk/zigbee-herdsman-converters/blob/master/src/devices/third_reality.ts); community: [zha-device-handlers `thirdreality/plug.py`](https://github.com/zigpy/zha-device-handlers/blob/dev/zhaquirks/thirdreality/plug.py))*.
+
 ## ThirdReality vibration sensor
 
 ThirdReality vibration sensors (mfr `1233`) emit a flood of `FFF1:0000/0001/0002/0003` Report
