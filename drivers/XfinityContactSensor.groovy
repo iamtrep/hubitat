@@ -193,7 +193,7 @@ void deviceTypeUpdated() {
     logDebug "driver change detected"
     resetState()
     sendConfiguration()
-    state.repairPending = 'driver change'
+    queueRepair('driver change')
 }
 
 // The hub calls configure() when a known device pairs again. The sensor is awake then and,
@@ -205,7 +205,7 @@ void configure() {
     resetState()
     state.lastCheckIn = lastCheckIn
     sendConfiguration()
-    state.repairPending = 'configure'
+    queueRepair('configure')
 }
 
 // Three reads fit in the parent's hold at the 6 s long poll, so they go out on the next message
@@ -238,8 +238,15 @@ private void queueConfiguration(String reason) {
         sendConfiguration()
         return
     }
-    state.repairPending = reason
+    queueRepair(reason)
     logCfg "configuration queued for the next check-in (${reason})"
+}
+
+// The time it was queued starts the clock for repairWithoutCheckIn, so a sensor that sends no
+// check-in still gets the configuration
+private void queueRepair(String reason) {
+    state.repairPending = reason
+    state.repairPendingSince = now()
 }
 
 private boolean checkInsStale() {
@@ -265,6 +272,7 @@ private void sendConfiguration() {
 private void markConfigured() {
     state.lastConfigured = now()
     state.repairPending = null
+    state.remove('repairPendingSince')
 }
 
 // Bindings, Poll Control settings and report setup, then the attribute reads
@@ -318,15 +326,22 @@ private boolean handleCheckIn() {
     return true
 }
 
-// For a sensor that has stopped checking in, any message is the only chance to send a due
-// configuration. Counted from the last check-in, or from the last configuration sent (which binds
-// Poll Control); with neither known, the next check-in or Configure handles it.
+// For a sensor that sends no check-in, its own messages are the only chance to send a due
+// configuration, right after it transmits. Counted from the last check-in, the last configuration
+// sent or the time it was queued, and at most once per constRepairMinGapMs. The configuration
+// stays queued: the burst binds Poll Control, so the first check-in sends it again inside a
+// fast-poll window, where none of it is lost.
 private boolean repairWithoutCheckIn() {
-    long since = Math.max((state.lastCheckIn ?: 0L) as long, (state.lastConfigured ?: 0L) as long)
+    if (state.repairPending != null && state.repairPendingSince == null) state.repairPendingSince = now() // queued by an earlier build
+    long since = [state.lastCheckIn, state.lastConfigured, state.repairPendingSince].collect { (it ?: 0L) as long }.max()
     if (since == 0L || now() - since <= constCheckInStaleMs || !repairDue()) return false
-    logCfg "sending the configuration (${state.repairPending ?: 'no battery report lately'}; no recent check-in)"
+    Long lastRepair = state.lastRepair as Long
+    if (lastRepair != null && now() - lastRepair < constRepairMinGapMs) return false
+    String reason = state.repairPending ?: 'no battery report lately'
+    logCfg "sending the configuration (${reason}; no recent check-in)"
     state.lastRepair = now()
     sendConfiguration()
+    queueRepair(reason)
     return true
 }
 
@@ -352,7 +367,7 @@ void parse(String description) {
     if (state.codeVersion != CODE_VERSION) {
         state.codeVersion = CODE_VERSION
         logVer "Detected driver version change"
-        state.repairPending = 'driver update'
+        queueRepair('driver update')
     }
 
     boolean configured = checkIn ? handleCheckIn() : repairWithoutCheckIn()
@@ -487,7 +502,7 @@ private double smoothBatteryVoltage(double voltage) {
         device.updateDataValue('batteryReplacementDetected',
             "auto: V_prev=${String.format('%.2f', prev)} → V_new=${String.format('%.2f', voltage)} @ ${changed.format('yyyy-MM-dd HH:mm:ss zzz')}")
         logInfo "battery replacement detected: ${String.format('%.2f', prev)}V → ${String.format('%.2f', voltage)}V"
-        state.repairPending = 'battery replaced' // a battery change can drop the sensor's setup
+        queueRepair('battery replaced') // a battery change can drop the sensor's setup
     } else if (voltage < prev) {
         smoothed = constBatteryEmaAlpha * voltage + (1.0d - constBatteryEmaAlpha) * prev
         action = 'down'
