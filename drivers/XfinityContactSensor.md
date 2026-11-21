@@ -13,6 +13,7 @@ A Hubitat Elevation Zigbee driver for the door and window contact sensors sold b
 - **Tamper Alert**: the case was opened
 - **Temperature Measurement**, with a calibration offset
 - **Battery**, plus `batteryVoltage`, `lowBattery` (`true` / `false`) and `batteryDefect` (`detected` / `clear`)
+- `rejoinCount`: how many times the sensor has announced itself on the network (a rejoin or a re-pair)
 - `setBatteryReplacementDate`: records when the battery was last changed (today when left blank), in the device data `batteryReplacementDate`
 
 ## Preferences
@@ -22,8 +23,9 @@ A Hubitat Elevation Zigbee driver for the door and window contact sensors sold b
 | Battery Reporting Interval | 12 h | How often the sensor reports its battery |
 | Temperature Reporting Interval | 720 min | How often the sensor reports its temperature |
 | Temperature Calibration | 0 | Degrees added to each reading (−128 to 127) |
+| Battery saver (experimental) | Off (6 s) | How often the sensor polls its router; see below |
 
-The sensor sleeps between messages, so **Refresh** is held until it next transmits (open or close it to send one). Info, debug and trace logging can be turned on separately; debug logging turns itself off after 30 minutes.
+The sensor sleeps between messages, so **Refresh** is held until it next transmits (open or close it to send one), or with the battery saver on, until its next check-in. Info, debug and trace logging can be turned on separately; debug logging turns itself off after 30 minutes.
 
 **Configuration waits for the hourly check-in.** Saving preferences and a driver update queue the configuration; it goes out when the sensor next checks in, so it can take up to an hour. That is the only moment the sensor is known to be listening: a configuration sent while it sleeps can be lost in part. A newly paired or re-paired sensor, and **Configure**, send it at once and again at the next check-in. A sensor that sends no check-in for 2.5 hours gets it right after one of its own messages, at most once a day, and again at its first check-in.
 

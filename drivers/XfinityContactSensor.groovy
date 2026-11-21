@@ -48,6 +48,7 @@ metadata {
         attribute "lowBattery", "enum", ["true","false"]
         attribute "batteryDefect", "enum", ["detected","clear"]
         attribute "batteryVoltage", "number"
+        attribute "rejoinCount", "number"
 
         command "setBatteryReplacementDate", [[name: "Date Changed", type: "DATE", description: "Enter the date the battery was last changed. If blank will use current date."]]
 
@@ -407,6 +408,12 @@ void parse(String description) {
             add.cluster = descMap.cluster
             parseAttributeReport(add)
         }
+    } else if (descMap.profileId == "0000" && descMap.clusterId == "0013") {
+        // Device announce, sent on each join or rejoin. The sensor keeps its bindings across a
+        // rejoin, so nothing is sent; a re-pair is configured from configure().
+        int count = ((device.currentValue('rejoinCount') ?: 0) as int) + 1
+        sendEvent(name: 'rejoinCount', value: count, descriptionText: "${device.displayName} rejoined the network (${count})")
+        logInfo "rejoined the network (${count}), address ${device.deviceNetworkId}"
     } else if (descMap.profileId == "0000") {
         logTrace("Unhandled ZDO command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     } else if (descMap.profileId == "0104" && descMap.clusterId != null) {
