@@ -19,6 +19,7 @@ Every fact carries an evidence mark ([EVIDENCE.md](EVIDENCE.md)).
 - [IPP Printer Integration](#ipp-printer-integration)
 - [Power and Energy Manager](#power-and-energy-manager)
 - [Rule Machine](#rule-machine)
+- [Samsung TV Integration](#samsung-tv-integration)
 
 ## Built-in app names
 
@@ -94,3 +95,18 @@ The built-in app (2.5.0 and later; its page shows version 2.0.1) holds four chil
 ## Rule Machine
 
 - **The `logging` setting** (Events, Triggers, Actions) does not gate the "Required Expression false" log line on any single option: it was still logged with only `Actions` set and with only `Events` set. Clearing every option was not tested *(probed 2.5.2.139)*.
+
+## Samsung TV Integration
+
+A built-in app, new in 2.5.3, that adds a Samsung Tizen TV as a device and controls it over the TV's remote websocket *(docs: [2.5.3 release notes](https://community.hubitat.com/t/167413))*. The TV side is in the [device reference](hubitat-device-reference.md#samsung-tizen-tvs). Tested against a mock TV only.
+
+- **The device** reports `switch`, `networkStatus`, `connectionStatus` and `ipAddress`, and has the commands `connect`, `disconnect`, `initialize`, `pair`, `on`, `off`, `refresh`, `sendRemoteCommand`, `showInputMenu`, `volumeUp`, `volumeDown`, `toggleMute`, `play`, `pause` and `stop`. It polls every 30 s by default *(probed 2.5.3.133, C-8 Pro, mock)*.
+- **Discovery** lists a TV that is on, and with none answering the page says "No compatible Samsung TVs found" *(probed 2.5.3.133, C-8 Pro, mock)*. On 2.5.3.111 it sent one SSDP `M-SEARCH` for `urn:samsung.com:device:RemoteControlReceiver:1` (MX 4), then `GET :8001/api/v2/` to each host that answered *(probed 2.5.3.111, C-8 Pro, mock and capture)*. A TU7000 does not answer that search type (device reference), so its IP had to be typed. On 2.5.3.133 a LAN host saw neither an `M-SEARCH` nor an mDNS query from the hub during a search that found the mock, so how it searches now is not known *(probed 2.5.3.133, C-8 Pro, mock and capture)*.
+- **Pairing.** `pair` opens the remote socket on 8002 and logs "Samsung TV pairing requested. Select Allow on the TV within one minute."; `connectionStatus` is `awaitingApproval` during the TV's prompt and `connected` after it *(probed 2.5.3.111–2.5.3.133, C-8 Pro, mock)*. Before pairing, keys log the warning "Samsung TV remote is not ready. Turn on the TV, connect or pair, and retry the command." and `off` logs "Connect or pair the Samsung TV before requesting Off." *(probed 2.5.3.133, C-8 Pro, mock)*.
+- **A refused prompt.** On 2.5.3.111 it set `connectionStatus denied` and blocked reconnecting until Pair was pressed *(probed 2.5.3.111, C-8 Pro, mock; false 2.5.3.133)*. On 2.5.3.133 `connectionStatus` goes back to `disconnected`, and `connect` or a key opens a new socket and asks the TV again *(probed 2.5.3.133, C-8 Pro, mock)*.
+- **Two sockets at once.** In 3 of 8 allow prompts a second socket opened 1 to 4 s after the first, while the first waited for the answer *(probed 2.5.3.133, C-8 Pro, mock)*. On 2.5.3.111 a `refresh` that overlapped a poll opened two sockets *(probed 2.5.3.111, C-8 Pro, mock)*; a `refresh` sent as the poll ran opened one, in 3 tries *(probed 2.5.3.133, C-8 Pro, mock)*.
+- **Keys.** `sendRemoteCommand`, `volumeUp`, `toggleMute`, `play` and `showInputMenu` reach the TV as `ms.remote.control` `Click`s of `KEY_INFO` (as sent), `KEY_VOLUP`, `KEY_MUTE`, `KEY_PLAY` and `KEY_SOURCE` *(probed 2.5.3.111–2.5.3.133, C-8 Pro, mock)*.
+- **Power off.** On 2.5.3.111 `switch` followed `PowerState` only: after `off` it stayed `on` until a poll failed (46 s), then the attribute left `currentStates` with no `switch off` event, so a rule triggered by switch off would not fire *(probed 2.5.3.111, C-8 Pro, mock; false 2.5.3.114)*. Now `off` sends `KEY_POWER`, and `switch off` and `connectionStatus disconnected` follow within about 1 s and `networkStatus offline` within 10 s *(probed 2.5.3.114–2.5.3.133, C-8 Pro, mock)*.
+- **A TV without `PowerState`.** On 2.5.3.111 the device had no `switch` attribute and refused `off` with "power is unknown. Off was not sent" *(probed 2.5.3.111, C-8 Pro, mock; false 2.5.3.133)*. On 2.5.3.133 `off` connects if needed, sends `KEY_POWER` and sets `switch off`, and a connected remote sets `switch on` *(probed 2.5.3.133, C-8 Pro, mock)*. Keys work after `connect` *(probed 2.5.3.111–2.5.3.133, C-8 Pro, mock)*.
+- **The Frame (2024).** On 2.5.3.111 `off` sent a short `KEY_POWER`, which on a Frame only enters art mode *(probed 2.5.3.111, C-8 Pro, mock; false 2.5.3.114)*. Now it sends `KEY_POWER` as `Press`, then `Release` 3.0 s later, which puts the TV in standby *(probed 2.5.3.114–2.5.3.133, C-8 Pro, mock whose Frame model comes from [ha-samsungtv-smart](https://github.com/ollo69/ha-samsungtv-smart) notes, no real Frame)*.
+- **Port 8002 only.** The remote socket never falls back to plain `ws` on 8001, even for a TV that reports `TokenAuthSupport` `false` and answers 404 on 8002: `connect`, `pair`, `refresh` and keys log "Expected HTTP 101 response but was '404 Not Found'" at debug, and the only line above debug is the "remote is not ready" warning. REST on 8001 keeps working, so the device still reports power *(probed 2.5.3.111–2.5.3.133, C-8 Pro, mock)*.

@@ -29,6 +29,7 @@ Every fact carries an evidence mark ([EVIDENCE.md](EVIDENCE.md)).
 - [Matter](#matter)
 - [Android TV / Google TV (Remote protocol v2)](#android-tv--google-tv-remote-protocol-v2)
 - [Samsung Tizen TVs](#samsung-tizen-tvs)
+- [Brother HL-2270DW (IPP)](#brother-hl-2270dw-ipp)
 - [Hubitat hubs](#hubitat-hubs)
 
 ## Xiaomi / Aqara (lumi FF01)
@@ -558,6 +559,12 @@ it pairs. Leading zero bytes of each number are dropped before hashing *(spec: [
   name 18 s after a Wake-on-LAN power-on, so standby doesn't trigger the hub's same-name issue
   (see `getMDNSServiceResults` in `hubitat-platform-notes.md`) *(probed 2.5.2.139, C-7, Samsung TV Remote driver and avahi-browse from the LAN)*.
   A power cut sends no goodbye, so it would *(inferred: from the platform note, not tested with this TV)*.
+
+## Brother HL-2270DW (IPP)
+
+- The web server is `debut/1.20`: HTTP/1.0 replies with `Connection: close`, and no TLS on 443 *(probed firmware not recorded, raw IPP client on a LAN host)*.
+- `/`, `/ipp` and `/ipp/port1` answer Get-Printer-Attributes. `/duerqxesz5090` and `/ipp/print` answer `404 Not Found`, although the printer advertises `rp=duerqxesz5090` on `_ipp._tcp` and lists `/duerqxesz5090` in `printer-uri-supported` *(probed firmware not recorded, raw IPP client on a LAN host)*.
+- `ipp-version-supported` is `1.0`, and replies carry version 1.0; an IPP/2.0 request gets status `0x0503` (version not supported). The attributes include no `marker-*` and no page counters. A reply takes about 1 s *(probed firmware not recorded, raw IPP client on a LAN host)*.
 
 ## Hubitat hubs
 
