@@ -18,12 +18,12 @@
 
 import groovy.transform.CompileStatic
 import groovy.transform.Field
+import hubitat.device.HubMultiAction
 import hubitat.device.Protocol
 import hubitat.zigbee.zcl.DataType
 import hubitat.zigbee.clusters.iaszone.ZoneStatus
-import com.hubitat.hub.domain.Event
 
-@Field static final String CODE_VERSION = "0.1.7"
+@Field static final String CODE_VERSION = "0.1.9"
 
 metadata {
 	definition (
@@ -31,7 +31,11 @@ metadata {
         namespace: "iamtrep",
         author: "pj",
         description: "Zigbee contact sensor with battery, tamper, and temperature",
-        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/XfinityContactSensor.groovy"
+        importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/main/drivers/XfinityContactSensor.groovy",
+        // parse() reads and writes state on most messages, and a configuration brings a burst of
+        // replies; in a driver each execution writes the whole state store back when it ends, so
+        // overlapping parses would undo each other's writes. Every handler here takes milliseconds.
+        singleThreaded: true
     ) {
         capability "Configuration"
         capability "ContactSensor"
@@ -70,26 +74,72 @@ metadata {
   }
 }
 
-@Field static final Integer constDefaultDelay = 333
+// Spacing between the Zigbee commands of one send
+@Field static final int constCommandSpacingMs = 333
 
 // CR2032/CR2450 discharge curve, Z2M "3V_2100" preset (knot voltages in V, percent at knot).
-// Piecewise linear; clamped at the endpoints. Verified against the Energizer CR2450 datasheet
-// (low-drain Bkgnd curve at 7.5 kΩ continuous) — fits within ~10pp at the knee.
+// Piecewise linear; clamped at the endpoints. Checked against the Energizer CR2450 datasheet
+// (low-drain curve at 7.5 kΩ continuous): within ~10 points at the knee.
 // https://github.com/Koenkk/zigbee-herdsman-converters/blob/master/src/lib/utils.ts
 @Field static final double[] constBatteryCurveV   = [2.10d, 2.44d, 2.74d, 2.90d, 3.00d] as double[]
 @Field static final double[] constBatteryCurvePct = [ 0.0d,  6.0d, 18.0d, 42.0d, 100.0d] as double[]
 
-// Monotonic EMA on battery voltage. The smoothed value never rises (cells discharge,
-// they don't charge) except on a big jump (>= constBatteryBigJumpV) which we treat as a
-// battery replacement and snap the smoothed value to the new raw voltage. Small apparent
-// upward moves are rejected as ADC dither noise (the radio reports voltage at 100 mV
-// resolution, and a cell parked near a knot boundary alternates between two grid steps
-// based on instantaneous load / temperature). α=0.30 converges in ~5 reports.
-// Big-jump threshold 0.15V is the natural boundary between one-grid-step dither (0.1V)
-// and a genuine 2+ grid step move; validated empirically — zero false snaps
-// across 14 devices over ~28 days.
+// Battery voltage arrives in 0.1 V steps, and a cell near a step boundary flips between two steps
+// with load and temperature. The smoothed voltage therefore never rises (cells don't recharge),
+// except on a jump of at least constBatteryBigJumpV, two steps, which means a new battery.
+// Drops are averaged in (alpha 0.30, about 5 reports to converge), so one low sample only nudges it.
 @Field static final double constBatteryEmaAlpha = 0.30d
 @Field static final double constBatteryBigJumpV = 0.15d
+
+// ZCL "invalid" values: battery voltage 0xFF, temperature 0x8000
+@Field static final int constInvalidBatteryVoltage = 0xFF
+@Field static final int constInvalidTemperature = 0x8000
+
+// Poll Control (cluster 0x0020), in quarter-seconds. The sensor ships polling its parent every
+// 8 qs (2 s); 24 qs (6 s) is what Zigbee2MQTT and ZHA set, and stays under the ~7.7 s a parent
+// holds a message for a sleeping child, so small sends (Refresh) reach it at any time.
+@Field static final int constCheckInIntervalQs = 14400   // 1 h
+@Field static final int constLongPollIntervalQs = 24     // 6 s
+
+// A sensor whose last check-in is older than this has stopped checking in (Poll Control binding
+// lost), so a due configuration goes out on its next message instead.
+@Field static final long constCheckInStaleMs = 9000L * 1000   // 2.5 check-in intervals
+
+// Self-repair: a sensor can lose its reporting setup. When no battery report has come for this
+// many report intervals, the configuration is sent again, at most once per constRepairMinGapMs.
+@Field static final int constStaleReportIntervals = 2
+@Field static final long constRepairMinGapMs = 24L * 60 * 60 * 1000
+
+// Check-in Response payload: startFastPolling (bool) + fastPollTimeout (uint16 LE). A timeout of 0
+// keeps the sensor's own FastPollTimeout (10 s), twice what a configuration with its reads takes.
+@Field static final String constCheckInDecline = "000000"
+@Field static final String constCheckInFastPoll = "010000"
+
+// clearedKey: the state key that records when the bit last cleared
+@Field static final Map ZONE_ATTRIBUTES = [
+    'tamper':        [trueValue: 'detected', falseValue: 'clear',  trueDesc: 'tamper detected',         falseDesc: 'tamper cleared',         clearedKey: 'lastTamperClear'],
+    'contact':       [trueValue: 'open',     falseValue: 'closed', trueDesc: 'contact opened',          falseDesc: 'contact closed'],
+    'lowBattery':    [trueValue: 'true',     falseValue: 'false',  trueDesc: 'battery low',             falseDesc: 'battery ok',             clearedKey: 'lastBatteryOk'],
+    'batteryDefect': [trueValue: 'detected', falseValue: 'clear',  trueDesc: 'battery defect detected', falseDesc: 'battery defect cleared', clearedKey: 'lastBatteryDefectClear']
+]
+
+// A uint32 as little-endian hex, the byte order of a ZCL payload (24 -> "18000000").
+@CompileStatic
+static String uint32LeHex(long v) {
+    String be = String.format('%08X', v & 0xFFFFFFFFL)
+    return be.substring(6, 8) + be.substring(4, 6) + be.substring(2, 4) + be.substring(0, 2)
+}
+
+// Whether the configuration should be sent again, from the last battery report, the last
+// configuration sent and the last repair (epoch ms, null when never), the battery report
+// interval (s) and the time now.
+@CompileStatic
+static boolean needsRepair(Long lastBatteryRx, Long lastConfigured, Long lastRepair, int reportIntervalS, long nowMs) {
+    if (lastRepair != null && nowMs - lastRepair < constRepairMinGapMs) return false
+    long since = Math.max(lastBatteryRx ?: 0L, lastConfigured ?: 0L)
+    if (since == 0L) return true
+    return nowMs - since > (long) constStaleReportIntervals * reportIntervalS * 1000L
+}
 
 @CompileStatic
 private static int batteryPctFromVoltage(double voltage, double[] curveV, double[] curvePct) {
@@ -109,23 +159,27 @@ private static int batteryPctFromVoltage(double voltage, double[] curveV, double
     return 100
 }
 
-// Decode a hex string into a signed int16 (Zigbee temperature/pressure values
-// arrive as unsigned hex but are signed two's complement on the wire).
+// Zigbee temperatures are signed two's complement int16 sent as unsigned hex
 @CompileStatic
 private static int hexToSignedInt16(String hex) {
     int v = Integer.parseInt(hex, 16)
     return v > 0x7FFF ? v - 0x10000 : v
 }
 
+// ── Lifecycle and commands ───────────────────────────────────────────
 
-void installed(){
+// A device that has just joined is awake and has no Poll Control binding yet, so no check-in
+// would come: configure it at once.
+void installed() {
 	logDebug "installed()"
-    configure()
+    resetState()
+    sendConfiguration()
 }
 
-void updated(){
+void updated() {
 	logDebug "updated()"
-    configure()
+    unschedule()
+    queueConfiguration('preferences saved')
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
 }
 
@@ -133,57 +187,27 @@ void uninstalled() {
     logDebug "uninstalled()"
 }
 
+// After a driver change the Poll Control binding may be missing, so send at once; the check-in
+// (once bound) sends it again inside a fast-poll window.
 void deviceTypeUpdated() {
     logDebug "driver change detected"
-    configure()
-}
-
-// User-facing capability. Sleepy end-devices are usually asleep when the UI button
-// is clicked, so we defer the reads until the device next transmits — parse() drains
-// the flag inside the awake window.
-void refresh() {
-    logDebug "refresh() requested — will issue on next device wake"
-    state.refreshRequested = true
-}
-
-private void issueAttributeReads() {
-    logDebug "issuing attribute reads (temperature, battery voltage, IAS zone status)"
-    List<String> cmds = []
-    cmds += zigbee.readAttribute(0x0402, 0x0000, [:], constDefaultDelay)                          // temperature
-    cmds += zigbee.readAttribute(zigbee.POWER_CONFIGURATION_CLUSTER, 0x0020, [:], constDefaultDelay) // battery voltage
-    cmds += zigbee.readAttribute(0x0500, 0x0002, [:], constDefaultDelay)                          // IAS ZoneStatus bitmap
-    sendZigbeeCommands(cmds)
+    resetState()
+    sendConfiguration()
+    state.repairPending = 'driver change'
 }
 
 void configure() {
 	logDebug "configure()"
+    Long lastCheckIn = state.lastCheckIn as Long
+    resetState()
+    state.lastCheckIn = lastCheckIn
+    queueConfiguration('configure')
+}
 
-    state.clear()
-    state.lastRx = 0
-    state.codeVersion = CODE_VERSION
-
-    int reportInterval = Math.min((batteryInterval == null ? 12 : batteryInterval).toInteger() * 60 * 60, 65535)
-    List<String> cmds = []
-
-    // IAS Zone binding and enrollment
-    cmds += "zdo bind 0x${device.deviceNetworkId} 1 1 0x0500 {${device.zigbeeId}} {}"  // IAS Zone
-    cmds += "delay $constDefaultDelay"
-    cmds += zigbee.enrollResponse(1200) // Enroll in IAS Zone
-
-    // Poll Control binding and configuration
-    cmds += "zdo bind 0x${device.deviceNetworkId} 1 1 0x0020 {${device.zigbeeId}} {}"  // Poll Control
-    cmds += "delay $constDefaultDelay"
-    cmds += zigbee.writeAttribute(0x0020, 0x0000, DataType.UINT32, 14400, [:], constDefaultDelay)
-
-    // Configure attribute reports
-    cmds += zigbee.configureReporting(zigbee.POWER_CONFIGURATION_CLUSTER, 0x0020, DataType.UINT8, 0, reportInterval, 1, [:], constDefaultDelay) //Battery Voltage Reporting
-    // minimum 3600 s; the maximum must not be below it and must fit the 16-bit field (a value saved before the
-    // preference had a range may be out of bounds)
-    int tempMaxSeconds = Math.min(Math.max((tempInterval != null ? tempInterval : 720).toInteger() * 60, 3600), 65535)
-    cmds += zigbee.temperatureConfig(3600, tempMaxSeconds) // Temperature Reporting
-
-    sendZigbeeCommands(cmds)
-    issueAttributeReads()
+// Three reads fit in the parent's hold at the 6 s long poll, so they go out on the next message
+void refresh() {
+    logDebug "refresh() requested — will issue on the next message from the device"
+    state.refreshRequested = true
 }
 
 void setBatteryReplacementDate(Date date = null) {
@@ -193,214 +217,236 @@ void setBatteryReplacementDate(Date date = null) {
     logDebug "setting Battery Last Replaced Date to $dateStr"
 }
 
+// ── Configuration ────────────────────────────────────────────────────
+
+private void resetState() {
+    state.clear()
+    state.lastRx = 0
+    state.codeVersion = CODE_VERSION
+}
+
+// The configuration goes out inside the fast-poll window that follows a check-in: a burst sent
+// while the sensor sleeps can be lost in part. A sensor not checking in (never seen, or its Poll
+// Control binding lost) gets it at once, since no check-in would come.
+private void queueConfiguration(String reason) {
+    if (checkInsStale()) {
+        logCfg "sending the configuration now (${reason}; no recent check-in)"
+        sendConfiguration()
+        return
+    }
+    state.repairPending = reason
+    logCfg "configuration queued for the next check-in (${reason})"
+}
+
+private boolean checkInsStale() {
+    Long lastCheckIn = state.lastCheckIn as Long
+    return lastCheckIn == null || now() - lastCheckIn > constCheckInStaleMs
+}
+
+private boolean repairDue() {
+    return state.repairPending != null ||
+        needsRepair(state.lastBatteryRx as Long, state.lastConfigured as Long, state.lastRepair as Long, batteryReportIntervalS(), now())
+}
+
+private int batteryReportIntervalS() {
+    int hours = Math.max(1, Math.min(18, (batteryInterval == null ? 12 : batteryInterval).toInteger()))
+    return hours * 60 * 60
+}
+
+private void sendConfiguration() {
+    markConfigured()
+    sendZigbeeCommands(configurationCommands())
+}
+
+private void markConfigured() {
+    state.lastConfigured = now()
+    state.repairPending = null
+}
+
+// Bindings, Poll Control settings and report setup, then the attribute reads
+private List<String> configurationCommands() {
+    String dni = device.deviceNetworkId
+    String ieee = device.zigbeeId
+    // the maximum must not be below the 3600 s minimum and must fit the 16-bit field
+    int tempMaxSeconds = Math.min(Math.max((tempInterval != null ? tempInterval : 720).toInteger() * 60, 3600), 65535)
+    List<String> cmds = []
+    cmds += "zdo bind 0x${dni} 1 1 0x0500 {${ieee}} {}"
+    cmds += zigbee.enrollResponse()
+    cmds += "zdo bind 0x${dni} 1 1 0x0020 {${ieee}} {}"
+    cmds += zigbee.writeAttribute(0x0020, 0x0000, DataType.UINT32, constCheckInIntervalQs)
+    // LongPollInterval is read-only; Set Long Poll Interval (command 0x02, uint32 LE) changes it
+    cmds += zigbee.command(0x0020, 0x02, uint32LeHex(constLongPollIntervalQs))
+    cmds += zigbee.configureReporting(zigbee.POWER_CONFIGURATION_CLUSTER, 0x0020, DataType.UINT8, 0, batteryReportIntervalS(), 1)
+    cmds += zigbee.temperatureConfig(3600, tempMaxSeconds)
+    cmds += attributeReadCommands()
+    return cmds
+}
+
+private List<String> attributeReadCommands() {
+    logDebug "issuing attribute reads (temperature, battery voltage, IAS zone status, long poll)"
+    List<String> cmds = []
+    cmds += zigbee.readAttribute(0x0402, 0x0000)                             // temperature
+    cmds += zigbee.readAttribute(zigbee.POWER_CONFIGURATION_CLUSTER, 0x0020) // battery voltage
+    cmds += zigbee.readAttribute(0x0500, 0x0002)                             // IAS ZoneStatus bitmap
+    cmds += zigbee.readAttribute(0x0020, 0x0001)                             // LongPollInterval
+    return cmds
+}
+
+// Poll Control check-in (hourly). The sensor fast-polls until it gets a Check-in Response or its
+// FastPollTimeout runs out, so always answer: decline fast polling when nothing is due, or accept
+// it, send the configuration, and end the window with Fast Poll Stop. Returns whether the
+// configuration (which includes the attribute reads) was sent.
+private boolean handleCheckIn() {
+    state.lastCheckIn = now()
+    if (!repairDue()) {
+        logRx "check-in"
+        sendZigbeeCommands(zigbee.command(0x0020, 0x00, constCheckInDecline))
+        return false
+    }
+    logCfg "check-in: sending the configuration (${state.repairPending ?: 'no battery report lately'})"
+    state.lastRepair = now()
+    markConfigured()
+    List<String> cmds = []
+    cmds += zigbee.command(0x0020, 0x00, constCheckInFastPoll)
+    cmds += configurationCommands()
+    cmds += zigbee.command(0x0020, 0x01) // Fast Poll Stop
+    sendZigbeeCommands(cmds)
+    return true
+}
+
+// For a sensor that has stopped checking in, any message is the only chance to send a due
+// configuration. Counted from the last check-in, or from the last configuration sent (which binds
+// Poll Control); with neither known, the next check-in or Configure handles it.
+private boolean repairWithoutCheckIn() {
+    long since = Math.max((state.lastCheckIn ?: 0L) as long, (state.lastConfigured ?: 0L) as long)
+    if (since == 0L || now() - since <= constCheckInStaleMs || !repairDue()) return false
+    logCfg "sending the configuration (${state.repairPending ?: 'no battery report lately'}; no recent check-in)"
+    state.lastRepair = now()
+    sendConfiguration()
+    return true
+}
+
+private void sendZigbeeCommands(List<String> cmds) {
+    if (cmds.empty) return
+    List<String> send = delayBetween(cmds.findAll { !it.startsWith('delay') }, constCommandSpacingMs)
+    logTrace "Sending Zigbee messages: ${send}"
+    sendHubCommand(new HubMultiAction(send, Protocol.ZIGBEE))
+    state.lastTx = now()
+}
+
+// ── Parsing ──────────────────────────────────────────────────────────
+
 void parse(String description) {
     state.lastRx = now()
     logTrace "parsing message: ${description}"
 
-    // Drain pending refresh request inside the device's post-transmit awake window
-    if (state.refreshRequested) {
-        state.refreshRequested = false
-        issueAttributeReads()
-    }
-
-    // Auto-Configure device: configure() was not called for this driver version
-    if (state.codeVersion != CODE_VERSION) {
-        state.codeVersion = CODE_VERSION
-        runInMillis 1500, 'autoConfigure'
-    }
-
     Map descMap = zigbee.parseDescriptionAsMap(description)
     logTrace "Receiving Zigbee message: ${descMap}"
+    boolean checkIn = descMap.clusterId == "0020" && descMap.command == "00" && descMap.isClusterSpecific
 
-    if (descMap.attrId != null) {
-        // device attribute report
+    // The configuration was not sent for this driver version
+    if (state.codeVersion != CODE_VERSION) {
+        state.codeVersion = CODE_VERSION
+        logVer "Detected driver version change"
+        state.repairPending = 'driver update'
+    }
+
+    boolean configured = checkIn ? handleCheckIn() : repairWithoutCheckIn()
+    if (state.refreshRequested) {
+        state.refreshRequested = false
+        if (!configured) sendZigbeeCommands(attributeReadCommands())
+    }
+
+    // Order matters: a read or report has an attrId; catchalls are told apart by profile;
+    // IAS descriptions ('enroll request', 'zone status') have no map
+    if (checkIn) {
+        return
+    } else if (descMap.attrId != null) {
         parseAttributeReport(descMap)
         descMap.additionalAttrs?.each { add ->
             add.cluster = descMap.cluster
             parseAttributeReport(add)
         }
     } else if (descMap.profileId == "0000") {
-        // ZigBee Device Object (ZDO) command
         logTrace("Unhandled ZDO command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     } else if (descMap.profileId == "0104" && descMap.clusterId != null) {
-        // ZigBee Home Automation (ZHA) global command
         logTrace("Unhandled ZHA global command: cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     } else if (description?.startsWith('enroll request')) {
         logRx "Received enroll request"
-        List<String> cmds = []
-        cmds += zigbee.enrollResponse(1200)
-        sendZigbeeCommands(cmds)
-    } else if (description?.startsWith('zone status')  || description?.startsWith('zone report')) {
+        sendZigbeeCommands(zigbee.enrollResponse())
+    } else if (description?.startsWith('zone status') || description?.startsWith('zone report')) {
         parseIasMessage(description)
     } else {
-        logWarn("Unhandled unknown command ($description): cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
+        logTrace("Unhandled description ($description): cluster=${descMap.clusterId} command=${descMap.command} value=${descMap.value} data=${descMap.data}")
     }
 }
 
-@Field static final Map ATTRIBUTE_CONFIG = [
-    'tamper': [
-        trueValue: 'detected',
-        falseValue: 'clear',
-        trueDesc: 'tamper detected',
-        falseDesc: 'tamper cleared'
-    ],
-    'contact': [
-        trueValue: 'open',
-        falseValue: 'closed',
-        trueDesc: 'contact opened',
-        falseDesc: 'contact closed'
-    ],
-    'lowBattery': [
-        trueValue: 'true',
-        falseValue: 'false',
-        trueDesc: 'battery low',
-        falseDesc: 'battery ok'
-    ],
-    'batteryDefect': [
-        trueValue: 'detected',
-        falseValue: 'clear',
-        trueDesc: 'battery defect detected',
-        falseDesc: 'battery defect cleared'
-    ]
-]
-
+// Unsolicited Zone Status Change Notification: emit only what changed
 private void parseIasMessage(String description) {
     ZoneStatus zs = zigbee.parseZoneStatus(description)
-    //logTrace "Zone Status: ${zs.properties}"
-
     updateZoneStatusIfChanged('contact', zs.alarm1Set)
-    updateZoneStatusIfChanged('tamper', zs.tamperSet) {
-        state.lastTamperClear = now()
-    }
-    updateZoneStatusIfChanged('lowBattery', zs.batterySet) {
-        state.lastBatteryOk = now()
-    }
-    updateZoneStatusIfChanged('batteryDefect', zs.batteryDefectSet) {
-        state.lastBatteryDefectClear = now()
+    updateZoneStatusIfChanged('tamper', zs.tamperSet)
+    updateZoneStatusIfChanged('lowBattery', zs.batterySet)
+    updateZoneStatusIfChanged('batteryDefect', zs.batteryDefectSet)
+}
+
+private void updateZoneStatusIfChanged(String attribute, boolean isTrue) {
+    Map config = ZONE_ATTRIBUTES[attribute]
+    if (device.currentValue(attribute) != (isTrue ? config.trueValue : config.falseValue)) {
+        emitZoneStatusEvent(attribute, isTrue)
     }
 }
 
-private void emitZoneStatusEvent(String attribute, Boolean isTrue, Closure onClear = null) {
-    Map config = ATTRIBUTE_CONFIG[attribute]
-    String descriptionText = "${device.displayName} ${isTrue ? config.trueDesc : config.falseDesc}"
-    if (txtEnable) logInfo "${isTrue ? config.trueDesc : config.falseDesc}"
-    sendEvent(
-        name: attribute,
-        value: isTrue ? config.trueValue : config.falseValue,
-        descriptionText: descriptionText,
-        type: 'physical'
-    )
-    if (!isTrue && onClear) {
-        onClear()
-    }
-}
-
-private void updateZoneStatusIfChanged(String attribute, Boolean isTrue, Closure onClear = null) {
-    Map config = ATTRIBUTE_CONFIG[attribute]
-    String newValue = isTrue ? config.trueValue : config.falseValue
-    if (device.currentValue(attribute) != newValue) {
-        emitZoneStatusEvent(attribute, isTrue, onClear)
-    }
+private void emitZoneStatusEvent(String attribute, boolean isTrue) {
+    Map config = ZONE_ATTRIBUTES[attribute]
+    String desc = isTrue ? config.trueDesc : config.falseDesc
+    logInfo desc
+    sendEvent(name: attribute, value: isTrue ? config.trueValue : config.falseValue,
+        descriptionText: "${device.displayName} ${desc}", type: 'physical')
+    if (!isTrue && config.clearedKey) state[(String) config.clearedKey] = now()
 }
 
 private void parseAttributeReport(Map descMap) {
-    Map map = [:]
+    if (descMap.value == null) {
+        logDebug "no value for cluster ${descMap.cluster} attrId ${descMap.attrId} (read failed)"
+        return
+    }
+    int raw = Integer.parseInt(descMap.value as String, 16)
 
     switch (descMap.cluster) {
-        case "0001": // Power Configuration cluster
-            if (descMap.attrId == "0020") {
-                // Battery voltage in 100mV units (UINT8 from ZCL 0x0001/0x0020)
-                double voltage = Integer.parseInt(descMap.value, 16) / 10.0d
-
-                // Monotonic EMA: smoothed only ever goes down. A big-jump UP is treated as
-                // battery replacement (snap to new V, persist the event). Downward moves —
-                // whether small or large — are smoothed via EMA, never snapped, so a single
-                // transient low ADC sample only nudges smoothed instead of locking it down.
-                Double prevSmoothed = (state.smoothedBatteryVoltage instanceof Number) ?
-                    ((Number) state.smoothedBatteryVoltage).doubleValue() : null
-                double smoothed
-                String emaAction
-                if (prevSmoothed == null) {
-                    smoothed = voltage
-                    emaAction = 'init'
-                } else if (voltage - prevSmoothed >= constBatteryBigJumpV) {
-                    smoothed = voltage
-                    emaAction = 'snap-up'
-                    Date now = new Date()
-                    setBatteryReplacementDate(now)
-                    device.updateDataValue('batteryReplacementDetected',
-                        "auto: V_prev=${String.format('%.2f', prevSmoothed)} → V_new=${String.format('%.2f', voltage)} @ ${now.format('yyyy-MM-dd HH:mm:ss zzz')}")
-                    if (txtEnable) logInfo "battery replacement detected: ${String.format('%.2f', prevSmoothed)}V → ${String.format('%.2f', voltage)}V"
-                } else if (voltage < prevSmoothed) {
-                    smoothed = constBatteryEmaAlpha * voltage + (1.0d - constBatteryEmaAlpha) * prevSmoothed
-                    emaAction = 'down'
-                } else {
-                    smoothed = prevSmoothed
-                    emaAction = 'hold'
-                }
-                state.smoothedBatteryVoltage = smoothed
-
-                int smoothedPct = batteryPctFromVoltage(smoothed, constBatteryCurveV, constBatteryCurvePct)
-
-                sendEvent(name: 'batteryVoltage', value: voltage, unit: 'V',
-                    descriptionText: "${device.displayName} battery voltage is ${voltage}V")
-
-                map.name = 'battery'
-                map.value = smoothedPct
-                map.unit = '%'
-                map.descriptionText = "${device.displayName} battery is ${smoothedPct}%"
-
-                logTrace "battery EMA: v=${voltage}V action=${emaAction} smoothed=${String.format('%.3f', smoothed)}V pct=${smoothedPct}%"
-
-                state.lastBatteryVoltage = voltage
-                state.lastBatteryDate = (new Date()).format('yyyy-MM-dd HH:mm:ss zzz')
+        case "0001": // Power Configuration: battery voltage in 0.1 V steps
+            if (descMap.attrId == "0020" && raw != constInvalidBatteryVoltage) {
+                parseBatteryVoltage(raw / 10.0d)
             }
             break
 
-        case "0402": // Temperature Measurement cluster
-            if (descMap.attrId == "0000") {
-                // Temperature in hundredths of degrees Celsius (signed int16)
-                double tempC = hexToSignedInt16(descMap.value) / 100.0d
-                Double tempValue = (getTemperatureScale() == "C") ? tempC : celsiusToFahrenheit(tempC)
-                tempValue = Math.round(tempValue * 10) / 10.0  // round to 1 decimal
-
-                // Apply calibration offset
-                if (tempOffset) {
-                    tempValue = tempValue + tempOffset
-                }
-
-                map.name = 'temperature'
-                map.value = tempValue
-                map.unit = getTemperatureScale()
-                map.descriptionText = "${device.displayName} temperature is ${tempValue}°${map.unit}"
+        case "0402": // Temperature Measurement: hundredths of a degree Celsius, signed
+            if (descMap.attrId == "0000" && raw != constInvalidTemperature) {
+                double tempC = hexToSignedInt16(descMap.value as String) / 100.0d
+                double temp = (getTemperatureScale() == "C") ? tempC : celsiusToFahrenheit(tempC)
+                if (tempOffset) temp += tempOffset
+                temp = Math.round(temp * 10) / 10.0d
+                String unit = getTemperatureScale()
+                logInfo "temperature is ${temp}°${unit}"
+                sendEvent(name: 'temperature', value: temp, unit: unit, descriptionText: "${device.displayName} temperature is ${temp}°${unit}")
             }
             break
 
-        case "0500": // IAS Zone cluster
-            // Unsolicited Status Change Notifications go through parseIasMessage from
-            // parse() directly (and are deduped via updateZoneStatusIfChanged). This branch
-            // handles solicited reads of the ZoneStatus bitmap (attrId 0x0002) issued by
-            // issueAttributeReads(); we asked for the answer, so emit unconditionally.
-            // Primary attribute (contact) rides the map for the trailing sendEvent path;
-            // the bitmap's other three bits go through emitZoneStatusEvent as side channels.
+        case "0500": // IAS Zone: a ZoneStatus read we asked for, so emit every bit
             if (descMap.attrId == "0002") {
-                int zs = Integer.parseInt(descMap.value, 16)
-                emitZoneStatusEvent('tamper', (zs & 0x0004) != 0) {
-                    state.lastTamperClear = now()
-                }
-                emitZoneStatusEvent('lowBattery', (zs & 0x0008) != 0) {
-                    state.lastBatteryOk = now()
-                }
-                emitZoneStatusEvent('batteryDefect', (zs & 0x0200) != 0) {
-                    state.lastBatteryDefectClear = now()
-                }
+                emitZoneStatusEvent('contact', (raw & 0x0001) != 0)
+                emitZoneStatusEvent('tamper', (raw & 0x0004) != 0)
+                emitZoneStatusEvent('lowBattery', (raw & 0x0008) != 0)
+                emitZoneStatusEvent('batteryDefect', (raw & 0x0200) != 0)
+            }
+            break
 
-                Map cfg = ATTRIBUTE_CONFIG['contact']
-                boolean isOpen = (zs & 0x0001) != 0
-                map.name = 'contact'
-                map.value = isOpen ? cfg.trueValue : cfg.falseValue
-                map.descriptionText = "${device.displayName} ${isOpen ? cfg.trueDesc : cfg.falseDesc}"
-                map.type = 'physical'
+        case "0020": // Poll Control: the long poll read back after each configuration
+            if (descMap.attrId == "0001") {
+                state.longPollQs = raw
+                if (raw != constLongPollIntervalQs) {
+                    logWarn "long poll interval is ${raw} qs, not ${constLongPollIntervalQs}: the configuration did not take"
+                }
             }
             break
 
@@ -408,26 +454,47 @@ private void parseAttributeReport(Map descMap) {
             logDebug "Unhandled cluster ${descMap.cluster} attrId ${descMap.attrId} value ${descMap.value}"
             break
     }
+}
 
-    if (map.name) {
-        if (txtEnable) logInfo((map.descriptionText as String) - "${device.displayName} ")
-        sendEvent(map)
+private void parseBatteryVoltage(double voltage) {
+    double smoothed = smoothBatteryVoltage(voltage)
+    int pct = batteryPctFromVoltage(smoothed, constBatteryCurveV, constBatteryCurvePct)
+    state.lastBatteryVoltage = voltage
+    state.lastBatteryRx = now()
+    state.lastBatteryDate = new Date().format('yyyy-MM-dd HH:mm:ss zzz')
+    sendEvent(name: 'batteryVoltage', value: voltage, unit: 'V', descriptionText: "${device.displayName} battery voltage is ${voltage}V")
+    logInfo "battery is ${pct}%"
+    sendEvent(name: 'battery', value: pct, unit: '%', descriptionText: "${device.displayName} battery is ${pct}%")
+}
+
+// Returns the new smoothed voltage (see constBatteryEmaAlpha) and records a battery replacement
+private double smoothBatteryVoltage(double voltage) {
+    Double prev = (state.smoothedBatteryVoltage instanceof Number) ? ((Number) state.smoothedBatteryVoltage).doubleValue() : null
+    double smoothed
+    String action
+    if (prev == null) {
+        smoothed = voltage
+        action = 'init'
+    } else if (voltage - prev >= constBatteryBigJumpV) {
+        smoothed = voltage
+        action = 'replaced'
+        Date changed = new Date()
+        setBatteryReplacementDate(changed)
+        device.updateDataValue('batteryReplacementDetected',
+            "auto: V_prev=${String.format('%.2f', prev)} → V_new=${String.format('%.2f', voltage)} @ ${changed.format('yyyy-MM-dd HH:mm:ss zzz')}")
+        logInfo "battery replacement detected: ${String.format('%.2f', prev)}V → ${String.format('%.2f', voltage)}V"
+        state.repairPending = 'battery replaced' // a battery change can drop the sensor's setup
+    } else if (voltage < prev) {
+        smoothed = constBatteryEmaAlpha * voltage + (1.0d - constBatteryEmaAlpha) * prev
+        action = 'down'
+    } else {
+        smoothed = prev
+        action = 'hold'
     }
+    state.smoothedBatteryVoltage = smoothed
+    logTrace "battery EMA: v=${voltage}V action=${action} smoothed=${String.format('%.3f', smoothed)}V"
+    return smoothed
 }
-
-private void autoConfigure() {
-    logVer "Detected driver version change"
-    configure()
-}
-
-private void sendZigbeeCommands(List<String> cmds) {
-    if (cmds.empty) return
-    List<String> send = delayBetween(cmds.findAll { !it.startsWith('delay') }, constDefaultDelay)
-    logTrace "Sending Zigbee messages: ${send}"
-    sendHubCommand(new hubitat.device.HubMultiAction(send, hubitat.device.Protocol.ZIGBEE))
-    state.lastTx = now()
-}
-
 
 void logsOff() {
     device.updateSetting("debugEnable", [value: "false", type: "bool"])
