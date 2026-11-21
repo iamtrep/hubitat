@@ -64,6 +64,9 @@ metadata {
               description: "Set battery reporting interval by this many <b>hours</b>.</br>Range: 1 thru 18</br>Default: 12 hours", required: false)
         input(name: "tempInterval", type: "number", range: "60..1092", title: "<b>Temperature Reporting Interval</b>", defaultValue: 720,
               description: "Set temperature reporting interval by this many <b>minutes</b>. </br>Range: 60 thru 1092</br>Default: 720 (12 hours)", required: false)
+        input name: "longPollQs", type: "enum", title: "<b>Battery saver (experimental)</b>", defaultValue: "24",
+            options: ["24": "Off: poll every 6 s", "120": "30 s", "240": "1 min", "1200": "5 min", "3600": "15 min"],
+            description: "How often the sensor polls its router. Longer saves battery, but a router may drop a sensor that polls too rarely, and Refresh waits for the hourly check-in. Applied at the next check-in."
         input name: "tempOffset", title: "<b>Temperature Calibration</b>", type: "number", range: "-128..127", defaultValue: 0, required: true,
             description: "Adjust temperature by this many degrees.</br>Range: -128 thru 127</br>Default: 0"
         input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
@@ -96,10 +99,12 @@ metadata {
 @Field static final int constInvalidTemperature = 0x8000
 
 // Poll Control (cluster 0x0020), in quarter-seconds. The sensor ships polling its parent every
-// 8 qs (2 s); 24 qs (6 s) is what Zigbee2MQTT and ZHA set, and stays under the ~7.7 s a parent
-// holds a message for a sleeping child, so small sends (Refresh) reach it at any time.
+// 8 qs (2 s); the default of 24 qs (6 s) is what Zigbee2MQTT and ZHA set, and stays under the
+// ~7.7 s a parent holds a message for a sleeping child, so small sends (Refresh) reach it at any
+// time. A longer poll (the battery saver preference) leaves only the check-in window for them.
 @Field static final int constCheckInIntervalQs = 14400   // 1 h
-@Field static final int constLongPollIntervalQs = 24     // 6 s
+@Field static final int constDefaultLongPollQs = 24      // 6 s
+@Field static final int constParentHoldQs = 30           // ~7.7 s
 
 // A sensor whose last check-in is older than this has stopped checking in (Poll Control binding
 // lost), so a due configuration goes out on its next message instead.
@@ -208,9 +213,10 @@ void configure() {
     queueRepair('configure')
 }
 
-// Three reads fit in the parent's hold at the 6 s long poll, so they go out on the next message
+// Three reads fit in the parent's hold at the 6 s long poll, so they go out on the next message;
+// with a longer poll, at the next check-in
 void refresh() {
-    logDebug "refresh() requested — will issue on the next message from the device"
+    logDebug "refresh() requested — will issue on the ${longPollWithinHold() ? 'next message from the device' : 'next check-in'}"
     state.refreshRequested = true
 }
 
@@ -259,6 +265,14 @@ private boolean repairDue() {
         needsRepair(state.lastBatteryRx as Long, state.lastConfigured as Long, state.lastRepair as Long, batteryReportIntervalS(), now())
 }
 
+private int longPollIntervalQs() {
+    return (longPollQs ?: constDefaultLongPollQs) as int
+}
+
+private boolean longPollWithinHold() {
+    return longPollIntervalQs() <= constParentHoldQs
+}
+
 private int batteryReportIntervalS() {
     int hours = Math.max(1, Math.min(18, (batteryInterval == null ? 12 : batteryInterval).toInteger()))
     return hours * 60 * 60
@@ -287,7 +301,7 @@ private List<String> configurationCommands() {
     cmds += "zdo bind 0x${dni} 1 1 0x0020 {${ieee}} {}"
     cmds += zigbee.writeAttribute(0x0020, 0x0000, DataType.UINT32, constCheckInIntervalQs)
     // LongPollInterval is read-only; Set Long Poll Interval (command 0x02, uint32 LE) changes it
-    cmds += zigbee.command(0x0020, 0x02, uint32LeHex(constLongPollIntervalQs))
+    cmds += zigbee.command(0x0020, 0x02, uint32LeHex(longPollIntervalQs()))
     cmds += zigbee.configureReporting(zigbee.POWER_CONFIGURATION_CLUSTER, 0x0020, DataType.UINT8, 0, batteryReportIntervalS(), 1)
     cmds += zigbee.temperatureConfig(3600, tempMaxSeconds)
     cmds += attributeReadCommands()
@@ -306,11 +320,16 @@ private List<String> attributeReadCommands() {
 
 // Poll Control check-in (hourly). The sensor fast-polls until it gets a Check-in Response or its
 // FastPollTimeout runs out, so always answer: decline fast polling when nothing is due, or accept
-// it, send the configuration, and end the window with Fast Poll Stop. Returns whether the
-// configuration (which includes the attribute reads) was sent.
+// it, send the configuration (or, on a long poll, a pending Refresh's reads), and end the window
+// with Fast Poll Stop. Returns whether the attribute reads were sent.
 private boolean handleCheckIn() {
     state.lastCheckIn = now()
     if (!repairDue()) {
+        if (state.refreshRequested && !longPollWithinHold()) {
+            logRx "check-in: sending the refresh reads"
+            sendZigbeeCommands(zigbee.command(0x0020, 0x00, constCheckInFastPoll) + attributeReadCommands() + zigbee.command(0x0020, 0x01))
+            return true
+        }
         logRx "check-in"
         sendZigbeeCommands(zigbee.command(0x0020, 0x00, constCheckInDecline))
         return false
@@ -371,9 +390,11 @@ void parse(String description) {
     }
 
     boolean configured = checkIn ? handleCheckIn() : repairWithoutCheckIn()
-    if (state.refreshRequested) {
+    if (configured) {
+        state.refreshRequested = false // the configuration includes the reads
+    } else if (state.refreshRequested && longPollWithinHold()) {
         state.refreshRequested = false
-        if (!configured) sendZigbeeCommands(attributeReadCommands())
+        sendZigbeeCommands(attributeReadCommands())
     }
 
     // Order matters: a read or report has an attrId; catchalls are told apart by profile;
@@ -463,8 +484,8 @@ private void parseAttributeReport(Map descMap) {
         case "0020": // Poll Control: the long poll read back after each configuration
             if (descMap.attrId == "0001") {
                 state.longPollQs = raw
-                if (raw != constLongPollIntervalQs) {
-                    logWarn "long poll interval is ${raw} qs, not ${constLongPollIntervalQs}: the configuration did not take"
+                if (raw != longPollIntervalQs()) {
+                    logWarn "long poll interval is ${raw} qs, not ${longPollIntervalQs()}: the configuration did not take"
                 }
             }
             break
