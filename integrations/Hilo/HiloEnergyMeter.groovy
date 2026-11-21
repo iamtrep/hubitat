@@ -100,10 +100,12 @@ metadata {
 @Field static final int HEALTHY_AFTER_SECS = 55
 // No power update for this long: reconnect quietly, in case the connection is alive but stuck.
 @Field static final long STALE_DATA_MS = 900_000L
-// A STOP this soon after the driver's own close belongs to the closed stream.
+// A STOP this soon after the driver's own close() returns belongs to the closed stream. close()
+// can take 5 s to return, and the closed stream's STOP can come 1.5 s after that.
 @Field static final long CLOSE_GRACE_MS = 5_000L
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
-// Per device: time of an intentional close. The first STOP within CLOSE_GRACE_MS of it is the
+// Per device: time of an intentional close, set when close() is called (for a STOP while it
+// blocks) and again when it returns. The first STOP within CLOSE_GRACE_MS of it is the
 // closed stream's and is not a failure. START does not clear it: the hub reports START from
 // connect() itself, within milliseconds and before the server answers, so the old stream's
 // STOP can come after the new stream's START. In memory: a driver's atomicState write after
@@ -268,8 +270,11 @@ private void streamUp() {
 }
 
 private void closeStream() {
-    CLOSING.put(device.id.toString(), now())
+    String id = device.id.toString()
+    CLOSING.put(id, now())
     try { interfaces.eventStream.close() } catch (Exception e) { logDebug "close: ${e.message}" }
+    // Only while the marker is still there: a STOP during close() already took it.
+    if (CLOSING.containsKey(id)) CLOSING.put(id, now())
 }
 
 void eventStreamStatus(String s) {
