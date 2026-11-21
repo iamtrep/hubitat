@@ -67,7 +67,7 @@ metadata {
               description: "Set temperature reporting interval by this many <b>minutes</b>. </br>Range: 60 thru 1092</br>Default: 720 (12 hours)", required: false)
         input name: "longPollQs", type: "enum", title: "<b>Battery saver (experimental)</b>", defaultValue: "24",
             options: ["24": "Off: poll every 6 s", "120": "30 s", "240": "1 min", "1200": "5 min", "3600": "15 min"],
-            description: "How often the sensor polls its router. Longer saves battery, but a router may drop a sensor that polls too rarely, and Refresh waits for the hourly check-in. Applied at the next check-in."
+            description: "How often the sensor polls its router. Longer saves battery, but a router may drop a sensor that polls too rarely. Applied at the next check-in."
         input name: "tempOffset", title: "<b>Temperature Calibration</b>", type: "number", range: "-128..127", defaultValue: 0, required: true,
             description: "Adjust temperature by this many degrees.</br>Range: -128 thru 127</br>Default: 0"
         input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
@@ -100,12 +100,17 @@ metadata {
 @Field static final int constInvalidTemperature = 0x8000
 
 // Poll Control (cluster 0x0020), in quarter-seconds. The sensor ships polling its parent every
-// 8 qs (2 s); the default of 24 qs (6 s) is what Zigbee2MQTT and ZHA set, and stays under the
-// ~7.7 s a parent holds a message for a sleeping child, so small sends (Refresh) reach it at any
-// time. A longer poll (the battery saver preference) leaves only the check-in window for them.
+// 8 qs (2 s); the default of 24 qs (6 s) is what Zigbee2MQTT and ZHA set. The sensor also polls
+// right after it transmits, so a few messages sent then reach it at any long poll.
 @Field static final int constCheckInIntervalQs = 14400   // 1 h
 @Field static final int constDefaultLongPollQs = 24      // 6 s
-@Field static final int constParentHoldQs = 30           // ~7.7 s
+
+// Refresh reads (cluster/attribute): temperature, battery voltage, IAS ZoneStatus, LongPollInterval.
+// A read with no answer after constReadAnswerMs is sent again on the next message, up to
+// constReadTries sends in all.
+@Field static final List<String> REFRESH_READS = ['0402/0000', '0001/0020', '0500/0002', '0020/0001']
+@Field static final long constReadAnswerMs = 10000L
+@Field static final int constReadTries = 3
 
 // A sensor whose last check-in is older than this has stopped checking in (Poll Control binding
 // lost), so a due configuration goes out on its next message instead.
@@ -214,11 +219,13 @@ void configure() {
     queueRepair('configure')
 }
 
-// Three reads fit in the parent's hold at the 6 s long poll, so they go out on the next message;
-// with a longer poll, at the next check-in
+// The sensor polls right after it transmits, so the reads go out on its next message
 void refresh() {
-    logDebug "refresh() requested — will issue on the ${longPollWithinHold() ? 'next message from the device' : 'next check-in'}"
+    logDebug "refresh() requested — will issue on the next message from the device"
     state.refreshRequested = true
+    state.pendingReads = REFRESH_READS
+    state.readTries = 0
+    state.remove('readsSentAt')
 }
 
 void setBatteryReplacementDate(Date date = null) {
@@ -270,10 +277,6 @@ private int longPollIntervalQs() {
     return (longPollQs ?: constDefaultLongPollQs) as int
 }
 
-private boolean longPollWithinHold() {
-    return longPollIntervalQs() <= constParentHoldQs
-}
-
 private int batteryReportIntervalS() {
     int hours = Math.max(1, Math.min(18, (batteryInterval == null ? 12 : batteryInterval).toInteger()))
     return hours * 60 * 60
@@ -309,28 +312,52 @@ private List<String> configurationCommands() {
     return cmds
 }
 
-private List<String> attributeReadCommands() {
-    logDebug "issuing attribute reads (temperature, battery voltage, IAS zone status, long poll)"
-    List<String> cmds = []
-    cmds += zigbee.readAttribute(0x0402, 0x0000)                             // temperature
-    cmds += zigbee.readAttribute(zigbee.POWER_CONFIGURATION_CLUSTER, 0x0020) // battery voltage
-    cmds += zigbee.readAttribute(0x0500, 0x0002)                             // IAS ZoneStatus bitmap
-    cmds += zigbee.readAttribute(0x0020, 0x0001)                             // LongPollInterval
-    return cmds
+private List<String> attributeReadCommands(List<String> reads = REFRESH_READS) {
+    logDebug "issuing attribute reads ${reads}"
+    return reads.collectMany { String key ->
+        List<String> ids = key.tokenize('/')
+        zigbee.readAttribute(Integer.parseInt(ids[0], 16), Integer.parseInt(ids[1], 16))
+    }
+}
+
+// Sends the Refresh reads not yet answered, unless the last send is still awaiting answers.
+// sentNow: the configuration just sent includes all the reads.
+private void sendPendingReads(boolean sentNow) {
+    if (!state.refreshRequested) return
+    Long sentAt = state.readsSentAt as Long
+    if (!sentNow && sentAt != null && now() - sentAt < constReadAnswerMs) return
+    int tries = (state.readTries ?: 0) as int
+    if (!sentNow && tries >= constReadTries) {
+        logWarn "refresh: no answer to ${state.pendingReads} after ${tries} tries"
+        clearPendingReads()
+        return
+    }
+    state.readTries = tries + 1
+    state.readsSentAt = now()
+    if (!sentNow) sendZigbeeCommands(attributeReadCommands(state.pendingReads as List<String>))
+}
+
+private void markReadAnswered(String cluster, String attrId) {
+    List<String> pending = (state.pendingReads ?: []) as List<String>
+    String key = "${cluster}/${attrId}"
+    if (!pending.contains(key)) return
+    pending = pending - key
+    if (pending.empty) clearPendingReads()
+    else state.pendingReads = pending
+}
+
+private void clearPendingReads() {
+    state.refreshRequested = false
+    ['pendingReads', 'readsSentAt', 'readTries'].each { state.remove(it) }
 }
 
 // Poll Control check-in (hourly). The sensor fast-polls until it gets a Check-in Response or its
 // FastPollTimeout runs out, so always answer: decline fast polling when nothing is due, or accept
-// it, send the configuration (or, on a long poll, a pending Refresh's reads), and end the window
-// with Fast Poll Stop. Returns whether the attribute reads were sent.
+// it, send the configuration, and end the window with Fast Poll Stop. Returns whether the
+// configuration (which includes the attribute reads) was sent.
 private boolean handleCheckIn() {
     state.lastCheckIn = now()
     if (!repairDue()) {
-        if (state.refreshRequested && !longPollWithinHold()) {
-            logRx "check-in: sending the refresh reads"
-            sendZigbeeCommands(zigbee.command(0x0020, 0x00, constCheckInFastPoll) + attributeReadCommands() + zigbee.command(0x0020, 0x01))
-            return true
-        }
         logRx "check-in"
         sendZigbeeCommands(zigbee.command(0x0020, 0x00, constCheckInDecline))
         return false
@@ -391,12 +418,7 @@ void parse(String description) {
     }
 
     boolean configured = checkIn ? handleCheckIn() : repairWithoutCheckIn()
-    if (configured) {
-        state.refreshRequested = false // the configuration includes the reads
-    } else if (state.refreshRequested && longPollWithinHold()) {
-        state.refreshRequested = false
-        sendZigbeeCommands(attributeReadCommands())
-    }
+    sendPendingReads(configured)
 
     // Order matters: a read or report has an attrId; catchalls are told apart by profile;
     // IAS descriptions ('enroll request', 'zone status') have no map
@@ -454,6 +476,7 @@ private void emitZoneStatusEvent(String attribute, boolean isTrue) {
 }
 
 private void parseAttributeReport(Map descMap) {
+    markReadAnswered(descMap.cluster as String, descMap.attrId as String)
     if (descMap.value == null) {
         logDebug "no value for cluster ${descMap.cluster} attrId ${descMap.attrId} (read failed)"
         return
