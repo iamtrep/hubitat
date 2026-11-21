@@ -196,12 +196,16 @@ void deviceTypeUpdated() {
     state.repairPending = 'driver change'
 }
 
+// The hub calls configure() when a known device pairs again. The sensor is awake then and,
+// after a reset, has no Poll Control binding, so send at once; the next check-in sends it again
+// inside a fast-poll window in case part of this burst is lost.
 void configure() {
 	logDebug "configure()"
     Long lastCheckIn = state.lastCheckIn as Long
     resetState()
     state.lastCheckIn = lastCheckIn
-    queueConfiguration('configure')
+    sendConfiguration()
+    state.repairPending = 'configure'
 }
 
 // Three reads fit in the parent's hold at the 6 s long poll, so they go out on the next message
