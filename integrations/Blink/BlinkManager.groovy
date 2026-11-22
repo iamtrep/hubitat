@@ -42,7 +42,7 @@ definition(
 
 // --- Constants ---
 
-@Field static final String CODE_VERSION = "1.1.11"
+@Field static final String CODE_VERSION = "1.1.12"
 
 @Field static final String OAUTH_BASE_URL = "https://api.oauth.blink.com"
 // The REST API host of a region ("tier"); {tier} is replaced. One constant, so a test build can point it elsewhere.
@@ -399,7 +399,7 @@ private void removeOrphans() {
     List<Map> orphans = (atomicState.orphanedDevices ?: []) as List<Map>
     orphans.each { Map o ->
         String dni = o.dni as String
-        logWarn "removing orphan: ${dni} (${o.label})"
+        logCfg "removing orphan: ${dni} (${o.label})"
         try { deleteChildDevice(dni) } catch (Exception e) { logError "delete ${dni}: ${e.message}" }
     }
     atomicState.orphanedDevices = []
@@ -941,6 +941,7 @@ private void processHomescreen(Map json, String recovery = null) {
 
     syncChildren(networks, cameras, syncModules)
     dispatchToChildren(networks, cameras, syncModules, recovery)
+    checkArmExpectations(networks)
     updateHomescreenSummary(networks, cameras, syncModules)
     rotateSignalsFetch(cameras)
     fetchDueBatteryConfig(cameras)
@@ -1447,9 +1448,14 @@ void commandStatusResponse(resp, data) {
 
     int statusCode = 0
     boolean complete = false
+    boolean gone = false
     try {
         if (resp.hasError()) {
-            logWarn "${label} cmd-status: ${resp.getErrorMessage()}${describeHttpBody(resp)}"
+            String body = describeHttpBody(resp)
+            // Blink drops a command it had nothing to do for (disarming a disarmed network) and then answers
+            // 404 "Command not found", code 906. Asking again can't change that; the next poll shows the state.
+            if (resp.getStatus() == 404 && body.contains("906")) gone = true
+            else logWarn "${label} cmd-status: ${resp.getErrorMessage()}${body}"
         } else {
             int httpStatus = resp.getStatus()
             if (httpStatus != 200) {
@@ -1469,6 +1475,12 @@ void commandStatusResponse(resp, data) {
         pollHomescreen()
         return
     }
+    if (gone) {
+        logDebug "${label}: Blink no longer lists the command (906); checking the network state on the next poll"
+        expectArmState(ctx)
+        pollHomescreen()
+        return
+    }
     if (statusCode != 0 && statusCode != 908) {
         logError "${label} failed server-side: status_code=${statusCode}"
         pollHomescreen()
@@ -1476,12 +1488,36 @@ void commandStatusResponse(resp, data) {
     }
     int maxAttempts = ((ctx.maxAttempts ?: CMD_RETRY_NETWORK) as Number).intValue()
     if (attempt >= maxAttempts) {
-        logWarn "${label} not confirmed after ${attempt} checks (cap=${maxAttempts}); polling anyway"
+        logWarn "${label} not confirmed after ${attempt} checks (cap=${maxAttempts}); checking the network state on the next poll"
+        expectArmState(ctx)
         pollHomescreen()
         return
     }
     ctx.attempt = attempt
     runInMillis(2000, "pollCommandStatusDeferred", [data: ctx, overwrite: false])
+}
+
+// An arm or disarm whose command status can't confirm it is checked against the network's `armed` on the
+// next homescreen poll (checkArmExpectations). Other commands (camera motion) are left to the poll as before.
+private void expectArmState(Map ctx) {
+    String label = (ctx.label ?: "") as String
+    if (!(label.startsWith("arm ") || label.startsWith("disarm ")) || !ctx.networkId) return
+    Map<String, Object> expect = (atomicState.armExpect ?: [:]) as Map<String, Object>
+    expect[ctx.networkId.toString()] = [armed: label.startsWith("arm "), label: label]
+    atomicState.armExpect = expect
+}
+
+private void checkArmExpectations(List<Map> networks) {
+    Map<String, Object> expect = (atomicState.armExpect ?: [:]) as Map<String, Object>
+    if (!expect) return
+    networks.each { Map n ->
+        Map e = expect.remove(n.id?.toString()) as Map
+        if (e == null) return
+        boolean armed = n.armed == true
+        if (armed == (e.armed == true)) logCmd "${e.label} confirmed by the network state"
+        else logWarn "${e.label} did not take: Blink reports the network ${armed ? 'armed' : 'disarmed'}"
+    }
+    atomicState.armExpect = expect
 }
 
 void pollCommandStatusDeferred(Map data) {
