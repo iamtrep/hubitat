@@ -238,9 +238,11 @@ cases:
     allow_log_patterns:
       - "No notification device configured"
       - "EMERGENCY SHUTOFF"
-      # A save re-syncs the dashboard file from GitHub and logs the outcome at warn.
+      # A save re-syncs the dashboard file from GitHub and logs the outcome at warn,
+      # or the failure when GitHub can't be reached.
       - "Dashboard UI"
       - "UI sync rejected"
+      - "Async UI sync failed"
 
   # ─── Case 7: a pump start the app never saw ─────────────────────────
   # With the on threshold raised to 5000 W the app takes 200 W for idle.
@@ -262,9 +264,11 @@ cases:
       - { pattern: "Pump started", level: info }
     allow_log_patterns:
       - "its start was not seen"
-      # A save re-syncs the dashboard file from GitHub and logs the outcome at warn.
+      # A save re-syncs the dashboard file from GitHub and logs the outcome at warn,
+      # or the failure when GitHub can't be reached.
       - "Dashboard UI"
       - "UI sync rejected"
+      - "Async UI sync failed"
 
   # ─── Case 8: a stop whose cycle record fails ────────────────────────
   # A CSV name the hub rejects makes the file write throw. The stop must
@@ -351,9 +355,11 @@ cases:
       - { pattern: "Water flow stopped", level: info, negate: true }
     allow_log_patterns:
       - "ended while it was not watched"
-      # A save re-syncs the dashboard file from GitHub and logs the outcome at warn.
+      # A save re-syncs the dashboard file from GitHub and logs the outcome at warn,
+      # or the failure when GitHub can't be reached.
       - "Dashboard UI"
       - "UI sync rejected"
+      - "Async UI sync failed"
 
 # Budget: cases 1-5 ~35 s, 6 ~22 s, 7 ~12 s, 8-9 ~25 s, 10 ~85 s, 11 ~12 s.
 runtime_budget_seconds: 260
