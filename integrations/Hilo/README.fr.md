@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 *[English version](README.md)*
 
-Intégration parent/enfant non officielle pour [Hilo](https://www.hiloenergie.com/), le service d'énergie résidentielle d'Hydro-Québec. L'application de gestion se connecte à un compte Hilo, lit la consommation horaire d'un emplacement et garde tout l'historique dans File Manager. Un appareil enfant affiche l'énergie du jour et, envoyée par Hilo environ une fois par minute, la puissance de tout le domicile au compteur.
+Intégration parent/enfant non officielle pour [Hilo](https://www.hiloenergie.com/), le service d'énergie résidentielle d'Hydro-Québec. L'application de gestion se connecte à un compte Hilo, lit la consommation horaire d'un emplacement et garde son historique dans File Manager. Un appareil enfant affiche l'énergie du jour et, envoyée par Hilo environ une fois par minute, la puissance de tout le domicile au compteur.
 
 > **Note :** cette intégration n'est ni affiliée à Hilo ou à Hydro-Québec, ni approuvée par eux. Signalez les problèmes ici, pas à Hilo ni à Hydro-Québec.
 
@@ -69,7 +69,7 @@ De retour dans l'application, collez l'adresse à l'étape 2 et appuyez sur Entr
 
 L'adresse ne sert qu'une fois. Si l'application signale une erreur de connexion, cliquez de nouveau sur **Se connecter à Hilo** pour en obtenir une nouvelle.
 
-L'application est renommée « Hilo Manager - <emplacement> »; changez le nom sous **Nom de cette instance** dans la page de l'application. L'appareil s'appelle « Hilo <emplacement> ». L'application lit ensuite l'historique du compte dans File Manager en arrière-plan (voir [Fichiers d'historique](#fichiers-dhistorique)).
+L'application est renommée « Hilo Manager - <emplacement> »; changez le nom sous **Nom de cette instance** dans la page de l'application. L'appareil s'appelle « Hilo <emplacement> ». Elle garde ensuite la consommation de chaque jour dans File Manager (voir [Fichiers d'historique](#fichiers-dhistorique)).
 
 Une instance sert un emplacement Hilo. Pour un deuxième compte ou emplacement, ajoutez une autre instance. Un emplacement déjà servi par une autre instance est refusé.
 
@@ -130,7 +130,9 @@ hilo-<id de l'emplacement>-energy-YYYY-MM.json
 
 Un jour est inscrit quand toutes ses heures sont arrivées. Une heure sans valeur chez Hilo vaut `null`.
 
-À la première configuration, l'application cherche où commence l'historique du compte, puis le lit dans les fichiers à raison d'un jour par minute : une année prend environ six heures. La page de l'application indique combien de jours restent.
+Les fichiers commencent le jour de la première lecture. Avec le crédit hivernal activé, l'application lit aussi les 46 jours qui la précèdent, dont l'énergie de référence a besoin, à raison d'un jour par minute.
+
+Les jours plus anciens ne sont lus que sur demande. Sous **Historique** dans la page de l'application, **Chercher où commence l'historique de Hilo** remonte une semaine à la fois (une requête à Hilo par semaine d'historique) et ne lit rien. La page indique ensuite le premier jour pour lequel Hilo a des données et combien de jours ne sont pas dans les fichiers. **Lire ces jours** les lit, une requête par jour, une par minute : une année prend environ six heures. La carte Énergie indique combien de jours restent.
 
 ### Parcourir l'historique
 

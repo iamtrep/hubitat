@@ -7,7 +7,7 @@ SPDX-License-Identifier: MIT
 
 *[Version française](README.fr.md)*
 
-Unofficial parent/child integration for [Hilo](https://www.hiloenergie.com/), Hydro-Québec's home energy service. The manager app logs in to a Hilo account, reads one location's hourly consumption, and keeps the full history in File Manager. A child device shows the day's energy and, pushed by Hilo about once a minute, the whole home's power from the utility meter.
+Unofficial parent/child integration for [Hilo](https://www.hiloenergie.com/), Hydro-Québec's home energy service. The manager app logs in to a Hilo account, reads one location's hourly consumption, and keeps its history in File Manager. A child device shows the day's energy and, pushed by Hilo about once a minute, the whole home's power from the utility meter.
 
 > **Note:** This integration is not affiliated with or endorsed by Hilo or Hydro-Québec. Report problems with it here, not to Hilo or Hydro-Québec.
 
@@ -69,7 +69,7 @@ Back in the app, paste the address into step 2 and press Enter. The app logs in 
 
 The address works once. If the app reports a login error, click **Log in to Hilo** again for a new one.
 
-The app is renamed "Hilo Manager - <location>"; change the name under **Name** on the app page. The device is named "Hilo <location>". It then reads the account's history into File Manager in the background (see [History files](#history-files)).
+The app is renamed "Hilo Manager - <location>"; change the name under **Name** on the app page. The device is named "Hilo <location>". It keeps each day's consumption in File Manager from then on (see [History files](#history-files)).
 
 One instance serves one Hilo location. For a second account or location, add another instance. A location already served by another instance is refused.
 
@@ -128,7 +128,9 @@ hilo-<location id>-energy-YYYY-MM.json
 
 A day is written once all its hours are in. An hour Hilo has no value for is `null`.
 
-On first setup the manager finds where the account's history starts, then reads it into the files one day a minute, so a year takes about six hours. The app page shows how many days are left.
+The files start on the day of the first read. With the winter credit on, the manager also reads the 46 days before it, which the reference energy needs, one day a minute.
+
+Older days are read only when you ask. Under **History** on the app page, **Find where Hilo's history starts** searches back a week at a time (one request to Hilo for each week of history) and reads nothing. The page then shows the first day Hilo has data for and how many days are not on file. **Read these days** reads them, one request for each day, one a minute: a year takes about six hours. The Energy card shows how many days are left.
 
 ### Browsing the history
 

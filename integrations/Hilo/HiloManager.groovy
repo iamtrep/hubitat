@@ -109,6 +109,7 @@ definition(
         "loc.input"         : "Hilo location",
         "loc.none"          : "No location found on this Hilo account.",
         "sec.wc"            : "Winter credit settings",
+        "sec.history"       : "History",
         "wc.enable"         : "Compute the reference energy of each peak event the evening before",
         "wc.floor"          : "kWh the home uses during a 4-hour event with the heating cut",
         "wc.margin"         : "kWh below the 40 kWh limit that an \"at most\" or \"keep\" plan aims for",
@@ -148,6 +149,14 @@ definition(
         "hist.notRead"      : "not read yet",
         "hist.left"         : "from {start}, {n} days still to read",
         "hist.complete"     : "complete from {start}",
+        "hist.intro"        : "Each day is kept from the first read on, and with the winter credit the {n} days before it. Older days are read from Hilo only when you ask: one request for each day.",
+        "hist.find"         : "Find where Hilo's history starts",
+        "hist.findNote"     : "The search makes one request to Hilo for each week of history. It reads nothing yet.",
+        "hist.finding"      : "Looking for where Hilo's history starts. Reload this page in a minute.",
+        "hist.offer"        : "Hilo has data from {first}. {n} days are not on file: reading them makes {n} requests to Hilo, one a minute, about {hours} h.",
+        "hist.read"         : "Read these {n} days",
+        "hist.cancel"       : "Don't read them",
+        "hist.nothing"      : "Nothing older to read: the files start where Hilo's data starts.",
         "btn.device"        : "Device",
         "btn.history"       : "Browse the history",
         "btn.files"         : "File Manager",
@@ -224,6 +233,7 @@ definition(
         "loc.input"         : "Emplacement Hilo",
         "loc.none"          : "Aucun emplacement trouvé dans ce compte Hilo.",
         "sec.wc"            : "Réglages du crédit hivernal",
+        "sec.history"       : "Historique",
         "wc.enable"         : "Calculer l'énergie de référence de chaque événement de pointe la veille au soir",
         "wc.floor"          : "kWh consommés par le domicile pendant un événement de 4 heures, chauffage coupé",
         "wc.margin"         : "kWh sous la limite de 40 kWh que vise un plan « au plus » ou « garder »",
@@ -263,6 +273,14 @@ definition(
         "hist.notRead"      : "pas encore lu",
         "hist.left"         : "depuis le {start}, encore {n} jours à lire",
         "hist.complete"     : "complet depuis le {start}",
+        "hist.intro"        : "Chaque jour est conservé à partir de la première lecture et, avec le crédit hivernal, les {n} jours qui la précèdent. Les jours plus anciens ne sont lus chez Hilo que sur demande : une requête par jour.",
+        "hist.find"         : "Chercher où commence l'historique de Hilo",
+        "hist.findNote"     : "La recherche fait une requête à Hilo par semaine d'historique. Elle ne lit encore rien.",
+        "hist.finding"      : "Recherche du début de l'historique de Hilo. Rechargez cette page dans une minute.",
+        "hist.offer"        : "Hilo a des données depuis le {first}. {n} jours ne sont pas dans les fichiers : les lire fait {n} requêtes à Hilo, une par minute, environ {hours} h.",
+        "hist.read"         : "Lire ces {n} jours",
+        "hist.cancel"       : "Ne pas les lire",
+        "hist.nothing"      : "Rien de plus ancien à lire : les fichiers commencent là où commencent les données de Hilo.",
         "btn.device"        : "Appareil",
         "btn.history"       : "Parcourir l'historique",
         "btn.files"         : "File Manager",
@@ -396,6 +414,22 @@ Map mainPage() {
                     input "wcNotifyTime", "time", title: tr("wc.notifyTime"), defaultValue: "22:00", required: false, width: 6
                     input "wcNotifyDaily", "bool", title: tr("wc.notifyDaily"), defaultValue: false
                     input "btnPeakNow", "button", title: tr("wc.computeNow"), inputClass: "p-button p-button-outlined"
+                }
+            }
+            // Open while an answer is waited for.
+            Map offer = state.historyOffer as Map
+            section(tr("sec.history"), hideable: true, hidden: !(offer || state.historyFinding)) {
+                paragraph tr("hist.intro", [n: PEAK_LOOKBACK_DAYS + 1])
+                if (state.historyFinding && historyBusy()) {
+                    paragraph tr("hist.finding")
+                } else if (offer?.first && (offer.days as long) > 0) {
+                    paragraph tr("hist.offer", [first: offer.first, n: offer.days, hours: Math.max(1L, Math.round((offer.days as long) / 60.0d))])
+                    input "btnHistoryRead", "button", title: tr("hist.read", [n: offer.days]), inputClass: "p-button p-button-outlined", width: 6
+                    input "btnHistoryCancel", "button", title: tr("hist.cancel"), inputClass: "p-button p-button-outlined", width: 6
+                } else {
+                    if (offer) paragraph tr("hist.nothing")
+                    paragraph tr("hist.findNote")
+                    input "btnHistoryFind", "button", title: tr("hist.find"), inputClass: "p-button p-button-outlined"
                 }
             }
         }
@@ -562,7 +596,11 @@ private static String card(String title, String body) {
 }
 
 private String historyLine() {
-    if (!state.historyStart) return tr(historyBusy() ? "hist.searching" : "hist.notRead")
+    if (!state.historyStart) return tr(state.historyFinding && historyBusy() ? "hist.searching" : "hist.notRead")
+    if (state.fillNext) {
+        long older = LocalDate.parse(state.fillTo as String).toEpochDay() - LocalDate.parse(state.fillNext as String).toEpochDay() + 1
+        return tr("hist.left", [start: state.fillStart, n: Math.max(0L, older)])
+    }
     long left = localToday().minusDays(1).toEpochDay() - LocalDate.parse(state.lastCompleteDay as String).toEpochDay() - 1
     return left > 0 ? tr("hist.left", [start: state.historyStart, n: left]) : tr("hist.complete", [start: state.historyStart])
 }
@@ -810,6 +848,9 @@ void appButtonHandler(String btn) {
     switch (btn) {
         case "btnLogout":     logout(); break
         case "btnPeakNow":    peakRun(); break
+        case "btnHistoryFind":   findHistoryStart(); break
+        case "btnHistoryRead":   readOfferedHistory(); break
+        case "btnHistoryCancel": state.remove("historyOffer"); break
         default: logWarn "unhandled button: ${btn}"
     }
 }
@@ -894,6 +935,7 @@ void logout() {
     dropSecret("refreshTokenEnc")
     ["refreshTokenEnc", "locations", "locationId", "locationHiloId", "locationName", "pollStreak", "childError", "childRequestedAt",
      "historyStart", "lastCompleteDay", "historyBusy", "backfilling", "finalDay", "lastHourMs",
+     "historyFinding", "historyOffer", "fillStart", "fillNext", "fillTo",
      "todayHours", "yesterdayHours", "peakEvents", "peakLast", "anchorLive", "anchorStopFor", "uiLangSynced"].each { state.remove(it) }
     app.removeSetting("locationId")
     meterChild()?.stopLiveStream()
@@ -1084,6 +1126,7 @@ void energyCallback(resp, data) {
         ev.energyYesterday = round3(known.sum(0.0) { it.kWh as BigDecimal } as BigDecimal)
         if (writeDay(day, hours)) {
             state.finalDay = day
+            if (!state.historyStart) { state.historyStart = day; state.lastCompleteDay = day }
             if (state.lastCompleteDay == LocalDate.parse(day).minusDays(1).toString()) state.lastCompleteDay = day
         }
     }
@@ -1109,7 +1152,9 @@ private List<Map> parseHours(json) {
 
 // ── History files ─────────────────────────────────────────────────────
 // One File Manager file per month: {unit, location, days: {"YYYY-MM-DD": [{start, kWh}, …]}}.
-// state.historyStart is the first day Hilo has data for; state.lastCompleteDay is how far
+// Nothing older than what the winter credit reads is asked from Hilo unless the user asks on the
+// app page: a search for where Hilo's data starts, then a read whose request count is shown first.
+// state.historyStart is the first day on file; state.lastCompleteDay is how far
 // the files are complete. Yesterday is written by the poll once all its hours are in;
 // older days are read here, one request at a time, and kept with any null hours.
 
@@ -1123,10 +1168,41 @@ private boolean historyBusy() {
 
 private void continueHistory() {
     if (historyBusy()) return
-    if (state.historyStart) { backfillNext(); return }
+    if (settings.wcEnable && !state.fillNext) readFrom(localToday().minusDays(PEAK_LOOKBACK_DAYS + 1).toString())
+    if (state.historyStart) backfillNext()
+}
+
+// Extends the history back to `first`: from there on for an instance with none, else the days
+// before what is on file (state.fillNext up to state.fillTo, read before anything else).
+private void readFrom(String first) {
+    String have = state.historyStart as String
+    if (!have) {
+        state.historyStart = first
+        state.lastCompleteDay = LocalDate.parse(first).minusDays(1).toString()
+    } else if (first < have) {
+        state.fillStart = first
+        state.fillNext = first
+        state.fillTo = LocalDate.parse(have).minusDays(1).toString()
+    }
+}
+
+// The History section's buttons.
+void findHistoryStart() {
+    if (historyBusy()) return
+    state.remove("historyOffer")
     state.historyBusy = now()
+    state.historyFinding = true
     logInfo "looking for the start of the Hilo history"
     fetchWeek(localToday().minusDays(6).toString(), 0, null)
+}
+
+void readOfferedHistory() {
+    Map offer = state.historyOffer as Map
+    state.remove("historyOffer")
+    if (!offer?.first || historyBusy()) return
+    logInfo "reading ${offer.days} days of Hilo history from ${offer.first}, one a minute"
+    readFrom(offer.first as String)
+    backfillNext()
 }
 
 // Steps back a week at a time until a week has no data at all. Week answers give 0.0, not
@@ -1146,6 +1222,7 @@ void weekCallback(resp, data) {
         // The poll reports outages; the search resumes at the next poll.
         logDebug "history search stopped: ${httpError(resp)}"
         state.remove("historyBusy")
+        state.remove("historyFinding")
         return
     }
     String first
@@ -1155,6 +1232,7 @@ void weekCallback(resp, data) {
     } catch (Exception e) {
         logDebug "history search stopped: unreadable answer (${e.message})"
         state.remove("historyBusy")
+        state.remove("historyFinding")
         return
     }
     int weeks = data.weeks as int
@@ -1162,27 +1240,41 @@ void weekCallback(resp, data) {
     if (first == null && found == null) {
         logInfo "no Hilo history yet"
         state.remove("historyBusy")
+        state.remove("historyFinding")
+        state.historyOffer = [days: 0]
         return
     }
     if (found) {
-        state.historyStart = found
-        state.lastCompleteDay = LocalDate.parse(found).minusDays(1).toString()
-        long days = localToday().toEpochDay() - LocalDate.parse(found).toEpochDay()
-        logInfo "Hilo history starts on ${found}; reading ${days} days into File Manager, one a minute"
+        // Days from `found` up to what is on file, or up to the day before yesterday with none.
+        LocalDate upTo = state.historyStart ? LocalDate.parse(state.historyStart as String) : localToday().minusDays(1)
+        long days = Math.max(0L, upTo.toEpochDay() - LocalDate.parse(found).toEpochDay())
+        logInfo "Hilo history starts on ${found}; ${days} days are not on file"
+        state.historyOffer = [first: found, days: days]
         state.remove("historyBusy")
-        backfillNext()
+        state.remove("historyFinding")
         return
     }
     fetchWeek(LocalDate.parse(data.start as String).minusDays(7).toString(), weeks + 1, first)
 }
 
 private void backfillNext() {
-    String next = LocalDate.parse(state.lastCompleteDay as String).plusDays(1).toString()
-    // Yesterday and today belong to the poll.
-    if (LocalDate.parse(next) >= localToday().minusDays(1)) {
-        if (state.backfilling) { logInfo "Hilo history complete in File Manager from ${state.historyStart}"; state.remove("backfilling") }
-        state.remove("historyBusy")
-        return
+    boolean fill = false
+    if (state.fillNext && (state.fillNext as String) > (state.fillTo as String)) {
+        state.historyStart = state.fillStart
+        ["fillStart", "fillNext", "fillTo"].each { state.remove(it) }
+    }
+    String next
+    if (state.fillNext) {
+        next = state.fillNext as String
+        fill = true
+    } else {
+        next = LocalDate.parse(state.lastCompleteDay as String).plusDays(1).toString()
+        // Yesterday and today belong to the poll.
+        if (LocalDate.parse(next) >= localToday().minusDays(1)) {
+            if (state.backfilling) { logInfo "Hilo history complete in File Manager from ${state.historyStart}"; state.remove("backfilling") }
+            state.remove("historyBusy")
+            return
+        }
     }
     String token = hiloAccessToken()
     if (!token) { state.remove("historyBusy"); return }
@@ -1191,7 +1283,7 @@ private void backfillNext() {
     logNet "Energy2 ${next} (history)"
     asynchttpGet("backfillCallback", [uri: "${API_URL}/Locations/${state.locationId}/History/Energy2",
                                       query: [date: next, timescale: "Day"], headers: apiHeaders(token),
-                                      contentType: "application/json", timeout: HTTP_TIMEOUT], [day: next])
+                                      contentType: "application/json", timeout: HTTP_TIMEOUT], [day: next, fill: fill])
 }
 
 void backfillTick() { backfillNext() }
@@ -1211,9 +1303,10 @@ void backfillCallback(resp, data) {
         hours = null
     }
     if (hours != null && !writeDay(day, hours)) { state.remove("historyBusy"); return }
-    state.lastCompleteDay = day
+    if (data.fill) state.fillNext = LocalDate.parse(day).plusDays(1).toString()
+    else state.lastCompleteDay = day
     // historyBusy stays set between days, so the hourly poll doesn't start a second chain.
-    if (LocalDate.parse(day).plusDays(1) >= localToday().minusDays(1)) backfillNext()
+    if (!data.fill && LocalDate.parse(day).plusDays(1) >= localToday().minusDays(1)) backfillNext()
     else runIn(BACKFILL_INTERVAL_SECS, "backfillTick")
 }
 
