@@ -143,10 +143,10 @@ t('zbMeshDetails: keeps LQI rollup an older payload already carries', () => {
 
 // ---- channel scan: the hub's own network is not a neighbour ----
 // The scan reports extendedPanId byte-reversed relative to /hub/zigbeeDetails/json.
-const own = { channel: 15, panId: 'E1CF', extendedPanId: '0011223344556677' };
+const own = { channel: 15, panId: '1A2B', extendedPanId: '0011223344556677' };
 const scan = { results: [
-  { channel: 15, panId: 'E1CF', extendedPanId: '7766554433221100', lastHopRssi: -45 },
-  { channel: 20, panId: '4EEE', extendedPanId: 'BE7C91408B7F972E', lastHopRssi: -70 },
+  { channel: 15, panId: '1A2B', extendedPanId: '7766554433221100', lastHopRssi: -45 },
+  { channel: 20, panId: '3C4D', extendedPanId: '8899AABBCCDDEEFF', lastHopRssi: -70 },
   { channel: 25, panId: null, extendedPanId: null, lastHopRssi: 0 }
 ] };
 t('isOwnPan: matches the byte-reversed extendedPanId', () => {
@@ -154,14 +154,14 @@ t('isOwnPan: matches the byte-reversed extendedPanId', () => {
   assert.strictEqual(N.isOwnPan(scan.results[1], own), false);
 });
 t('isOwnPan: matches the same-order extendedPanId', () => {
-  assert.strictEqual(N.isOwnPan({ channel: 15, panId: 'E1CF', extendedPanId: '0011223344556677' }, own), true);
+  assert.strictEqual(N.isOwnPan({ channel: 15, panId: '1A2B', extendedPanId: '0011223344556677' }, own), true);
 });
 t('isOwnPan: falls back to panId + channel without an extendedPanId', () => {
-  assert.strictEqual(N.isOwnPan({ channel: 15, panId: 'e1cf' }, own), true);
-  assert.strictEqual(N.isOwnPan({ channel: 20, panId: 'E1CF' }, own), false);
+  assert.strictEqual(N.isOwnPan({ channel: 15, panId: '1a2b' }, own), true);
+  assert.strictEqual(N.isOwnPan({ channel: 20, panId: '1A2B' }, own), false);
 });
 t('neighborPans / neighborPanCount exclude the own network and empty rows', () => {
-  assert.deepStrictEqual(N.neighborPans(scan, own).map(r => r.panId), ['4EEE']);
+  assert.deepStrictEqual(N.neighborPans(scan, own).map(r => r.panId), ['3C4D']);
   assert.strictEqual(N.neighborPanCount(scan, own), '1 other Zigbee network detected');
   assert.strictEqual(N.neighborPanCount({ results: [scan.results[0]] }, own), 'no other Zigbee networks detected');
 });
