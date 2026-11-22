@@ -29,6 +29,9 @@ definition(
     menu: "Integrations",
     category: "Safety & Security",
     singleInstance: true,
+    // Signing in creates the children and schedules before any Done, so the instance must count
+    // as installed from the first open.
+    installOnOpen: true,
     // Poll and token callbacks rewrite cloudStreak and notificationFlags. Only the user-driven
     // sign-in makes sync HTTP calls, so children wait on the parent only then.
     singleThreaded: true,
