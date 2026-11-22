@@ -114,9 +114,27 @@ check('no abort before the event', cc('abort', '2026-12-03 05:00'), false)
 check('no abort of a skipped event', cc('abort', '2026-12-03 07:00', [k]), false)
 check('unknown command', cc('pause', '2026-12-03 07:00'), false)
 
-check('prune keeps a coming event', core.pruneMarks([k], am, at('2026-12-03 07:00')), [k])
-check('prune drops an ended event', core.pruneMarks([k], am, at('2026-12-03 10:00')), [])
-check('prune drops an event no longer listed', core.pruneMarks([k], [], at('2026-12-03 07:00')), [])
+Map mk = [start: k, end: am[0].end]
+check('prune: a 0.4.0 mark takes its end from the list', core.pruneMarks([k], am, at('2026-12-03 07:00')), [mk])
+check('prune: a 0.4.0 mark of an unlisted event is dropped', core.pruneMarks([k], [], at('2026-12-03 07:00')), [])
+check('prune keeps a coming event', core.pruneMarks([mk], am, at('2026-12-03 07:00')), [mk])
+check('prune drops an ended event', core.pruneMarks([mk], am, at('2026-12-03 10:00')), [])
+check('prune keeps a mark through an empty list', core.pruneMarks([mk], [], at('2026-12-03 07:00')), [mk])
+check('prune keeps a mark through a list without the event', core.pruneMarks([mk], [ev('2026-12-04', 'am')], at('2026-12-03 02:00')), [mk])
+check('prune drops an unlisted mark at its end', core.pruneMarks([mk], [], at('2026-12-03 10:00')), [])
+check('prune: a listed end later than the mark extends it', core.pruneMarks([mk], [[start: k, end: at('2026-12-03 11:00'), window: 'am']], at('2026-12-03 10:30')), [[start: k, end: at('2026-12-03 11:00')]])
+check('skipped with a mark map', ph('2026-12-03 02:00', am, [mk]), 'skipped')
+check('aborted with a mark map', ph('2026-12-03 07:00', am, [], [mk]), 'aborted')
+check('mark relisted after vanishing is still aborted', ph('2026-12-03 08:00', am, [], core.pruneMarks(core.pruneMarks([mk], [], at('2026-12-03 07:30')), am, at('2026-12-03 08:00'))), 'aborted')
+
+// ── merge: an event under way survives a list that omits it ──
+Map pm = ev('2026-12-03', 'pm')
+check('merge: started event kept through an empty list', core.mergeEvents([], am, at('2026-12-03 07:00')), am)
+check('merge: started event kept through a list without it', core.mergeEvents([pm], am, at('2026-12-03 07:00')), [am[0], pm])
+check('merge: unstarted event dropped (withdrawn)', core.mergeEvents([], am, at('2026-12-03 05:00')), [])
+check('merge: ended event dropped', core.mergeEvents([], am, at('2026-12-03 10:00')), [])
+check('merge: a listed event is not doubled', core.mergeEvents(am, am, at('2026-12-03 07:00')), am)
+check('merge: changed times while listed follow the list', core.mergeEvents([[start: am[0].start, end: at('2026-12-03 11:00'), window: 'am']], am, at('2026-12-03 07:00'))*.end, [at('2026-12-03 11:00')])
 
 // ── switches ──
 check('switches announced', core.switchesFor('announced'), [announced: true, anchor: false, active: false])

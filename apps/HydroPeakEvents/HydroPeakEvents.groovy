@@ -16,7 +16,7 @@ import groovy.json.JsonOutput
 import java.text.SimpleDateFormat
 
 @Field static final String APP_NAME = "Hydro-Québec Peak Period Manager"
-@Field static final String CODE_VERSION = "0.4.0"
+@Field static final String CODE_VERSION = "0.4.1"
 
 definition(
     name: APP_NAME,
@@ -261,7 +261,10 @@ private void processPeakPeriods(Map data) {
     if (dated > 0 && bad == dated) throw new Exception("no record has parseable dates (${bad} records)")
     noteBadRecords(bad)
 
-    List events = parsed.events as List
+    List fresh = parsed.events as List
+    // An event under way stays until its end even when the feed stops listing it; abort ends it early.
+    List events = mergeEvents(fresh, (state.events ?: []) as List, now())
+    if (events.size() > fresh.size()) logInfo("The feed no longer lists the event under way; it stays in effect until its end")
     if (events != state.events) {
         logInfo("Events: ${events ? events.collect { describeEvent(it as Map) }.join('; ') : 'none'}")
     }
@@ -445,10 +448,11 @@ Map peakCommand(Map req) {
         return r
     }
     long key = (ph.event as Map).start as long
+    Map mark = markOf(ph.event as Map)
     switch (cmd) {
-        case "skip":   state.skipped = (skipped + [key]).unique(); break
-        case "unskip": state.skipped = skipped.findAll { (it as long) != key }; break
-        case "abort":  state.aborted = (aborted + [key]).unique(); break
+        case "skip":   state.skipped = skipped.findAll { markStart(it) != key } + [mark]; break
+        case "unskip": state.skipped = skipped.findAll { markStart(it) != key }; break
+        case "abort":  state.aborted = aborted.findAll { markStart(it) != key } + [mark]; break
     }
     logCmd("${cmd}: ${describeEvent(ph.event as Map)}")
     evaluate()
@@ -669,8 +673,8 @@ static Map phaseAt(long now, List events, List skipped, List aborted, String off
     long s = e.start as long
     long end = e.end as long
     Map a = anchorOf(e, offer, tz)
-    boolean isSkipped = (skipped ?: []).any { (it as long) == s }
-    boolean isAborted = (aborted ?: []).any { (it as long) == s }
+    boolean isSkipped = (skipped ?: []).any { markStart(it) == s }
+    boolean isAborted = (aborted ?: []).any { markStart(it) == s }
     String p
     Long next
     if (now >= s) {
@@ -718,9 +722,36 @@ static Long nextBoundary(Map ph, long now, int preMins) {
     return next
 }
 
-// Marks for events that have ended, or that the feed no longer lists, are dropped.
+// A skip or abort mark: [start, end] of its event. 0.4.0 stored the start alone.
+static Map markOf(Map e) { return [start: e.start as long, end: e.end as long] }
+
+static long markStart(Object m) { return m instanceof Map ? ((m as Map).start as long) : (m as long) }
+
+// A mark lasts until its event's end, whether the feed lists the event or not, so a fetch that
+// drops the event for a while doesn't undo a skip or abort. A listed event with the same start
+// can extend the end. A 0.4.0 mark takes its end from the list, else is dropped as before.
 static List pruneMarks(List marks, List events, long now) {
-    return (marks ?: []).findAll { m -> (events ?: []).any { Map e -> (e.start as long) == (m as long) && (e.end as long) > now } }
+    List out = []
+    for (Object m : (marks ?: [])) {
+        long s = markStart(m)
+        Long end = m instanceof Map ? ((m as Map).end as Long) : null
+        Map listed = (events ?: []).find { Map e -> (e.start as long) == s } as Map
+        if (listed != null && (end == null || (listed.end as long) > end)) end = listed.end as long
+        if (end != null && end > now) out << [start: s, end: end]
+    }
+    return out
+}
+
+// The fetched events, plus any event already under way that they no longer list: it stays until
+// its end. An event that drops out before it starts is withdrawn.
+static List mergeEvents(List fresh, List previous, long now) {
+    List out = new ArrayList(fresh ?: [])
+    for (Object o : (previous ?: [])) {
+        Map e = o as Map
+        long s = e.start as long
+        if (s <= now && (e.end as long) > now && !out.any { Map f -> (f.start as long) == s }) out << e
+    }
+    return out.sort { Map x -> x.start as long }
 }
 
 static Map commandCheck(String cmd, Map ph, long now) {
