@@ -142,16 +142,39 @@ check('event hold setting is used', r(act, cfg + [eventHold: 17.0G]), [6, 'hold'
 check('phase missing: release', r(phase: null), [7, 'release', null])
 check('unknown phase: release', r(phase: 'paused'), [7, 'release', null])
 
+// ── hold switch: on while the event wants a hold, Away aside ──
+boolean w(Map o) { core.wantsHold(inp(o), cfg) }
+check('switch: no event, off', w([:]), false)
+check('switch: announced AM before 22:30, off', w(phase: 'announced', at: '2026-12-02 22:29'), false)
+check('switch: night hold, on', w(phase: 'announced', at: '2026-12-02 23:00'), true)
+check('switch: night hold in Away, on', w(away: true, phase: 'announced', at: '2026-12-02 23:00'), true)
+check('switch: anchor at least, on', w(phase: 'anchor', plan: 'at least', at: '2026-12-03 02:00'), true)
+check('switch: anchor at most stopped, on', w(phase: 'anchor', plan: 'at most', anchorStop: 'true', at: '2026-12-03 02:00'), true)
+check('switch: anchor PM no plan (program), off', w([phase: 'anchor', plan: null, at: '2026-12-03 12:30'] + pmPlan), false)
+check('switch: gap in Away, on', w(away: true, phase: 'gap', at: '2026-12-03 05:00'), true)
+check('switch: event, on', w(phase: 'active', at: '2026-12-03 07:00'), true)
+check('switch: event in Away, on', w(away: true, phase: 'active', at: '2026-12-03 07:00'), true)
+check('switch: skipped, off', w(phase: 'skipped', at: '2026-12-03 02:00'), false)
+check('switch: aborted in Away, off', w(away: true, phase: 'aborted', at: '2026-12-03 07:00'), false)
+check('switch: event over, off', w(phase: 'none', at: '2026-12-03 09:00'), false)
+
 // ── helpers ──
 check('away: none chosen, mode Away', core.awayMatch('Away', '3', []), true)
 check('away: none chosen, mode Home', core.awayMatch('Home', '1', null), false)
 check('away: chosen by name', core.awayMatch('Vacances', '7', ['Away', 'Vacances']), true)
 check('away: chosen by id', core.awayMatch('Away', '3', ['3']), true)
 check('away: chosen, other mode', core.awayMatch('Away', '3', ['Vacances']), false)
-check('differs: same', core.differs(20.5G, 20.5G), false)
-check('differs: rounding', core.differs(20.50G, 20.5G), false)
-check('differs: half a degree', core.differs(20.0G, 20.5G), true)
-check('differs: unknown current', core.differs(null, 20.5G), true)
+check('differs: same', core.differs(20.5G, 20.5G, 0.3G), false)
+check('differs: rounding', core.differs(20.50G, 20.5G, 0.3G), false)
+check('differs: half a degree', core.differs(20.0G, 20.5G, 0.3G), true)
+check('differs: unknown current', core.differs(null, 20.5G, 0.3G), true)
+// An Ecobee stores whole °F: each default hold reads back within 0.3 °C, so it is not re-sent.
+[18.0G: 17.8G, 19.5G: 19.4G, 20.5G: 20.6G, 22.5G: 22.8G].each { want, read ->
+    check("differs: Ecobee reads ${want} as ${read}", core.differs(read, want, 0.3G), false)
+}
+check('differs: 1 °F changed by hand', core.differs(21.1G, 20.5G, 0.3G), true)
+check('differs: °F scale, half a degree', core.differs(68.5G, 69.0G, 0.5G), false)
+check('differs: °F scale, a degree', core.differs(68.0G, 69.0G, 0.5G), true)
 check('toNum: integer', core.toNum(21), 21G)
 check('toNum: text', core.toNum(' 20.5 '), 20.5G)
 check('toNum: junk', core.toNum('n/a'), null)

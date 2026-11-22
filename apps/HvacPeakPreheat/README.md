@@ -39,7 +39,9 @@ Each time something changes, the app works out the whole decision again from the
 
 **The silence fallback.** During an "at most" pre-heat, the stop comes from the plan device's stop check, whose heartbeat is `anchorChecked`: it changes every minute of an announced event's "at most" anchor window. When neither `anchorChecked` nor `anchorStop` has changed for 10 minutes, the app holds the stop temperature, so the pre-heat can't run to the end of the window without its stop check. Other plan attributes, such as `anchorUsed` from the power stream, still re-run the decision but don't count as a heartbeat: they keep arriving when the stop check doesn't run (a plan device that hasn't learned of the event). The 10 minutes count from the later of the last heartbeat and the start of the anchor window, so with no heartbeat at all the stop comes 10 minutes into the window. When the heartbeat comes back with `anchorStop` false, the pre-heat resumes. The fallback can stop the pre-heat early, never late.
 
-**Holds.** A hold is sent when the thermostat's heating setpoint differs from it, and also when the app doesn't own the hold yet. On an Ecobee, any setpoint written creates a hold, even one equal to the current setpoint, and only `resumeProgram` returns to the schedule; sending it anyway makes sure the program can't move the setpoint later. 30 seconds after a hold, the app warns in the log if the thermostat doesn't show it.
+**Holds.** A hold is sent when the thermostat's heating setpoint differs from it, and also when the app doesn't own the hold yet. On an Ecobee, any setpoint written creates a hold, even one equal to the current setpoint, and only `resumeProgram` returns to the schedule; sending it anyway makes sure the program can't move the setpoint later. A setpoint within 0.3 °C (0.5 °F) of the hold counts as the hold: an Ecobee stores a setpoint sent to it in whole °F, so 18 °C reads back as 17.8 and 20.5 as 20.6. 30 seconds after a hold, the app warns in the log if the thermostat doesn't show it.
+
+**The hold switch.** The app's child switch, *<app name> hold*, is on while the event wants the thermostat held: the night hold, the pre-heat, the stop holds and the event. It stays on in an away mode, when the app leaves the thermostat alone, so that a rule resuming the program on the way back Home can stand aside while the app puts its hold back. It turns on before a hold is sent and off after the release. Rules that resume the program or set their own hold (a return from Away, a presence boost) should run only while it is off. A command sent to the switch is put back; skip or abort the event on the Hydro peak device instead.
 
 **The plan's event.** When the plan device and the Hydro peak device both name an event (`eventDate`, `window`) and they differ, the plan is treated as missing. The 22.5 °C pre-heat never runs on a missing plan.
 
@@ -57,7 +59,7 @@ Each time something changes, the app works out the whole decision again from the
 | Nightly start | 22:30 | The thermostat's Sleep start. Before 06:00, it counts on the event's own day |
 | Silence fallback | 10 minutes | 1 to 60; minutes without `anchorChecked` or `anchorStop` before an "at most" pre-heat stops |
 
-The status section of the app page shows the current decision and whether the app owns the hold.
+The status section of the app page shows the current decision, whether the app owns the hold, and the hold switch.
 
 ## Tests
 

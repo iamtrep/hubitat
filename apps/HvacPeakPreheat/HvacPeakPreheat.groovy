@@ -9,16 +9,20 @@
  plan from a Hilo Winter Credit device. The app only holds the heating setpoint and only releases
  a hold it placed, with resumeProgram.
 
+ Its child switch "<app name> hold" is on while the event wants a hold (night hold, pre-heat, event), Away
+ included, so rules that resume the thermostat's program (Home mode, a presence boost) can stand aside.
+
  Level-triggered: every trigger re-runs the whole decision from the current inputs and whether
  the app owns the hold, so a missed event, a lost timer or a reboot is corrected at the next
  evaluation. The decision is the pure decide() in the core block, tested off the hub.
 */
+import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.app.DeviceWrapper
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "HVAC Peak Pre-heat"
-@Field static final String CODE_VERSION = "0.1.0"
+@Field static final String CODE_VERSION = "0.1.1"
 @Field static final Integer DEBUG_AUTO_OFF_MINUTES = 30
 
 @Field static final List<String> PHASE_ATTRS = ["phase", "window", "eventDate"]
@@ -35,6 +39,9 @@ import groovy.transform.Field
 @Field static final long EVENT_SETTLE_MS = 2000L
 @Field static final long SETTLE_GRACE_MS = 5000L    // a settle job this late is taken as lost
 @Field static final int VERIFY_SECONDS = 30
+// A setpoint within this of the hold counts as the hold. An Ecobee stores a setpoint sent to it in whole °F, so a
+// hold in °C reads back up to 0.28 off (18 reads 17.8, 20.5 reads 20.6); a stricter test re-sends at every evaluation.
+@Field static final Map<String, BigDecimal> SETPOINT_TOLERANCE = [C: 0.3G, F: 0.5G]
 @Field static final String DEFAULT_NIGHT = "22:30"
 @Field static final int DEFAULT_SILENCE_MINUTES = 10
 
@@ -119,7 +126,7 @@ private String statusText() {
     s.append("Decision: ${l.reason} (row ${l.rule})")
     if (l.setpoint != null) s.append(", ${l.setpoint} °${scale()}")
     s.append(" at ${new Date(l.at as long).format('yyyy-MM-dd HH:mm:ss', tz)}<br/>")
-    s.append("Hold placed by this app: ${state.owned ? 'yes' : 'no'}")
+    s.append("Hold placed by this app: ${state.owned ? 'yes' : 'no'}; ${holdSwitch().displayName}: ${holdSwitch().currentValue('switch') ?: 'off'}")
     if (state.wakeAt) s.append("<br/>\"At most\" pre-heat stops at ${new Date(state.wakeAt as long).format('HH:mm:ss', tz)} unless the plan device's stop check answers")
     return s.toString()
 }
@@ -142,10 +149,12 @@ void uninstalled() {
         thermostat.resumeProgram()
         logCmd "${thermostat.displayName}: resumeProgram (app removed)"
     }
+    if (getChildDevice(holdDni())) deleteChildDevice(holdDni())
 }
 
 void initialize() {
     checkVersion(false)
+    holdSwitch()
     if (settings.debugEnable || settings.traceEnable) runIn(DEBUG_AUTO_OFF_MINUTES * 60, "logsOff")
     if (!phaseDevice || !planDevice || !thermostat) {
         logWarn "select the Hydro peak device, the plan device and the thermostat"
@@ -238,7 +247,7 @@ void verifyHold() {
     state.remove("pending")
     if (!p || !state.owned || !thermostat) return
     BigDecimal cur = toNum(thermostat.currentValue("heatingSetpoint", true))
-    if (differs(cur, toNum(p.setpoint))) {
+    if (differs(cur, toNum(p.setpoint), tolerance())) {
         logWarn "${thermostat.displayName}: heating setpoint ${cur} ${VERIFY_SECONDS} s after setting ${p.setpoint}"
     }
 }
@@ -270,9 +279,14 @@ void reevaluate(String why) {
         keepUse      : toNum(planDevice.currentValue("keepUse")),
         quietRef     : quietRef(t)
     ]
-    Map d = decide(inp, holdConfig())
+    Map cfg = holdConfig()
+    Map d = decide(inp, cfg)
+    boolean wants = wantsHold(inp, cfg)
     logDebug "${why}: row ${d.rule} ${d.action}${d.setpoint != null ? ' ' + d.setpoint : ''} (${d.reason})"
+    // The switch goes on before a hold and off after a release, so a rule gated on it never acts between the two.
+    if (wants) setHoldSwitch(true)
     apply(d)
+    if (!wants) setHoldSwitch(false)
     if (d.wakeAt != null) {
         state.wakeAt = d.wakeAt
         runIn(Math.max(1L, ((d.wakeAt as long) - t + 999L).intdiv(1000L)) as Long, "silenceCheck")
@@ -306,7 +320,7 @@ private void apply(Map d) {
             // Sent when the setpoint differs, and also when the hold isn't ours yet. An Ecobee makes a hold
             // of any setpoint written, even an equal one; skipping the write would leave the program in
             // charge, and it would move the setpoint later. Only resumeProgram returns to the schedule.
-            if (!state.owned || differs(cur, sp)) {
+            if (!state.owned || differs(cur, sp, tolerance())) {
                 thermostat.setHeatingSetpoint(sp)
                 logCmd "${thermostat.displayName}: setHeatingSetpoint ${sp} (was ${cur})"
                 state.pending = [setpoint: sp, at: now()]
@@ -315,6 +329,45 @@ private void apply(Map d) {
             state.owned = true
             break
     }
+}
+
+// ── Hold switch ───────────────────────────────────────────────────────
+
+private String holdDni() { "hvacpreheat-${app.id}-hold" }
+
+private String holdLabel() { "${app.getLabel()} hold" }
+
+ChildDeviceWrapper holdSwitch() {
+    ChildDeviceWrapper d = getChildDevice(holdDni())
+    if (!d) {
+        d = addChildDevice("hubitat", "Generic Component Switch", holdDni(), [name: "${APP_NAME} hold", label: holdLabel(), isComponent: true])
+        logCfg "created ${d.displayName}"
+    } else if (d.getLabel() != holdLabel()) d.setLabel(holdLabel())
+    return d
+}
+
+private void setHoldSwitch(boolean on) {
+    state.wantsHold = on
+    String want = on ? "on" : "off"
+    ChildDeviceWrapper d = holdSwitch()
+    if (d.currentValue("switch") != want) {
+        d.parse([[name: "switch", value: want, descriptionText: "${d.displayName} was turned ${want}"]])
+        logInfo "${d.displayName} ${want}"
+    }
+}
+
+// The switch follows the decision: a command from a rule or the device page is put back.
+void componentOn(def cd) { componentChanged(cd, "on") }
+void componentOff(def cd) { componentChanged(cd, "off") }
+void componentRefresh(def cd) { componentChanged(cd, null) }
+
+private void componentChanged(def cd, String asked) {
+    checkVersion()
+    if (cd.deviceNetworkId != holdDni()) return
+    String want = ((state.wantsHold ?: false) as boolean) ? "on" : "off"
+    if (asked != null && asked != want) logWarn "${cd.displayName} follows the event; skip or abort the event on the Hydro peak device instead"
+    // The device passed to component callbacks refuses parse(); the one getChildDevice returns takes it.
+    getChildDevice(holdDni())?.parse([[name: "switch", value: want]])
 }
 
 // The silence fallback counts from the later of the last stop-check heartbeat and the anchor window's start.
@@ -326,6 +379,8 @@ private Long quietRef(long t) {
 }
 
 private String scale() { (location.temperatureScale ?: "C") as String }
+
+private BigDecimal tolerance() { SETPOINT_TOLERANCE[scale()] ?: SETPOINT_TOLERANCE.C }
 
 private Map holdConfig() {
     Map<String, BigDecimal> d = DEFAULT_HOLDS[scale()] ?: DEFAULT_HOLDS.C
@@ -454,10 +509,10 @@ static boolean awayMatch(String mode, String modeId, List chosen) {
     return chosen.any { it?.toString() == mode || (modeId != null && it?.toString() == modeId) }
 }
 
-static boolean differs(BigDecimal cur, BigDecimal want) {
+static boolean differs(BigDecimal cur, BigDecimal want, BigDecimal tol) {
     if (want == null) return false
     if (cur == null) return true
-    return (cur - want).abs() > 0.05G
+    return (cur - want).abs() > tol
 }
 
 static BigDecimal toNum(Object v) {
@@ -472,6 +527,12 @@ static BigDecimal toNum(Object v) {
 static String low(Object v) { v == null ? null : v.toString().trim().toLowerCase() }
 
 @CompileStatic
+// Whether the event wants the thermostat held, Away aside: the hold switch. In Away the app leaves the thermostat to
+// the Away app but the switch stays on, so the return Home doesn't resume the program over the hold that follows.
+static boolean wantsHold(Map inp, Map cfg) {
+    return decide(inp + [away: false], cfg).action == "hold"
+}
+
 static String known(Object v) {
     String s = low(v)
     return (s == null || s == "" || s == "none" || s == "null") ? null : s
