@@ -291,6 +291,7 @@ private void markConfigured() {
     state.lastConfigured = now()
     state.repairPending = null
     state.remove('repairPendingSince')
+    state.remove('longPollTries')
 }
 
 // Bindings, Poll Control settings and report setup, then the attribute reads
@@ -320,21 +321,44 @@ private List<String> attributeReadCommands(List<String> reads = REFRESH_READS) {
     }
 }
 
-// Sends the Refresh reads not yet answered, unless the last send is still awaiting answers.
-// sentNow: the configuration just sent includes all the reads.
+// Sends the pending reads not yet answered, unless the last send is still awaiting answers. A long
+// poll being retried goes out with its read-back. sentNow: the configuration just sent includes
+// all the reads.
 private void sendPendingReads(boolean sentNow) {
     if (!state.refreshRequested) return
     Long sentAt = state.readsSentAt as Long
     if (!sentNow && sentAt != null && now() - sentAt < constReadAnswerMs) return
     int tries = (state.readTries ?: 0) as int
     if (!sentNow && tries >= constReadTries) {
-        logWarn "refresh: no answer to ${state.pendingReads} after ${tries} tries"
+        logWarn "no answer to the reads ${state.pendingReads} after ${tries} tries"
         clearPendingReads()
+        state.remove('longPollTries')
         return
     }
     state.readTries = tries + 1
     state.readsSentAt = now()
-    if (!sentNow) sendZigbeeCommands(attributeReadCommands(state.pendingReads as List<String>))
+    if (sentNow) return
+    List<String> cmds = []
+    if (state.longPollTries) cmds += zigbee.command(0x0020, 0x02, uint32LeHex(longPollIntervalQs()))
+    cmds += attributeReadCommands(state.pendingReads as List<String>)
+    sendZigbeeCommands(cmds)
+}
+
+// The long poll read back differs from the setting: send Set Long Poll Interval again, with the
+// read, on the sensor's next message, up to constReadTries times per configuration.
+private void retryLongPoll(int readQs) {
+    int tries = (state.longPollTries ?: 0) as int
+    if (tries >= constReadTries) {
+        logWarn "long poll interval is still ${readQs} qs, not ${longPollIntervalQs()}, after ${tries} retries; the next configuration tries again"
+        state.remove('longPollTries')
+        return
+    }
+    logWarn "long poll interval is ${readQs} qs, not ${longPollIntervalQs()}: sending it again on the next message"
+    state.longPollTries = tries + 1
+    state.refreshRequested = true
+    state.pendingReads = (((state.pendingReads ?: []) as List<String>) + '0020/0001').unique()
+    state.readTries = 0
+    state.remove('readsSentAt')
 }
 
 private void markReadAnswered(String cluster, String attrId) {
@@ -515,7 +539,10 @@ private void parseAttributeReport(Map descMap) {
             if (descMap.attrId == "0001") {
                 state.longPollQs = raw
                 if (raw != longPollIntervalQs()) {
-                    logWarn "long poll interval is ${raw} qs, not ${longPollIntervalQs()}: the configuration did not take"
+                    retryLongPoll(raw)
+                } else if (state.longPollTries) {
+                    logCfg "long poll interval is now ${raw} qs"
+                    state.remove('longPollTries')
                 }
             }
             break

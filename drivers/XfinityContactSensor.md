@@ -31,7 +31,7 @@ The sensor sleeps between messages, so **Refresh** is held until it next transmi
 
 **Battery life.** The configuration sets the sensor to check its parent for messages every 6 s instead of the factory 2 s. The driver answers each check-in so the sensor goes straight back to sleep. If no battery report has arrived for two reporting intervals, or a new battery is detected, the driver sends the configuration again at the next check-in (for a missing report, at most once a day).
 
-**Battery saver (experimental).** Sets how often the sensor polls its router: 6 s (off, the default), 30 s, 1 min, 5 min or 15 min. A longer poll should save battery, but a router may drop a sensor that polls too rarely, and how often is too rarely depends on the router. A change takes effect at the next check-in.
+**Battery saver (experimental).** Sets how often the sensor polls its router: 6 s (off, the default), 30 s, 1 min, 5 min or 15 min. A longer poll should save battery, but a router may drop a sensor that polls too rarely, and how often is too rarely depends on the router. A change takes effect at the next check-in. When the sensor reports a different poll interval after a configuration, the driver sends the setting again on its next message, up to three times.
 
 ## Installation
 
