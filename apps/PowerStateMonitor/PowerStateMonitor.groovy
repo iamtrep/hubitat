@@ -161,7 +161,7 @@ Map currentCfg() {
         states << [name: name == null ? STATE_DEFAULTS[n - 1].name : name.trim(),
                    from: n == 1 ? 0G : numOrNull(settings["state${n}From".toString()] ?: STATE_DEFAULTS[n - 1].from)]
     }
-    return [states: states, ceiling: numOrNull(settings.ceiling), hyst: numOrNull(settings.hysteresis ?: 0),
+    return [hasMeter: meter != null, states: states, ceiling: numOrNull(settings.ceiling), hyst: numOrNull(settings.hysteresis ?: 0),
             settleMs: ((settleSeconds ?: 20) as long) * 1000L, unknownMs: ((unknownSeconds ?: 120) as long) * 1000L,
             sourceState: sourceSwitch ? (settings.sourceState as String)?.trim() : null]
 }
@@ -246,6 +246,7 @@ String fmtW(Object n) {
 @CompileStatic
 List<String> validateCfg(Map cfg) {
     List<String> errs = []
+    if (!cfg.hasMeter) errs << 'Choose a power meter'
     List<Map> st = cfg.states as List<Map>
     List<String> names = st.collect { Map s -> s.name as String }
     if (names.any { String n -> !n }) errs << 'Every state needs a name'

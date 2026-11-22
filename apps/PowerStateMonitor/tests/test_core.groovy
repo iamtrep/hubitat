@@ -22,7 +22,7 @@ void check(String name, Object got, Object want) {
 S = 1000L
 // An HRV on a plug: off, normal about 47 W, turbo about 75 W, start-up surges to 135 W.
 Map cfg(Map over = [:]) {
-    Map c = [states: [[name: 'off', from: 0G], [name: 'normal', from: 20G], [name: 'turbo', from: 60G]],
+    Map c = [hasMeter: true, states: [[name: 'off', from: 0G], [name: 'normal', from: 20G], [name: 'turbo', from: 60G]],
              ceiling: 90G, hyst: 5G, settleMs: 20000L, unknownMs: 120000L, sourceState: 'turbo']
     c.putAll(over)
     return c
@@ -58,6 +58,7 @@ check('fmtW trims zeros', core.fmtW(76.30G), '76.3')
 
 // ── validation ──
 check('valid config', core.validateCfg(cfg()), [])
+check('meter required', core.validateCfg(cfg(hasMeter: false)), ['Choose a power meter'])
 check('edges must rise', core.validateCfg(cfg(states: [[name: 'off', from: 0G], [name: 'on', from: 20G], [name: 'hi', from: 20G]], sourceState: null)),
       ['State 3 must start above state 2'])
 check('names differ', core.validateCfg(cfg(states: [[name: 'on', from: 0G], [name: 'on', from: 20G]], sourceState: null)),
