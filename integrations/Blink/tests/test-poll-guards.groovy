@@ -17,7 +17,7 @@ import groovy.transform.Field
 @Field String src = new File(srcPath).text
 
 String extract(String name) {
-    java.util.regex.Matcher m = src =~ /(?m)^(?:private\s+)?(?:static\s+)?(?:void|boolean|long)\s+${name}\(/
+    java.util.regex.Matcher m = src =~ /(?m)^(?:private\s+)?(?:static\s+)?(?:void|boolean|long|List<Map>|Set<String>)\s+${name}\(/
     assert m.find() : "function not found: ${name}"
     int start = m.start(); int open = src.indexOf('{', start); int depth = 0; int i = open
     for (; i < src.length(); i++) { char c = src.charAt(i); if (c == '{') depth++; else if (c == '}') { depth--; if (depth == 0) { i++; break } } }
@@ -32,6 +32,8 @@ List<String> funcs = ['pollHomescreen', 'handleHomescreenResponse', 'recentClips
 // An older source has no pollHomescreenNow: its pollHomescreen is the immediate poll.
 funcs << (src.contains('void pollHomescreenNow(') ? extract('pollHomescreenNow') : 'void pollHomescreenNow() { pollHomescreen() }')
 if (src =~ /(?m)^(?:private\s+)?static\s+long\s+nextClipCursor\(/) funcs << extract('nextClipCursor')
+if (src.contains('filterToNetworks(')) funcs << extract('filterToNetworks')
+if (src.contains('parseNetworkSelection(')) funcs << extract('parseNetworkSelection')
 
 String harness = """
 class H {
@@ -59,6 +61,7 @@ class H {
     void processHomescreen(Map j, String r = null) { calls << 'process' }
     String describeHttpBody(Object r) { '' }
     List getChildDevices() { kids }
+    boolean networkManaged(String id) { true }
 ${funcs.join('\n')}
 }
 return H
@@ -180,6 +183,27 @@ t('a newer clip in the overlap is motion', {
     def c = camera('Porch'); c.lastClip = '2026-11-21T23:22:42+00:00'; h.kids = [c]
     h.recentClipsResponse(new Resp(status: 200, json: [media: [[device_name: 'Porch', media: '/d.mp4', created_at: '2026-11-21T23:24:10+00:00']]]), [sentAt: 1_000_030L])
     assert c.updates[0].motion == 'active' && c.updates[0].lastClipTime == '2026-11-21T23:24:10+00:00'
+})
+
+// Managed networks
+t('no selection keeps every network, camera and sync module', {
+    def h = Hc.newInstance()
+    List items = [[id: 1, network_id: 10], [id: 2, network_id: 20]]
+    assert h.filterToNetworks(items, [] as Set, false).size() == 2
+    assert h.filterToNetworks(items, null, false).size() == 2
+})
+t('a selection keeps only its networks and their cameras', {
+    def h = Hc.newInstance()
+    assert h.filterToNetworks([[id: 10], [id: 20]], ['10'] as Set, true)*.id == [10]
+    assert h.filterToNetworks([[id: 1, network_id: 10], [id: 2, network_id: 20], [id: 3]], ['20'] as Set, false)*.id == [2]
+})
+
+t('the selection reads a list, a comma string or a JSON string alike', {
+    def h = Hc.newInstance()
+    assert h.parseNetworkSelection(['102426', '189911']) == ['102426', '189911'] as Set
+    assert h.parseNetworkSelection('102426,189911') == ['102426', '189911'] as Set
+    assert h.parseNetworkSelection('["60748"]') == ['60748'] as Set
+    assert h.parseNetworkSelection(null).isEmpty() && h.parseNetworkSelection('').isEmpty()
 })
 
 println "\n${pass} passed, ${fail} failed"

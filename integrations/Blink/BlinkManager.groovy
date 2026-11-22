@@ -42,7 +42,7 @@ definition(
 
 // --- Constants ---
 
-@Field static final String CODE_VERSION = "1.1.10"
+@Field static final String CODE_VERSION = "1.1.11"
 
 @Field static final String OAUTH_BASE_URL = "https://api.oauth.blink.com"
 @Field static final String CLIENT_ID = "ios"
@@ -133,6 +133,16 @@ Map mainPage() {
                         paragraph "<a href='/device/edit/${o.id}' target='_blank'>${o.label}</a> <small>(${o.dni})</small>"
                     }
                     input "btnRemoveOrphans", "button", title: "Remove orphaned devices"
+                }
+            }
+            section("🛡️ Networks") {
+                Map<String, String> known = (state.knownNetworks ?: [:]) as Map<String, String>
+                if (known) {
+                    input "managedNetworks", "enum", title: "Networks this hub manages (none selected = all)",
+                        options: known, multiple: true, required: false, submitOnChange: true
+                    paragraph "<small>Cameras follow their network. Devices of a network you take out show up under Orphaned on the next poll; remove them with the button there.</small>"
+                } else {
+                    paragraph "<small>The network list appears after the first poll.</small>"
                 }
             }
             section("⏱️ Polling") {
@@ -910,7 +920,10 @@ void handleHomescreenResponse(resp, data) {
 
 // recovery: the outage recovery line, used as the online reason on the poll that ends an outage.
 private void processHomescreen(Map json, String recovery = null) {
-    List<Map> networks = (json.networks ?: []) as List<Map>
+    List<Map> allNetworks = (json.networks ?: []) as List<Map>
+    rememberNetworks(allNetworks)
+    Set<String> managed = managedNetworkIds()
+    List<Map> networks = filterToNetworks(allNetworks, managed, true)
     List<Map> cameras = []
 
     // Normalize all camera-shaped entries to a single list, tagging type.
@@ -921,7 +934,8 @@ private void processHomescreen(Map json, String recovery = null) {
     Map accessories = (json.accessories ?: [:]) as Map
     ((accessories.storm ?: []) as List<Map>).each { Map c -> cameras << tagType(c, "storm") }
 
-    List<Map> syncModules = (json.sync_modules ?: []) as List<Map>
+    List<Map> syncModules = filterToNetworks((json.sync_modules ?: []) as List<Map>, managed, false)
+    cameras = filterToNetworks(cameras, managed, false)
 
     syncChildren(networks, cameras, syncModules)
     dispatchToChildren(networks, cameras, syncModules, recovery)
@@ -1014,6 +1028,50 @@ private void rotateSignalsFetch(List<Map> cameras) {
         fetchCameraSignals(camId, netId)
     }
     atomicState.signalsCursor = (idx + 1) % eligible.size()
+}
+
+// --- Managed networks ---
+//
+// One Blink account can hold networks at several sites; each hub picks the ones it manages
+// (Hubitat's Hue and Ecobee integrations work the same way). No selection means all networks,
+// so an install made before the setting behaves as before. Devices of a network taken out of the
+// selection become orphans and are removed only by the "Remove orphaned devices" button.
+
+// The networks seen on the last poll, id -> name, for the picker. Written only when it changes.
+private void rememberNetworks(List<Map> networks) {
+    Map<String, String> seen = [:]
+    networks.each { Map n -> if (n.id != null) seen[n.id.toString()] = (n.name ?: "Network ${n.id}") as String }
+    if (seen != (state.knownNetworks as Map)) state.knownNetworks = seen
+}
+
+// The selected network ids, or an empty set for "all".
+private Set<String> managedNetworkIds() {
+    return parseNetworkSelection(settings.managedNetworks)
+}
+
+// The page stores a list. A value saved some other way can arrive as one string, `a,b` or
+// `["a","b"]`; read as a list, it would split into characters and match no network.
+@CompileStatic
+private static Set<String> parseNetworkSelection(Object value) {
+    if (value == null) return [] as Set<String>
+    if (value instanceof Collection) return ((Collection) value).collect { it.toString().trim() }.findAll { it } as Set<String>
+    return value.toString().replaceAll(/[\[\]"\s]/, "").split(",").findAll { it } as Set<String>
+}
+
+private boolean networkManaged(String networkId) {
+    Set<String> managed = managedNetworkIds()
+    return managed.isEmpty() || (networkId != null && managed.contains(networkId))
+}
+
+// Keeps the items of the managed networks. A network entry carries its id in `id`; cameras and
+// sync modules carry it in `network_id`. An empty selection keeps everything.
+@CompileStatic
+private static List<Map> filterToNetworks(List<Map> items, Set<String> managed, boolean isNetwork) {
+    if (managed == null || managed.isEmpty()) return items
+    return items.findAll { Map m ->
+        Object id = isNetwork ? m.get("id") : (m.get("network_id") ?: m.get("networkId"))
+        id != null && managed.contains(id.toString())
+    }
 }
 
 @CompileStatic
@@ -1567,6 +1625,7 @@ void recentClipsResponse(resp, data) {
     getChildDevices().each { ChildDeviceWrapper child ->
         if (errorMsg) return
         if (!child.deviceNetworkId?.startsWith(DNI_PREFIX_CAMERA)) return
+        if (!networkManaged(child.getDataValue("networkId"))) return   // orphan of a deselected network
         String blinkName = child.getDataValue("blinkName")
         if (!blinkName) { missingName++; return }
         Map entry = latestByName[blinkName]

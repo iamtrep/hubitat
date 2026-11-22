@@ -92,6 +92,10 @@ Connection state, region tier, account ID, token expiry, and a summary of the la
 
 The list of `Blink Network` and `Blink Camera` children, with links to each device's edit page. Camera entries that aren't default-type cameras show a small tag (`owl`, `doorbell`, `superior`, `storm`) since variant-specific commands aren't yet implemented for those. Orphans (cameras or networks deleted in the Blink mobile app but still present in Hubitat) appear with a **Remove orphaned devices** button.
 
+### 🛡️ Networks
+
+- **Networks this hub manages** — pick the Blink networks (sync modules) whose devices this hub creates and updates; cameras follow their network. Nothing selected means all networks. Useful when one Blink account covers several sites, each with its own hub. Devices of a network you take out are listed under *Orphaned* after the next poll and stay until you click **Remove orphaned devices**, so rules that use them can be re-pointed first.
+
 ### ⏱️ Polling
 
 - **Poll interval (seconds)** — how often the integration calls Blink's homescreen endpoint. Options: `60` (default), `120`, `300`. Sub-60 s is not exposed; see the *Polling* section below for the why.
