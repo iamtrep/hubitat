@@ -26,6 +26,7 @@ metadata {
         description: "Blink camera: motion sensor, per-camera motion-enable, battery, temperature, clip metadata, diagnostics.",
         importUrl: "https://raw.githubusercontent.com/iamtrep/hubitat/refs/heads/main/integrations/Blink/BlinkCamera.groovy"
     ) {
+        capability "Actuator"   // lists the camera in RM's custom-action picker (recordClip, snapThumbnail)
         capability "MotionSensor"
         capability "Switch"
         capability "Battery"
