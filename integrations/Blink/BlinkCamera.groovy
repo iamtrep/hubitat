@@ -16,7 +16,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.2.0"
+@Field static final String CODE_VERSION = "0.2.1"
 
 metadata {
     definition(
@@ -43,6 +43,7 @@ metadata {
         attribute "healthStatus", "enum", ["online", "offline"]
         attribute "firmwareVersion", "string"
         attribute "batteryState", "string"
+        attribute "batteryVoltage", "number"
         attribute "acPower", "string"
 
         command "snapThumbnail"
@@ -51,6 +52,19 @@ metadata {
 }
 
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
+
+// Battery: two lithium AA cells (Energizer L91), voltage per cell as Blink reports it under load.
+// Linear from 1.30 V (0 %) to 1.75 V (100 %): fresh cells read 1.69-1.72 V, and Blink flagged a
+// camera low at 1.26 V while calling 1.36 V ok (eight cameras, 2026-11-21). The datasheet's
+// 1.4-1.8 V range would put working cameras near 0 %. More knots can be added as data comes in.
+@Field static final double[] BATTERY_CURVE_V   = [1.30d, 1.75d] as double[]
+@Field static final double[] BATTERY_CURVE_PCT = [ 0.0d, 100.0d] as double[]
+// Lithium voltage is flat and sags in the cold, so the smoothed voltage never rises except on a
+// jump of BATTERY_BIG_JUMP_V (new cells); drops are averaged in (EMA, about 5 daily reads to converge).
+@Field static final double BATTERY_EMA_ALPHA = 0.30d
+@Field static final double BATTERY_BIG_JUMP_V = 0.15d
+// While Blink reports the battery low, the percentage is held at or below this.
+@Field static final int BATTERY_LOW_MAX_PCT = 10
 
 preferences {
     section("Logging") {
@@ -120,6 +134,48 @@ void updateHealth(String status, String reason = null) {
     }
 }
 
+private void publishBattery(double voltage, boolean blinkSaysLow) {
+    if (voltage <= 0.0d) return
+    double smoothed = smoothBatteryVoltage(voltage)
+    int pct = batteryPctFromVoltage(smoothed, BATTERY_CURVE_V, BATTERY_CURVE_PCT)
+    if (blinkSaysLow) pct = Math.min(pct, BATTERY_LOW_MAX_PCT)
+    sendEvent(name: "batteryVoltage", value: voltage, unit: "V", descriptionText: "Battery voltage is ${voltage} V")
+    sendEvent(name: "battery", value: pct, unit: "%", descriptionText: "Battery is ${pct}%")
+}
+
+// Returns the new smoothed voltage (see BATTERY_EMA_ALPHA); a jump of BATTERY_BIG_JUMP_V means new cells.
+private double smoothBatteryVoltage(double voltage) {
+    Double prev = (state.smoothedBatteryVoltage instanceof Number) ? ((Number) state.smoothedBatteryVoltage).doubleValue() : null
+    double smoothed
+    if (prev == null) {
+        smoothed = voltage
+    } else if (voltage - prev >= BATTERY_BIG_JUMP_V) {
+        smoothed = voltage
+        logInfo "battery replacement detected: ${String.format('%.2f', prev)} V → ${String.format('%.2f', voltage)} V"
+    } else if (voltage < prev) {
+        smoothed = BATTERY_EMA_ALPHA * voltage + (1.0d - BATTERY_EMA_ALPHA) * prev
+    } else {
+        smoothed = prev
+    }
+    state.smoothedBatteryVoltage = smoothed
+    logTrace "battery: v=${voltage} V smoothed=${String.format('%.3f', smoothed)} V"
+    return smoothed
+}
+
+// Piecewise linear over the curve knots, clamped at the ends.
+private static int batteryPctFromVoltage(double voltage, double[] curveV, double[] curvePct) {
+    int n = curveV.length
+    if (voltage <= curveV[0]) return 0
+    if (voltage >= curveV[n - 1]) return 100
+    for (int i = 1; i < n; i++) {
+        if (voltage <= curveV[i]) {
+            double pct = curvePct[i - 1] + (voltage - curveV[i - 1]) * (curvePct[i] - curvePct[i - 1]) / (curveV[i] - curveV[i - 1])
+            return (int) Math.round(pct)
+        }
+    }
+    return 100
+}
+
 // Called by the parent on each poll with the latest camera state.
 void handleCameraUpdate(Map data) {
     checkVersion()
@@ -136,12 +192,12 @@ void handleCameraUpdate(Map data) {
         sendEvent(name: "switch", value: enabled ? "on" : "off",
                   descriptionText: "Motion detection ${enabled ? 'enabled' : 'disabled'}")
     }
-    if (data.battery != null) {
-        sendEvent(name: "battery", value: data.battery as int, unit: "%",
-                  descriptionText: "Battery is ${data.battery}%")
-    }
     if (data.batteryState) {
         sendEvent(name: "batteryState", value: data.batteryState as String)
+    }
+    if (data.batteryVoltage instanceof Number) {
+        String batState = (data.batteryState ?: device.currentValue("batteryState")) as String
+        publishBattery(((Number) data.batteryVoltage).doubleValue() / 100.0d, "low".equalsIgnoreCase(batState))
     }
     if (data.temperature != null) {
         Number raw = data.temperature as Number

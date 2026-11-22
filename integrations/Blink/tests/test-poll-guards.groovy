@@ -5,8 +5,9 @@
 // Run: groovy integrations/Blink/tests/test-poll-guards.groovy      (no hub)
 // SRC overrides the source file (used to run the test against an older copy).
 class ChildDeviceWrapper {
-    String deviceNetworkId; String blink; List updates = []
+    String deviceNetworkId; String blink; List updates = []; String lastClip = null
     String getDataValue(String k) { blink }
+    Object currentValue(String a) { a == 'lastClipTime' ? lastClip : null }
     void handleCameraUpdate(Map u) { updates << u }
 }
 import groovy.transform.Field
@@ -26,8 +27,8 @@ String constant(String name) {
     java.util.regex.Matcher m = src =~ /(?m)^@Field (static final [^\n]*\b${name}\b[^\n]*)$/
     return m.find() ? m.group(1) : ''   // a missing constant (older source) is left out
 }
-List<String> consts = ['HOMESCREEN_MIN_GAP_MS', 'HOMESCREEN_401_REFRESH_LIMIT', 'CLIP_INITIAL_WINDOW_SEC', 'DNI_PREFIX_CAMERA', 'HTTP_TIMEOUT'].collect { constant(it) }
-List<String> funcs = ['pollHomescreen', 'handleHomescreenResponse', 'recentClipsResponse', 'isTransientStatus'].collect { extract(it) }
+List<String> consts = ['HOMESCREEN_MIN_GAP_MS', 'HOMESCREEN_401_REFRESH_LIMIT', 'CLIP_INITIAL_WINDOW_SEC', 'CLIP_OVERLAP_SEC', 'DNI_PREFIX_CAMERA', 'HTTP_TIMEOUT'].collect { constant(it) }
+List<String> funcs = ['pollHomescreen', 'handleHomescreenResponse', 'recentClipsResponse', 'isTransientStatus', 'fetchRecentClips'].collect { extract(it) }
 // An older source has no pollHomescreenNow: its pollHomescreen is the immediate poll.
 funcs << (src.contains('void pollHomescreenNow(') ? extract('pollHomescreenNow') : 'void pollHomescreenNow() { pollHomescreen() }')
 if (src =~ /(?m)^(?:private\s+)?static\s+long\s+nextClipCursor\(/) funcs << extract('nextClipCursor')
@@ -156,6 +157,29 @@ t('success moves the cursor to the send time, not the callback time', {
     h.recentClipsResponse(new Resp(status: 200, json: [media: []]), [sentAt: 1_000_030L])
     assert h.atomicState.lastClipFetchTime == 1_000_030L : "cursor ${h.atomicState.lastClipFetchTime}"
     assert h.kids[0].updates == [[motion: 'inactive']]
+})
+
+// Clip window overlap
+t('the window starts CLIP_OVERLAP_SEC before the cursor', {
+    def h = Hc.newInstance(); h.state.accountId = 'a'; h.state.tier = 'prod'
+    h.atomicState.lastClipFetchTime = 1_000_000L
+    String sent = null
+    h.metaClass.asynchttpGet = { String cb, Map p, Map d -> sent = p.query.since }
+    h.fetchRecentClips()
+    String want = new Date((1_000_000L - h.CLIP_OVERLAP_SEC) * 1000L).format("yyyy-MM-dd'T'HH:mm:ssZ", TimeZone.getTimeZone("UTC"))
+    assert sent == want : "since ${sent}, want ${want}"
+})
+t('a clip already reported in the overlap is not motion again', {
+    def h = Hc.newInstance(); h.state.tier = 'prod'
+    def c = camera('Porch'); c.lastClip = '2026-11-21T23:22:42+00:00'; h.kids = [c]
+    h.recentClipsResponse(new Resp(status: 200, json: [media: [[device_name: 'Porch', media: '/c.mp4', created_at: '2026-11-21T23:22:42+00:00']]]), [sentAt: 1_000_030L])
+    assert c.updates == [[motion: 'inactive']] : "dispatched ${c.updates}"
+})
+t('a newer clip in the overlap is motion', {
+    def h = Hc.newInstance(); h.state.tier = 'prod'
+    def c = camera('Porch'); c.lastClip = '2026-11-21T23:22:42+00:00'; h.kids = [c]
+    h.recentClipsResponse(new Resp(status: 200, json: [media: [[device_name: 'Porch', media: '/d.mp4', created_at: '2026-11-21T23:24:10+00:00']]]), [sentAt: 1_000_030L])
+    assert c.updates[0].motion == 'active' && c.updates[0].lastClipTime == '2026-11-21T23:24:10+00:00'
 })
 
 println "\n${pass} passed, ${fail} failed"

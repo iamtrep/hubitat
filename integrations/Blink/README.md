@@ -54,12 +54,13 @@ The access token is refreshed automatically 5 minutes before expiry. Refresh tok
 
 - `MotionSensor` — `motion` flips to `active` when a clip is recorded
 - `Switch` — `on` = per-camera motion detection enabled
-- `Battery` — percent (for battery cameras; null for wired)
+- `Battery` — percent, estimated from the cell voltage (battery cameras only). Linear from 1.30 V (0 %) to 1.75 V (100 %) per cell. It only goes down, except when new cells raise the voltage by 0.15 V or more, and it stays at 10 % or below while Blink reports the battery low.
+- `batteryVoltage` — cell voltage in volts, read once a day per camera (Blink leaves it out of the regular poll)
 - `TemperatureMeasurement` — built-in temperature sensor (refreshed against the calibrated `/signals` endpoint on rotation)
 - `lastClipUrl` / `lastClipTime` — most recent recorded clip (the actual `.mp4`)
 - `lastThumbnailUrl` / `lastUpdated` — most recent still-image snapshot and camera-config update time
 - `wifiSignal` (dBm) / `lfrSignal` (1–5 bars, sync-module link quality)
-- `online` / `firmwareVersion` / `batteryState` (`"ok"` / `"low"`) / `batteryBars` (1–3) / `acPower` (wired cameras only)
+- `online` (`online` / `offline`) / `firmwareVersion` / `batteryState` (`"ok"` / `"low"`) / `batteryBars` (1–3) / `acPower` (wired cameras only)
 - `healthStatus` — `online` / `offline`. Offline when Blink reports the camera offline, or after 5 consecutive failed polls of the Blink cloud. The event description gives the reason.
 - `snapThumbnail` / `recordClip` commands
 

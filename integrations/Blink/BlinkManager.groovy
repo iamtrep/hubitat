@@ -39,7 +39,7 @@ definition(
 
 // --- Constants ---
 
-@Field static final String CODE_VERSION = "1.1.9"
+@Field static final String CODE_VERSION = "1.1.10"
 
 @Field static final String OAUTH_BASE_URL = "https://api.oauth.blink.com"
 @Field static final String CLIENT_ID = "ios"
@@ -92,6 +92,15 @@ private Map loginSession() {
 // recent activity isn't entirely silent. Subsequent fetches use the persisted
 // cursor (atomicState.lastClipFetchTime).
 @Field static final long CLIP_INITIAL_WINDOW_SEC = 3600L
+// Each /media/changed window starts this long before the cursor. A clip is listed only once its
+// recording ends but is stamped with its start, so one that was recording when the last request
+// went out can fall before the cursor. Clips not newer than the camera's lastClipTime are skipped.
+@Field static final long CLIP_OVERLAP_SEC = 60L
+// Battery voltage is read from each battery camera's /config this often; a failed read is retried sooner.
+@Field static final long BATTERY_CONFIG_INTERVAL_MS = 86_400_000L
+@Field static final long BATTERY_CONFIG_RETRY_MS = 3_600_000L
+// Camera status values already reported as unknown, so each is logged once per code load.
+@Field static final Set<String> UNKNOWN_CAMERA_STATUS = ConcurrentHashMap.newKeySet()
 
 preferences {
     page(name: "mainPage")
@@ -464,8 +473,13 @@ void startOAuthFlow() {
             state.needs2fa = true
             try { captureCookies(e.response) } catch (Exception ignored) {}
         } else {
-            logError "step 3 failed: HTTP ${e.statusCode}"
-            state.authError = "Login failed (HTTP ${e.statusCode})"
+            // Blink answers a wrong password with 401 and error_cause "invalid_user_credentials". The body is
+            // only matched, never logged.
+            String body = null
+            try { body = readResponseBody(e.response) } catch (Exception ignored) {}
+            boolean rejected = e.statusCode == 401 && body?.contains("invalid_user_credentials")
+            logError "step 3 failed: HTTP ${e.statusCode}${rejected ? ' (credentials rejected)' : ''}"
+            state.authError = rejected ? "Blink rejected the email or password" : "Login failed (HTTP ${e.statusCode})"
             cleanupEphemeralState()
             return
         }
@@ -910,7 +924,72 @@ private void processHomescreen(Map json, String recovery = null) {
     dispatchToChildren(networks, cameras, syncModules, recovery)
     updateHomescreenSummary(networks, cameras, syncModules)
     rotateSignalsFetch(cameras)
+    fetchDueBatteryConfig(cameras)
     fetchRecentClips()
+}
+
+// The battery voltage of a standard camera is only in /network/{net}/camera/{id}/config
+// (`camera[0].battery_voltage`, hundredths of a volt per cell), the call blinkpy makes on every
+// refresh and snell's driver once a day. One battery camera per poll is read, only when its last
+// read is older than BATTERY_CONFIG_INTERVAL_MS, so a day costs one call per camera.
+private void fetchDueBatteryConfig(List<Map> cameras) {
+    if (!cameras) return
+    Map<String, Object> readAt = (atomicState.batteryConfigAt ?: [:]) as Map<String, Object>
+    long cutoff = now() - BATTERY_CONFIG_INTERVAL_MS
+    Map due = cameras.find { Map c ->
+        ((c.__type as String) ?: "camera") == "camera" && c.battery != null && c.id != null &&
+            ((readAt[c.id.toString()] ?: 0L) as Number).longValue() < cutoff
+    }
+    if (!due) return
+    String netId = (due.network_id ?: due.networkId)?.toString()
+    if (netId) fetchCameraConfig(due.id.toString(), netId)
+}
+
+private void fetchCameraConfig(String cameraId, String networkId) {
+    if (!networkId) return
+    // Recorded before the answer so a failing camera is asked again after BATTERY_CONFIG_RETRY_MS,
+    // not on every poll.
+    Map<String, Object> readAt = (atomicState.batteryConfigAt ?: [:]) as Map<String, Object>
+    readAt[cameraId] = now() - BATTERY_CONFIG_INTERVAL_MS + BATTERY_CONFIG_RETRY_MS
+    atomicState.batteryConfigAt = readAt
+    String url = "https://rest-${state.tier}.immedia-semi.com/network/${networkId}/camera/${cameraId}/config"
+    asynchttpGet("cameraConfigResponse", [
+        uri        : url,
+        headers    : bearerHeaders(),
+        contentType: "application/json",
+        timeout    : HTTP_TIMEOUT
+    ], [cameraId: cameraId])
+}
+
+void cameraConfigResponse(resp, data) {
+    checkVersion()
+    String camId = data?.cameraId as String
+    try {
+        if (resp.hasError() || resp.getStatus() != 200) {
+            String err = resp.hasError() ? resp.getErrorMessage() : "HTTP ${resp.getStatus()}"
+            logWarn "camera config ${camId}: ${err}${describeHttpBody(resp)}"
+            return
+        }
+        Map json = resp.json as Map
+        Map cam = (json?.camera instanceof List && json.camera) ? (((List) json.camera)[0] as Map) : null
+        Object volts = cam?.get("battery_voltage")
+        if (!(volts instanceof Number)) {
+            logWarn "camera config ${camId}: no battery voltage in the reply"
+            return
+        }
+        Map<String, Object> readAt = (atomicState.batteryConfigAt ?: [:]) as Map<String, Object>
+        readAt[camId] = now()
+        atomicState.batteryConfigAt = readAt
+        ChildDeviceWrapper child = getChildDevice("${DNI_PREFIX_CAMERA}${camId}")
+        if (!child) return
+        Map update = [batteryVoltage: (Number) volts]
+        Object st = cam.get("battery_state") ?: cam.get("battery")
+        if (st) update.batteryState = st.toString()
+        logNet "camera config ${camId}: battery ${volts}"
+        child.handleCameraUpdate(update)
+    } catch (Exception e) {
+        logError "cameraConfigResponse: ${e.message}"
+    }
 }
 
 // Fetch /signals for one default camera per poll cycle, rotating through the
@@ -1051,6 +1130,10 @@ private void dispatchToChildren(List<Map> networks, List<Map> cameras, List<Map>
         ChildDeviceWrapper child = getChildDevice("${DNI_PREFIX_CAMERA}${camId}")
         if (!child) { missingChildren++; return }
         try {
+            String rawStatus = c.status?.toString()
+            if (rawStatus && !(rawStatus.toLowerCase() in ["online", "done", "offline"]) && UNKNOWN_CAMERA_STATUS.add(rawStatus)) {
+                logWarn "camera status '${rawStatus}' is not known; passed through as is"
+            }
             child.handleCameraUpdate(cameraSnapshot(c, tier, acct))
             if (((c.status ?: "") as String).equalsIgnoreCase("offline")) child.updateHealth("offline", "Blink reports the camera offline")
             else child.updateHealth("online", recovery ?: "reporting")
@@ -1083,9 +1166,8 @@ private static Map cameraSnapshot(Map c, String tier, String accountId) {
     out["motionEnabled"] = (c.get("enabled") == true)
     Object battery = c.get("battery_voltage")
     if (battery instanceof Number) {
-        Number v = (Number) battery
-        int pct = batteryPercent(v.intValue())
-        out["battery"] = pct
+        // Standard cameras leave it out of the homescreen; the daily /config read supplies it.
+        out["batteryVoltage"] = (Number) battery
     }
     if (c.get("battery") != null) {
         out["batteryState"] = c.get("battery")?.toString()
@@ -1106,7 +1188,7 @@ private static Map cameraSnapshot(Map c, String tier, String accountId) {
         Object batBars = signals.get("battery")
         if (batBars instanceof Number) out["batteryBars"] = (Number) batBars
     }
-    out["online"] = ((c.get("status") ?: "unknown") as String)
+    out["online"] = cameraOnline(c.get("status"))
     Object fw = c.get("fw_version") ?: c.get("firmware")
     if (fw) out["firmwareVersion"] = fw.toString()
     // AC power: passed through as string. Wired cameras (doorbells, floodlights)
@@ -1154,16 +1236,14 @@ private static String buildThumbnailUrl(Map c, Object thumb, String tier, String
     return "${base}${prefix}${s}.jpg"
 }
 
+// Blink reports a working camera as "online" or "done". Other values pass through unchanged.
 @CompileStatic
-private static int batteryPercent(int voltageHundredths) {
-    // Blink reports battery voltage in 100ths of volts per cell (e.g. 163 = 1.63V/cell;
-    // two cells in series ≈ 3.26V pack). Map per-cell 1.40V..1.80V to 0..100%.
-    if (voltageHundredths <= 0) return 0
-    int low = 140
-    int high = 180
-    if (voltageHundredths <= low) return 0
-    if (voltageHundredths >= high) return 100
-    return (int) Math.round(((voltageHundredths - low) * 100.0d) / (high - low))
+private static String cameraOnline(Object status) {
+    String s = status?.toString()
+    if (!s) return "unknown"
+    if (s.equalsIgnoreCase("online") || s.equalsIgnoreCase("done")) return "online"
+    if (s.equalsIgnoreCase("offline")) return "offline"
+    return s
 }
 
 private void updateHomescreenSummary(List<Map> networks, List<Map> cameras, List<Map> syncModules) {
@@ -1351,9 +1431,10 @@ void refreshCamera(String cameraId) {
     checkVersion()
     Map cc = cameraContext(cameraId)
     if (!cc) { pollHomescreen(); return }
-    logDebug "refresh requested by camera ${cameraId}, fetching /signals + homescreen"
+    logDebug "refresh requested by camera ${cameraId}, fetching /signals, /config + homescreen"
     pollHomescreen()
     fetchCameraSignals(cameraId, cc.networkId as String)
+    fetchCameraConfig(cameraId, cc.networkId as String)
 }
 
 private void fetchCameraSignals(String cameraId, String networkId) {
@@ -1404,7 +1485,8 @@ void cameraSignalsResponse(resp, data) {
 // the actual recorded video, distinct from the still-image lastThumbnailUrl.
 private void fetchRecentClips() {
     if (!isAuthenticated() || !state.accountId || !state.tier) return
-    long sinceUnix = ((atomicState.lastClipFetchTime ?: (now().intdiv(1000L) - CLIP_INITIAL_WINDOW_SEC)) as Number).longValue()
+    long cursor = ((atomicState.lastClipFetchTime ?: (now().intdiv(1000L) - CLIP_INITIAL_WINDOW_SEC)) as Number).longValue()
+    long sinceUnix = cursor - CLIP_OVERLAP_SEC
     // since = ISO 8601 with a UTC offset ("YYYY-MM-DDTHH:MM:SS+0000"); a raw Unix
     // epoch is rejected. Pass the query via the `query:` map, NOT inline in the URI:
     // the 2.5.1.x asynchttpGet path drops an inline query string, so Blink sees no
@@ -1418,7 +1500,7 @@ private void fetchRecentClips() {
         headers    : bearerHeaders(),
         contentType: "application/json",
         timeout    : HTTP_TIMEOUT
-    ], [sentAt: now().intdiv(1000L)])
+    ], [sentAt: now().intdiv(1000L), since: sinceIso])
 }
 
 // Where the next /media/changed window starts. A transient failure keeps the old cursor so the
@@ -1485,6 +1567,10 @@ void recentClipsResponse(resp, data) {
         String blinkName = child.getDataValue("blinkName")
         if (!blinkName) { missingName++; return }
         Map entry = latestByName[blinkName]
+        // The window overlaps the previous one, so a clip already reported comes back: skip it.
+        String clipTime = entry?.get("_t") as String
+        String lastClipTime = child.currentValue("lastClipTime") as String
+        if (clipTime && lastClipTime && clipTime <= lastClipTime) entry = null
         String motionValue = (entry != null) ? "active" : "inactive"
         Map update = [motion: motionValue]
         if (entry != null) {
@@ -1507,8 +1593,8 @@ void recentClipsResponse(resp, data) {
     }
 
     // Visibility: log on every response so we can diagnose silence vs. response issues.
-    long sinceUnix = ((atomicState.lastClipFetchTime ?: 0L) as Number).longValue()
-    String sinceIsoForLog = new Date(sinceUnix * 1000L).format("yyyy-MM-dd'T'HH:mm:ssZ", TimeZone.getTimeZone("UTC"))
+    long cursor = ((atomicState.lastClipFetchTime ?: 0L) as Number).longValue()
+    String sinceIsoForLog = (data?.since ?: new Date(cursor * 1000L).format("yyyy-MM-dd'T'HH:mm:ssZ", TimeZone.getTimeZone("UTC"))) as String
     if (errorMsg) {
         logWarn "clips fetch (since=${sinceIsoForLog}): ${errorMsg}"
     } else {
@@ -1518,7 +1604,7 @@ void recentClipsResponse(resp, data) {
     }
 
     // A refused request (4xx) moves the cursor on so a bad window cannot block it for good.
-    atomicState.lastClipFetchTime = nextClipCursor(sinceUnix, fetchedAt, transientError, CLIP_INITIAL_WINDOW_SEC)
+    atomicState.lastClipFetchTime = nextClipCursor(cursor, fetchedAt, transientError, CLIP_INITIAL_WINDOW_SEC)
 }
 
 // --- Notification flags (M1) ---
