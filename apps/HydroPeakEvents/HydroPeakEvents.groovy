@@ -6,9 +6,10 @@
 
  Reads Hydro-Québec's peak events from its open data and publishes where the next one stands
  on a "Hydro peak" device: its phase (announced, anchor, gap, active, skipped, aborted), window
- and times, with switches for the phases rules and apps follow. skip() and abort() on the device
- make every consumer stand down for one event. The phase is recomputed from the event list on
- every tick, so a missed transition corrects itself within minutes.
+ and times, with switches for the phases rules and apps follow. abort() on the device makes every
+ consumer stand down for the event under way, skip() for the next event that hasn't started.
+ The phase is recomputed from the event list on every tick, so a missed transition corrects
+ itself within minutes.
  */
 import groovy.transform.CompileStatic
 import groovy.transform.Field
@@ -16,7 +17,7 @@ import groovy.json.JsonOutput
 import java.text.SimpleDateFormat
 
 @Field static final String APP_NAME = "Hydro-Québec Peak Period Manager"
-@Field static final String CODE_VERSION = "0.4.1"
+@Field static final String CODE_VERSION = "0.4.2"
 
 definition(
     name: APP_NAME,
@@ -91,7 +92,7 @@ Map mainPage() {
         }
 
         section("Hydro peak device") {
-            paragraph "The app creates a <b>Hydro peak</b> device with the phase, and three switches: <i>announced</i> (on from the announcement to the start), <i>anchor</i> (on during the anchor window) and <i>active</i> (on during the event). A skipped or aborted event turns them all off. Use the device's <b>skip</b>, <b>unskip</b> and <b>abort</b> commands to stand down for one event."
+            paragraph "The app creates a <b>Hydro peak</b> device with the phase, and three switches: <i>announced</i> (on from the announcement to the start), <i>anchor</i> (on during the anchor window) and <i>active</i> (on during the event). A skipped or aborted event turns them all off. <b>abort</b> stands down for the event under way, <b>skip</b> for the next event that hasn't started (press it again for the one after), <b>unskip</b> undoes the earliest skip."
         }
 
         section("Your own switches (optional)", hideable: true, hidden: !(settings.eventSwitch || settings.preEventSwitch || settings.upcomingEventSwitch)) {
@@ -398,7 +399,8 @@ private void publishDevice(Map ph) {
         eventEnd   : e ? formatLocal(e.end as long, DATE_FORMAT_ISO8601, tz) : "none",
         anchorStart: a ? formatLocal(a.start as long, DATE_FORMAT_ISO8601, tz) : "none",
         anchorEnd  : a ? formatLocal(a.end as long, DATE_FORMAT_ISO8601, tz) : "none",
-        offer      : currentOffer()
+        offer      : currentOffer(),
+        skippedEvents: skippedText((state.skipped ?: []) as List, (state.events ?: []) as List, tz)
     ])
 }
 
@@ -439,22 +441,24 @@ Map peakCommand(Map req) {
         return [ok: true]
     }
     long t = now()
-    List skipped = (state.skipped ?: []) as List
-    List aborted = (state.aborted ?: []) as List
-    Map ph = phaseAt(t, (state.events ?: []) as List, skipped, aborted, currentOffer(), zone())
-    Map r = commandCheck(cmd, ph, t)
+    List events = (state.events ?: []) as List
+    List skipped = pruneMarks((state.skipped ?: []) as List, events, t)
+    List aborted = pruneMarks((state.aborted ?: []) as List, events, t)
+    Map ph = phaseAt(t, events, skipped, aborted, currentOffer(), zone())
+    Map r = commandTarget(cmd, t, events, skipped, ph)
     if (!r.ok) {
         logWarn("${cmd}: ${r.error}")
         return r
     }
-    long key = (ph.event as Map).start as long
-    Map mark = markOf(ph.event as Map)
+    Map target = r.event as Map
+    long key = target.start as long
+    Map mark = markOf(target)
     switch (cmd) {
         case "skip":   state.skipped = skipped.findAll { markStart(it) != key } + [mark]; break
         case "unskip": state.skipped = skipped.findAll { markStart(it) != key }; break
         case "abort":  state.aborted = aborted.findAll { markStart(it) != key } + [mark]; break
     }
-    logCmd("${cmd}: ${describeEvent(ph.event as Map)}")
+    logCmd("${cmd}: ${describeEvent(target)}")
     evaluate()
     return [ok: true]
 }
@@ -577,7 +581,8 @@ private String getStatusText() {
         if (a) s.append("Anchor window: ${formatLocal(a.start as long, 'HH:mm', tz)}–${formatLocal(a.end as long, 'HH:mm', tz)}<br/>")
     }
     List more = ((state.events ?: []) as List).findAll { Map x -> e == null || (x.start as long) > (e.start as long) }
-    if (more) s.append("<small>Then: ${more.collect { describeEvent(it as Map) }.join('; ')}</small><br/>")
+    List sk = (state.skipped ?: []) as List
+    if (more) s.append("<small>Then: ${more.collect { Map x -> describeEvent(x) + (sk.any { markStart(it) == (x.start as long) } ? ' (skipped)' : '') }.join('; ')}</small><br/>")
     if (state.lastUpdate) s.append("<br/><small>Event schedule last checked: ${formatClock(state.lastUpdate as long)}</small>")
     if (state.fetchFailures) s.append("<br/><small>Last ${state.fetchFailures} fetch(es) failed; the events above are from the last good one.</small>")
     return s.toString()
@@ -590,7 +595,8 @@ private void updateAppLabel(String phase) {
 
 private String describeEvent(Map e) {
     TimeZone tz = zone()
-    return "${formatLocal(e.start as long, 'yyyy-MM-dd HH:mm', tz)}–${formatLocal(e.end as long, 'HH:mm', tz)} ${(e.window as String).toUpperCase()}"
+    String w = e.window ? (e.window as String) : (hourOf(e.start as long, tz) < 12 ? "am" : "pm")   // a mark of an unlisted event has none
+    return "${formatLocal(e.start as long, 'yyyy-MM-dd HH:mm', tz)}–${formatLocal(e.end as long, 'HH:mm', tz)} ${w.toUpperCase()}"
 }
 
 private String formatClock(long t) {
@@ -754,19 +760,44 @@ static List mergeEvents(List fresh, List previous, long now) {
     return out.sort { Map x -> x.start as long }
 }
 
-static Map commandCheck(String cmd, Map ph, long now) {
-    String p = ph.phase as String
+// The event a command acts on, as [ok: true, event: e] or [ok: false, error: why].
+// skip: the first listed event that hasn't started and isn't skipped yet, so a skip during an event
+// is for the next one and a second skip takes the one after. unskip: the earliest skipped event that
+// hasn't started (its mark, which may outlive the event's listing). abort: the event under way.
+static Map commandTarget(String cmd, long now, List events, List skipped, Map ph) {
     switch (cmd) {
         case "skip":
-            return p in ["announced", "anchor", "gap"] ? [ok: true] : [ok: false, error: "skip works before an event starts (phase is ${p})".toString()]
+            Map e = (events ?: []).find { Map x ->
+                (x.start as long) > now && !(skipped ?: []).any { markStart(it) == (x.start as long) }
+            } as Map
+            return e != null ? [ok: true, event: e] : [ok: false, error: "no announced event left to skip (only an event that hasn't started can be skipped)"]
         case "unskip":
-            if (p != "skipped") return [ok: false, error: "no skipped event (phase is ${p})".toString()]
-            return now < ((ph.event as Map).start as long) ? [ok: true] : [ok: false, error: "the skipped event has started; it stays skipped"]
+            List coming = (skipped ?: []).findAll { markStart(it) > now }
+            if (!coming) return [ok: false, error: "no skipped event that hasn't started"]
+            long s = coming.collect { markStart(it) }.min() as long
+            Map m = coming.find { markStart(it) == s } as Map
+            Map listed = (events ?: []).find { Map x -> (x.start as long) == s } as Map
+            return [ok: true, event: listed ?: m]
         case "abort":
-            return p == "active" ? [ok: true] : [ok: false, error: "abort works during an event (phase is ${p})".toString()]
+            String p = ph.phase as String
+            return p == "active" ? [ok: true, event: ph.event] : [ok: false, error: "abort works during an event (phase is ${p})".toString()]
         default:
             return [ok: false, error: "unknown command ${cmd}".toString()]
     }
+}
+
+// The skipped events that haven't ended, as "yyyy-MM-dd AM" joined by ", ", or "none".
+static String skippedText(List skipped, List events, TimeZone tz) {
+    List<String> out = []
+    SimpleDateFormat day = new SimpleDateFormat("yyyy-MM-dd")
+    day.setTimeZone(tz)
+    for (Object m : (skipped ?: []).sort(false) { markStart(it) }) {
+        long s = markStart(m)
+        Map listed = (events ?: []).find { Map x -> (x.start as long) == s } as Map
+        String w = listed?.window ? (listed.window as String) : (hourOf(s, tz) < 12 ? "am" : "pm")
+        out << "${day.format(new Date(s))} ${w.toUpperCase()}".toString()
+    }
+    return out ? out.join(", ") : "none"
 }
 // ── End core ──────────────────────────────────────────────────────────
 

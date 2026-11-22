@@ -99,20 +99,54 @@ check('aborted during the event', ph('2026-12-03 07:00', am, [], [k]), 'aborted'
 check('skip of another event ignored', ph('2026-12-03 02:00', am, [k + 1]), 'anchor')
 check('skipped next is the event end', core.phaseAt(at('2026-12-03 02:00'), am, [k], [], 'CPC-D', tz).next, at('2026-12-03 10:00'))
 
-Closure cc = { String cmd, String now, List sk = [], List ab = [] ->
-    core.commandCheck(cmd, core.phaseAt(at(now), am, sk, ab, 'CPC-D', tz), at(now)).ok }
+// ── command targets ──
+// skip: the first listed event that hasn't started and isn't skipped; unskip: the earliest skipped one
+// that hasn't started; abort: the event under way.
+Closure tgt = { String cmd, String now, List evs, List sk = [], List ab = [] ->
+    core.commandTarget(cmd, at(now), evs, sk, core.phaseAt(at(now), evs, sk, ab, 'CPC-D', tz)) }
+Closure cc = { String cmd, String now, List sk = [], List ab = [] -> tgt(cmd, now, am, sk, ab).ok }
 check('skip when announced', cc('skip', '2026-12-02 20:00'), true)
 check('skip in the anchor window', cc('skip', '2026-12-03 02:00'), true)
 check('skip in the gap', cc('skip', '2026-12-03 05:00'), true)
-check('no skip during the event', cc('skip', '2026-12-03 07:00'), false)
-check('no skip without an event', core.commandCheck('skip', core.phaseAt(0L, [], [], [], 'CPC-D', tz), 0L).ok, false)
+check('no skip during the only event', cc('skip', '2026-12-03 07:00'), false)
+check('no skip without an event', core.commandTarget('skip', 0L, [], [], core.phaseAt(0L, [], [], [], 'CPC-D', tz)).ok, false)
+check('no skip of an already skipped only event', cc('skip', '2026-12-03 02:00', [k]), false)
 check('unskip before start', cc('unskip', '2026-12-03 05:00', [k]), true)
 check('no unskip after start', cc('unskip', '2026-12-03 06:30', [k]), false)
 check('no unskip when not skipped', cc('unskip', '2026-12-03 05:00'), false)
 check('abort during the event', cc('abort', '2026-12-03 07:00'), true)
+check('abort targets the event under way', tgt('abort', '2026-12-03 07:00', both).event, both[0])
 check('no abort before the event', cc('abort', '2026-12-03 05:00'), false)
 check('no abort of a skipped event', cc('abort', '2026-12-03 07:00', [k]), false)
 check('unknown command', cc('pause', '2026-12-03 07:00'), false)
+
+Map amM = core.markOf(both[0]), pmM = core.markOf(both[1])
+Map nextAm = ev('2026-12-04', 'am')
+List three = both + [nextAm]
+check('skip during the morning event: the evening', tgt('skip', '2026-12-03 08:00', both).event, both[1])
+check('skip in the morning anchor, both ahead: the morning', tgt('skip', '2026-12-03 02:00', both).event, both[0])
+check('second skip, both ahead: the evening', tgt('skip', '2026-12-03 02:00', both, [amM]).event, both[1])
+check('third skip, both skipped: refused', tgt('skip', '2026-12-03 02:00', both, [amM, pmM]).ok, false)
+check('skip in the evening anchor: the evening', tgt('skip', '2026-12-03 12:30', both).event, both[1])
+check('skip after an abort of the morning: the evening', tgt('skip', '2026-12-03 07:00', both, [], [amM]).event, both[1])
+check('skip during the evening event: tomorrow morning', tgt('skip', '2026-12-03 17:00', three).event, nextAm)
+check('skip during the last event: refused', tgt('skip', '2026-12-03 17:00', both).ok, false)
+check('skip at the event start instant: the next one', tgt('skip', '2026-12-03 06:00', both).event, both[1])
+check('unskip: the earliest skipped', tgt('unskip', '2026-12-03 02:00', both, [pmM, amM]).event, both[0])
+check('unskip during the morning: the evening', tgt('unskip', '2026-12-03 08:00', both, [amM, pmM]).event, both[1])
+check('unskip of an unlisted mark: the mark', tgt('unskip', '2026-12-03 08:00', both[0..0], [pmM]).event, pmM)
+check('no unskip when only the started event is skipped', tgt('unskip', '2026-12-03 08:00', both, [amM]).ok, false)
+check('refusal says why', tgt('skip', '2026-12-03 17:00', both).error.contains('only an event that hasn\'t started can be skipped'), true)
+
+// ── skippedEvents ──
+check('skippedText none', core.skippedText([], both, tz), 'none')
+check('skippedText sorted, window from the list', core.skippedText([pmM, amM], both, tz), '2026-12-03 AM, 2026-12-03 PM')
+check('skippedText unlisted mark: window from the hour', core.skippedText([pmM], [], tz), '2026-12-03 PM')
+List skl = [pmM, amM]
+core.skippedText(skl, both, tz)
+check('skippedText leaves the marks in place', skl, [pmM, amM])
+check('phase stays active during the morning with the evening skipped', ph('2026-12-03 08:00', both, [pmM]), 'active')
+check('evening skipped from the morning end', ph('2026-12-03 10:00', both, [pmM]), 'skipped')
 
 Map mk = [start: k, end: am[0].end]
 check('prune: a 0.4.0 mark takes its end from the list', core.pruneMarks([k], am, at('2026-12-03 07:00')), [mk])

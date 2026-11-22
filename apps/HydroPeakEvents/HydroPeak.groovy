@@ -10,7 +10,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.4.0"
+@Field static final String CODE_VERSION = "0.4.2"
 
 metadata {
     definition(name: "Hydro Peak", namespace: "iamtrep", author: "pj", component: true,
@@ -25,6 +25,7 @@ metadata {
         attribute "anchorStart", "string"
         attribute "anchorEnd", "string"
         attribute "offer", "string"
+        attribute "skippedEvents", "string"
         command "skip"
         command "unskip"
         command "abort"
