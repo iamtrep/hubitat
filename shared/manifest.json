@@ -393,6 +393,37 @@
             ]
         }
     },
+    "apps/HvacPeakPreheat/HvacPeakPreheat.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
     "apps/HvacScheduler/HvacScheduler.groovy": {
         "logging-app": {
             "version": 1,
@@ -597,6 +628,63 @@
         }
     },
     "apps/IndoorAirQualityController/IndoorAirQualityControllerAir.groovy": {
+        "logging-driver": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logRx",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logOta",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-driver": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        }
+    },
+    "apps/LoadShedder/LoadShedder.groovy": {
+        "logging-app": {
+            "version": 1,
+            "items": [
+                "logp",
+                "logEvt",
+                "logCmd",
+                "logCfg",
+                "logNet",
+                "logSched",
+                "logVer",
+                "logWarn",
+                "logError",
+                "logTrace",
+                "logInfo",
+                "logDebug"
+            ]
+        },
+        "logs-off-app": {
+            "version": 1,
+            "items": [
+                "logsOff"
+            ]
+        },
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
+    "apps/LoadShedder/LoadShedderStatus.groovy": {
         "logging-driver": {
             "version": 1,
             "items": [

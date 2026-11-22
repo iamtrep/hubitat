@@ -34,10 +34,12 @@ More on some of these: [Humidity-Based Fan Controller](HumidityFanController.md)
 | [EventHistory/](./EventHistory/) | Keeps hub and location events past the hub's own limits, in capped File Manager files |
 | [HubInspector/](./HubInspector/) | Comprehensive hub diagnostics: inventory, performance tracking, network analysis, and snapshot comparison |
 | [HvacInterlock/](./HvacInterlock/) | Gates heating and cooling equipment by season and open windows |
+| [HvacPeakPreheat/](./HvacPeakPreheat/) | Holds a thermostat through a Hydro-Québec Winter Credit peak event, by the anchor window's plan |
 | [HvacScheduler/](./HvacScheduler/) | Thermostat schedules with profiles, holds and an API |
 | [HvacSeasonManager/](./HvacSeasonManager/) | Publishes the heating and cooling season on a device, from dates and the outdoor temperature |
 | [HydroPeakEvents/](./HydroPeakEvents/) | Publishes Hydro-Québec peak events and their phases on a device |
 | [IndoorAirQualityController/](./IndoorAirQualityController/) | Runs ventilation in stages from indoor CO2 and warns when a window should be opened or the air is too dry |
+| [LoadShedder/](./LoadShedder/) | Keeps switches off while any of a set of reasons holds, then turns back on the ones it turned off |
 | [LocationEventMapper/](./LocationEventMapper/) | Holds Location Event Mapper instances, which set virtual contact sensors from location events |
 | [LogMonitor/](./LogMonitor/) | Monitor hub logs with multiple filters and output actions |
 | [MultiHubInventory/](./MultiHubInventory/) | Read-only cross-hub device inventory, aggregated from each hub's Hub Inspector audit API |
