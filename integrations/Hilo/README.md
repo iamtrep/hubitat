@@ -183,6 +183,7 @@ Shows the next announced event, or the current or next window as if it were one,
 - `expectedCurtailment` — kWh curtailed if the plan is followed and the event is cut to the floor
 - `anchorUsed` / `anchorWindow` — the anchor window's energy so far, counted from the live power, during 01:00–04:00 and 12:00–14:00
 - `eventUsed` — the event window's energy so far, counted the same way, during 06:00–10:00 and 16:00–20:00
+- Between those periods, each recompute sets both counts to 0 for the window the device shows until its own count starts, so an anchor window or event never starts with the previous window's count
 - `anchorStop` (`true` / `false`), `anchorChecked` — during an announced event's anchor window when the plan is `at most`: `anchorStop` turns `true` once `anchorUsed`, plus the reserve (default 3 kW) for the rest of the window, reaches `anchorTarget`, and stays `true` until the window ends. While the power stream is quiet, the count is projected at the last reading's power. `anchorChecked` (`YYYY-MM-DD HH:mm`) changes every minute of that window, so a rule on another hub can tell when updates stop.
 - `target`, `advice` (`pending` / `cut` / `keep`), `keepUse` — once the anchor window is over. `keep` means using `keepUse` kWh during the event keeps 40 kWh curtailed and pays more than cutting to the floor.
 - `referenceDays`, `summary`

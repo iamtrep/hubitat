@@ -185,6 +185,7 @@ Affiche le prochain événement annoncé, ou la fenêtre en cours ou suivante co
 - `expectedCurtailment` — kWh effacés si le plan est suivi et l'événement réduit jusqu'au plancher
 - `anchorUsed` / `anchorWindow` — l'énergie de la période d'ancrage jusqu'ici, comptée d'après la puissance en direct, pendant 1 h–4 h et 12 h–14 h
 - `eventUsed` — l'énergie de l'événement jusqu'ici, comptée de la même façon, pendant 6 h–10 h et 16 h–20 h
+- Entre ces périodes, chaque recalcul remet les deux comptes à 0 pour la fenêtre affichée par l'appareil jusqu'au début de son propre compte, pour qu'une période d'ancrage ou un événement ne commence jamais avec le compte de la fenêtre précédente
 - `anchorStop` (`true` / `false`), `anchorChecked` — pendant la période d'ancrage d'un événement annoncé quand le plan est `at most` : `anchorStop` passe à `true` dès que `anchorUsed`, plus la réserve (3 kW par défaut) pour le reste de la période, atteint `anchorTarget`, et reste `true` jusqu'à la fin de la période. Quand le flux de puissance se tait, le compte est projeté à la puissance de la dernière lecture. `anchorChecked` (`AAAA-MM-JJ HH:mm`) change chaque minute de cette période, pour qu'une règle sur un autre hub voie quand les mises à jour cessent.
 - `target`, `advice` (`pending` / `cut` / `keep`), `keepUse` — à la fin de la période d'ancrage. `keep` signifie que consommer `keepUse` kWh pendant l'événement garde 40 kWh effacés et paie plus que réduire jusqu'au plancher.
 - `referenceDays`, `summary` (ce dernier dans la langue choisie)

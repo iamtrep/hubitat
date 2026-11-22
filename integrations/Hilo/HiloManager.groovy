@@ -1656,7 +1656,8 @@ void peakRun() {
     state.peakWindows = results.collect { Map r -> r.findAll { k, v -> !(k in ["rows", "refDays", "skipped", "missing", "anchorHours"]) } }
     // The evening notice needs every announced window still to come, not only the next one.
     state.peakLast = [at: t, next: peakBrief(next), events: results.findAll { it.event && (it.end as long) > t }.collect { peakBrief(it) }]
-    peakChild()?.updatePeak(peakAttributes(next) + lastAttributes(last) + [summaryLog: peakBrief(next)?.message])
+    int hour = new Date(t).format("H", location.timeZone) as int
+    peakChild()?.updatePeak(peakAttributes(next) + liveCountResets(next, t, hour) + lastAttributes(last) + [summaryLog: peakBrief(next)?.message])
     writePeakFile(results, floorKWh, marginKWh)
 }
 
@@ -1723,6 +1724,26 @@ void peakPowerHandler(evt) {
     if (a != null) peakChild()?.updatePeak([anchorUsed: a, anchorWindow: "${day} ${anchorFor == 6 ? '01:00-04:00' : '12:00-14:00'}"])
     BigDecimal e = liveCount("eventLive", day, eventFor, w, t.time)
     if (e != null) peakChild()?.updatePeak([eventUsed: e])
+}
+
+// The live counts of the window the device shows (r, at hour of t), before they start: 0 kWh.
+// A count starts at its window's first power reading, so until then the device would still hold
+// the previous window's count, e.g. the morning event's at the start of the evening one. The
+// anchor count is left alone during an anchor period and the event count during an event period,
+// where a running count owns the attribute, even one for a window the device doesn't show. The
+// finished window's result stays in lastConsumed.
+@CompileStatic
+static Map liveCountResets(Map r, long t, int hour) {
+    Map out = [:]
+    if (!r) return out
+    boolean inAnchor = (hour >= 1 && hour < 4) || (hour >= 12 && hour < 14)
+    boolean inEvent = (hour >= 6 && hour < 10) || (hour >= 16 && hour < 20)
+    if (!inAnchor && t < (r.anchorStart as long)) {
+        out.anchorUsed = 0.0
+        out.anchorWindow = "${r.day} ${(r.startHour as int) == 6 ? '01:00-04:00' : '12:00-14:00'}".toString()
+    }
+    if (!inEvent && t < (r.start as long)) out.eventUsed = 0.0
+    return out
 }
 
 // Adds the time since the last reading, at that reading's power, to the count in state[key].

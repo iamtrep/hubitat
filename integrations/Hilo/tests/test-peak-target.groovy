@@ -34,7 +34,8 @@ String fields = src.readLines().findAll { it.startsWith('@Field static final') &
 String code = 'import java.time.LocalDate\nimport groovy.transform.CompileStatic\nclass PeakTarget {\n' + fields + '\n' +
     ['static LocalDate easterSunday(int year) {', 'static Set<String> noPeakDays(LocalDate day) {', 'static Map peakTarget(',
      'static BigDecimal curtailedKWh(', 'static String windowPhase(', 'static List<Map> timelineWindows(',
-     'static BigDecimal anchorProjected(', 'static boolean anchorStopReached(', 'static List<Map> eveningNotices(']
+     'static BigDecimal anchorProjected(', 'static boolean anchorStopReached(', 'static List<Map> eveningNotices(',
+     'static Map liveCountResets(']
         .collect { '@CompileStatic\n' + extract(src, it) }.join('\n') + '\n}\nPeakTarget'
 Class PT = new GroovyShell().evaluate(code)
 
@@ -168,6 +169,24 @@ check('projection: a clock behind the reading adds nothing', near(PT.anchorProje
 // Frozen at 02:00 with 12 kWh at 10 kW: projected 12 + 10t, stop when 12 + 10t + 3(2 - t) >= 30, t >= 12/7 h.
 check('frozen stream: no stop at 03:40', !PT.anchorStopReached(PT.anchorProjected(live, 2 * H + 100 * M), T, RES, 2 * H + 100 * M, 4 * H))
 check('frozen stream: stop at 03:43', PT.anchorStopReached(PT.anchorProjected(live, 2 * H + 103 * M), T, RES, 2 * H + 103 * M, 4 * H))
+
+println 'live counts of the window the device shows'
+// The evening window of day 0 in plain hours: anchor 12-14 h, event 16-20 h. The hour argument
+// is the local hour of t, kept apart so a test can set it.
+Map pmW = [day: '2027-01-15', startHour: 16, anchorStart: 12 * H, anchorEnd: 14 * H, start: 16 * H, end: 20 * H]
+Map amW = [day: '2027-01-16', startHour: 6, anchorStart: 25 * H, anchorEnd: 28 * H, start: 30 * H, end: 34 * H]
+Map z = PT.liveCountResets(pmW, 10 * H + M, 10)
+check('10:01, after the morning event: evening counts set to 0', near(z.eventUsed, 0) && near(z.anchorUsed, 0) && z.anchorWindow == '2027-01-15 12:00-14:00')
+Map a = PT.liveCountResets(pmW, 13 * H, 13)
+check('during the evening anchor: the anchor count left to run, eventUsed 0', !a.containsKey('anchorUsed') && !a.containsKey('anchorWindow') && near(a.eventUsed, 0))
+Map g = PT.liveCountResets(pmW, 15 * H, 15)
+check('in the gap: eventUsed 0, the anchor count left', near(g.eventUsed, 0) && !g.containsKey('anchorUsed'))
+check('during the event: nothing sent', PT.liveCountResets(pmW, 17 * H, 17).isEmpty())
+Map n = PT.liveCountResets(amW, 20 * H + M, 20)
+check('20:01: the next morning starts at 0, anchor window named', near(n.eventUsed, 0) && near(n.anchorUsed, 0) && n.anchorWindow == '2027-01-16 01:00-04:00')
+check('an unshown evening event counting: eventUsed left to it', !PT.liveCountResets(amW, 17 * H, 17).containsKey('eventUsed'))
+check('an unshown evening anchor counting: the anchor left', !PT.liveCountResets(amW, 13 * H, 13).containsKey('anchorUsed'))
+check('no window, nothing', PT.liveCountResets(null, 0L, 0).isEmpty())
 
 // The evening notice: one message for each announced window of tomorrow.
 Map amN = [day: '2026-12-03', startHour: 6, message: 'AM plan'], pmN = [day: '2026-12-03', startHour: 16, message: 'PM plan']
