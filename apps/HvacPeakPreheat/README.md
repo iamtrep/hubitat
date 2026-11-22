@@ -25,7 +25,7 @@ The thermostat needs `setHeatingSetpoint` and `resumeProgram` (an Ecobee, for ex
 
 ## What it does
 
-Each time something changes, the app works out the whole decision again from the current values. The first row that matches wins.
+Each time something changes, the app works out the whole decision again from the current values. The first row that matches wins. A change on the Hydro peak or plan device is acted on 2 seconds after the device's last change, because both devices send several values at once and the hub applies them over a few hundred milliseconds: acting on the first would mix new and old values. A mode change waits 5 seconds. The nightly time, the silence fallback and hub start act at once, unless device changes are still settling, and then they wait for them.
 
 | # | When | Does |
 |---|---|---|

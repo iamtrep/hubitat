@@ -30,6 +30,10 @@ import groovy.transform.Field
 // the power stream) keep arriving when the check doesn't run, so they don't count as a heartbeat.
 @Field static final List<String> HEARTBEAT_ATTRS = ["anchorChecked", "anchorStop"]
 @Field static final int MODE_SETTLE_SECONDS = 5     // lets another app's resumeProgram on Away -> Home land first
+// A command's events past its 2nd are applied 2 per 100-130 ms (worst stall seen 1.3 s), and each event's handler
+// re-arms the settle, so 2 s outlasts any gap between them: 8 peak attributes end about 0.4 s after the first.
+@Field static final long EVENT_SETTLE_MS = 2000L
+@Field static final long SETTLE_GRACE_MS = 5000L    // a settle job this late is taken as lost
 @Field static final int VERIFY_SECONDS = 30
 @Field static final String DEFAULT_NIGHT = "22:30"
 @Field static final int DEFAULT_SILENCE_MINUTES = 10
@@ -153,22 +157,45 @@ void initialize() {
     subscribe(location, "systemStart", "startHandler")
     int m = nightMinutes()
     schedule("0 ${m % 60} ${m.intdiv(60)} * * ?", "nightlyHandler")
+    state.remove("settleDue")      // updated() unscheduled any settle; this evaluation stands for it
     reevaluate("saved")
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────
 
+// Device events are evaluated once they settle. Both devices send several attributes in one command, and on a
+// hub the first handler runs before the later attributes are applied (a night hold was sent at a PM event's end
+// with the next event's date not yet in).
 void phaseHandler(evt) {
     checkVersion()
     logEvt "${evt.displayName} ${evt.name} ${evt.value}"
-    reevaluate("${evt.name} ${evt.value}")
+    settleThenEvaluate("${evt.name} ${evt.value}")
 }
 
 void planHandler(evt) {
     checkVersion()
     if (evt.name in HEARTBEAT_ATTRS) state.beatAt = now()
     logEvt "${evt.displayName} ${evt.name} ${evt.value}"
-    reevaluate("${evt.name} ${evt.value}")
+    settleThenEvaluate("${evt.name} ${evt.value}")
+}
+
+private void settleThenEvaluate(String why) {
+    state.settleDue = now() + EVENT_SETTLE_MS
+    runInMillis(EVENT_SETTLE_MS, "eventsSettled", [data: [why: why]])
+}
+
+void eventsSettled(Map data) {
+    checkVersion()
+    state.remove("settleDue")
+    reevaluate((data?.why ?: "device events") as String)
+}
+
+// While device events settle, a timed evaluation would read a command half applied; the settle evaluates for it.
+private boolean settling(String why) {
+    Long due = state.settleDue as Long
+    if (due == null || now() >= due + SETTLE_GRACE_MS) return false
+    logSched "${why}: device events settling, evaluated with them"
+    return true
 }
 
 void modeHandler(evt) {
@@ -179,21 +206,28 @@ void modeHandler(evt) {
 
 void modeSettled() {
     checkVersion()
+    if (settling("mode ${location.mode}")) return
     reevaluate("mode ${location.mode}")
 }
 
 void nightlyHandler() {
     checkVersion()
+    if (settling("nightly time")) return
     reevaluate("nightly time")
 }
 
 void silenceCheck() {
     checkVersion()
+    if (settling("plan device silence check")) return
     reevaluate("plan device silence check")
 }
 
+// A settle job that fell due while the hub was down was dropped: this evaluation stands for it (its settleDue is
+// minutes old by now, so settling() is false). A settle armed since the start runs instead.
 void startHandler(evt) {
     checkVersion()
+    if (settling("hub start")) return
+    state.remove("settleDue")
     reevaluate("hub start")
 }
 
