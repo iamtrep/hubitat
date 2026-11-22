@@ -95,6 +95,7 @@ The built-in app (2.5.0 and later; its page shows version 2.0.1) holds four chil
 ## Rule Machine
 
 - **The `logging` setting** (Events, Triggers, Actions) does not gate the "Required Expression false" log line on any single option: it was still logged with only `Actions` set and with only `Events` set. Clearing every option was not tested *(probed 2.5.2.139)*.
+- **A condition keeps its hub variable in use after its actions are deleted.** A rule whose only references to a hub variable were conditions marked `(unused)` on its Manage Conditions page still appeared in that variable's in-use list (Settings > Hub Variables, and the variable's `appsUsing`). Removing the actions is not enough to free the variable: also delete the unused conditions *(probed 2.5.3.133, C-7)*.
 
 ## Samsung TV Integration
 
