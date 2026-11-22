@@ -62,6 +62,7 @@ class H {
     String describeHttpBody(Object r) { '' }
     List getChildDevices() { kids }
     boolean networkManaged(String id) { true }
+    String restBase(String t) { 'https://rest-' + t + '.example' }
 ${funcs.join('\n')}
 }
 return H

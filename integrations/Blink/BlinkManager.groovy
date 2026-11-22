@@ -45,6 +45,8 @@ definition(
 @Field static final String CODE_VERSION = "1.1.11"
 
 @Field static final String OAUTH_BASE_URL = "https://api.oauth.blink.com"
+// The REST API host of a region ("tier"); {tier} is replaced. One constant, so a test build can point it elsewhere.
+@Field static final String REST_URL_TEMPLATE = "https://rest-{tier}.immedia-semi.com"
 @Field static final String CLIENT_ID = "ios"
 @Field static final String APP_BRAND = "blink"
 @Field static final String BLINK_CLIENT_APP_VERSION = "50.1"
@@ -798,7 +800,7 @@ private void ensureValidToken() {
 
 void fetchTierInfo(boolean thenPoll = false, boolean thenFlags = false) {
     logNet "fetching tier info"
-    String url = "https://rest-prod.immedia-semi.com/api/v1/users/tier_info"
+    String url = "${restBase("prod")}/api/v1/users/tier_info"
     // blinkpy's tier_info call shape: android UA + form-urlencoded Content-Type.
     Map headers = [
         "User-Agent"   : "27.0ANDROID_28373244",
@@ -862,7 +864,7 @@ void pollHomescreenNow() {
     }
     ensureValidToken()
 
-    String url = "https://rest-${state.tier}.immedia-semi.com/api/v3/accounts/${state.accountId}/homescreen"
+    String url = "${restBase(state.tier as String)}/api/v3/accounts/${state.accountId}/homescreen"
     logTrace "polling: ${url}"
     state.lastHomescreenPollAt = now()
     asynchttpGet("handleHomescreenResponse", [
@@ -969,7 +971,7 @@ private void fetchCameraConfig(String cameraId, String networkId) {
     Map<String, Object> readAt = (atomicState.batteryConfigAt ?: [:]) as Map<String, Object>
     readAt[cameraId] = now() - BATTERY_CONFIG_INTERVAL_MS + BATTERY_CONFIG_RETRY_MS
     atomicState.batteryConfigAt = readAt
-    String url = "https://rest-${state.tier}.immedia-semi.com/network/${networkId}/camera/${cameraId}/config"
+    String url = "${restBase(state.tier as String)}/network/${networkId}/camera/${cameraId}/config"
     asynchttpGet("cameraConfigResponse", [
         uri        : url,
         headers    : bearerHeaders(),
@@ -1283,7 +1285,7 @@ private static String buildThumbnailUrl(Map c, Object thumb, String tier, String
     // slug here — blinkpy `camera.py` uses config.get("type") directly.
     String type = (c.get("type") ?: c.get("__type") ?: "camera") as String
     if (!netId || !camId) return null
-    String base = "https://rest-${tier}.immedia-semi.com"
+    String base = restBase(tier)
     // Numeric thumbnail token == Unix timestamp; assemble v3 media URL (blinkpy
     // camera.py update_images path).
     if (s ==~ /\d+/) {
@@ -1295,6 +1297,11 @@ private static String buildThumbnailUrl(Map c, Object thumb, String tier, String
     }
     String prefix = s.startsWith("/") ? "" : "/"
     return "${base}${prefix}${s}.jpg"
+}
+
+@CompileStatic
+private static String restBase(String tier) {
+    return REST_URL_TEMPLATE.replace("{tier}", tier ?: "prod")
 }
 
 // Blink reports a working camera as "online" or "done". Other values pass through unchanged.
@@ -1423,7 +1430,7 @@ void commandPostResponse(resp, data) {
 }
 
 private void pollCommandStatus(Map ctx) {
-    String url = "https://rest-${state.tier}.immedia-semi.com/network/${ctx.networkId}/command/${ctx.cmdId}"
+    String url = "${restBase(state.tier as String)}/network/${ctx.networkId}/command/${ctx.cmdId}"
     asynchttpGet("commandStatusResponse", [
         uri        : url,
         headers    : bearerHeaders(),
@@ -1500,7 +1507,7 @@ void refreshCamera(String cameraId) {
 
 private void fetchCameraSignals(String cameraId, String networkId) {
     if (!networkId) return
-    String url = "https://rest-${state.tier}.immedia-semi.com/network/${networkId}/camera/${cameraId}/signals"
+    String url = "${restBase(state.tier as String)}/network/${networkId}/camera/${cameraId}/signals"
     asynchttpGet("cameraSignalsResponse", [
         uri        : url,
         headers    : bearerHeaders(),
@@ -1553,7 +1560,7 @@ private void fetchRecentClips() {
     // the 2.5.1.x asynchttpGet path drops an inline query string, so Blink sees no
     // `since` and returns "Bad Time Format" (809); the query map is sent intact.
     String sinceIso = new Date(sinceUnix * 1000L).format("yyyy-MM-dd'T'HH:mm:ssZ", TimeZone.getTimeZone("UTC"))
-    String url = "https://rest-${state.tier}.immedia-semi.com/api/v1/accounts/${state.accountId}/media/changed"
+    String url = "${restBase(state.tier as String)}/api/v1/accounts/${state.accountId}/media/changed"
     logTrace "fetchRecentClips: since=${sinceIso}"
     asynchttpGet("recentClipsResponse", [
         uri        : url,
@@ -1619,7 +1626,7 @@ void recentClipsResponse(resp, data) {
     // child, including motion=inactive when nothing arrived. Hubitat's sendEvent dedups the
     // inactive case after the first fire, so this is cheap. An error response says nothing
     // about motion, so nothing is sent for it.
-    String base = "https://rest-${state.tier}.immedia-semi.com"
+    String base = "${restBase(state.tier as String)}"
     int active = 0, inactive = 0, missingName = 0
     Set<String> activeNames = [] as Set<String>
     getChildDevices().each { ChildDeviceWrapper child ->
@@ -1682,7 +1689,7 @@ void recentClipsResponse(resp, data) {
 void fetchNotificationFlags() {
     checkVersion()
     if (!isAuthenticated() || !state.accountId || !state.tier) return
-    String url = "https://rest-${state.tier}.immedia-semi.com/api/v1/accounts/${state.accountId}/notifications/configuration"
+    String url = "${restBase(state.tier as String)}/api/v1/accounts/${state.accountId}/notifications/configuration"
     logNet "fetching notification flags"
     asynchttpGet("notificationFlagsResponse", [
         uri        : url,
@@ -1749,7 +1756,7 @@ private void pushNotificationFlagChanges() {
 }
 
 private void setNotificationFlags(Map changes) {
-    String url = "https://rest-${state.tier}.immedia-semi.com/api/v1/accounts/${state.accountId}/notifications/configuration"
+    String url = "${restBase(state.tier as String)}/api/v1/accounts/${state.accountId}/notifications/configuration"
     String body = groovy.json.JsonOutput.toJson([notifications: changes])
     logCmd "updating notification flags: ${changes.keySet().join(', ')}"
     asynchttpPost("notificationUpdateResponse", [
@@ -1801,7 +1808,7 @@ private void blinkPostAsync(String path, String handler, Map context) {
         return
     }
     ensureValidToken()
-    String url = "https://rest-${state.tier}.immedia-semi.com${path}"
+    String url = "${restBase(state.tier as String)}${path}"
     Map req = [
         uri               : url,
         headers           : bearerHeaders(),
