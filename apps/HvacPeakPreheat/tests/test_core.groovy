@@ -104,6 +104,44 @@ check('anchor at most, anchorStop missing: pre-heat with fallback', r(anc + [pla
 check('anchor at most, anchorStop missing: fallback armed', d(anc + [plan: 'at most', anchorStop: null]).wakeAt, at('2026-12-03 02:10'))
 check('anchor at most, no silence reference: stop', r(anc + [plan: 'at most', quietRef: null]), [4, 'hold', 18.0G])
 check('anchor at most, short silence setting', r(anc + [plan: 'at most', quietRef: at('2026-12-03 01:57')], cfg + [silenceMs: 3 * MIN]), [4, 'hold', 18.0G])
+// The silence's start: the later of the last heartbeat and the window's start (anchorStart), not the phase's last
+// entry into anchor. q(heard, anchorStart, seen, now), each a local time or null.
+Long q(String heard, String start, String seen, String now) {
+    core.quietRef(heard ? at(heard) : null, start ? at(start) : null, seen ? at(seen) : null, at(now))
+}
+Map amMost = anc + [plan: 'at most', anchorStop: 'false']
+check('silence: no heartbeat, from the window start', q(null, '2026-12-03 01:00', '2026-12-03 01:00:03', '2026-12-03 01:05'), at('2026-12-03 01:00'))
+check('silence: phase back in anchor at 03:00 after an hour out, no heartbeat: from 01:00',
+      q(null, '2026-12-03 01:00', '2026-12-03 03:00', '2026-12-03 03:00'), at('2026-12-03 01:00'))
+check('silence: phase back at 03:00, 10 min already gone: stop at once',
+      r(amMost + [at: '2026-12-03 03:00', quietRef: q(null, '2026-12-03 01:00', '2026-12-03 03:00', '2026-12-03 03:00')]), [4, 'hold', 18.0G])
+check('silence: phase back at 01:06 after 5 min out: pre-heat',
+      r(amMost + [at: '2026-12-03 01:06', quietRef: q(null, '2026-12-03 01:00', '2026-12-03 01:06', '2026-12-03 01:06')]), [4, 'hold', 22.5G])
+check('silence: phase back at 01:06 after 5 min out: the remaining 4 min',
+      d(amMost + [at: '2026-12-03 01:06', quietRef: q(null, '2026-12-03 01:00', '2026-12-03 01:06', '2026-12-03 01:06')]).wakeAt, at('2026-12-03 01:10'))
+check('silence: a heartbeat at 01:30 before the phase left: from it',
+      q('2026-12-03 01:30', '2026-12-03 01:00', '2026-12-03 01:35', '2026-12-03 01:35'), at('2026-12-03 01:30'))
+check('silence: heartbeat at 01:30, phase back at 01:35: stop due at 01:40',
+      d(amMost + [at: '2026-12-03 01:35', quietRef: q('2026-12-03 01:30', '2026-12-03 01:00', '2026-12-03 01:35', '2026-12-03 01:35')]).wakeAt, at('2026-12-03 01:40'))
+check('silence: restart at 01:40 mid-anchor, last heartbeat 01:20: from it, stop',
+      r(amMost + [at: '2026-12-03 01:40', quietRef: q('2026-12-03 01:20', '2026-12-03 01:00', '2026-12-03 01:00:03', '2026-12-03 01:40')]), [4, 'hold', 18.0G])
+check('silence: evening window, last heartbeat in the morning: from 12:00',
+      q('2026-12-03 03:59', '2026-12-03 12:00', '2026-12-03 12:00:03', '2026-12-03 12:05'), at('2026-12-03 12:00'))
+check('silence: evening window, morning heartbeat and morning first sighting left over: pre-heat at 12:05',
+      r(pmAnc + [at: '2026-12-03 12:05', quietRef: q('2026-12-03 03:59', '2026-12-03 12:00', '2026-12-03 12:00:03', '2026-12-03 12:05')]), [4, 'hold', 22.5G])
+check('silence: anchorStart unreadable: from the first sighting of this visit',
+      q(null, null, '2026-12-03 01:00:03', '2026-12-03 01:05'), at('2026-12-03 01:00:03'))
+check('silence: anchorStart unreadable, heartbeat later: from the heartbeat',
+      q('2026-12-03 01:30', null, '2026-12-03 01:00:03', '2026-12-03 01:35'), at('2026-12-03 01:30'))
+check('silence: anchorStart in the future counts as now', q(null, '2026-12-03 02:00', '2026-12-03 01:00', '2026-12-03 01:05'), at('2026-12-03 01:05'))
+check('silence: nothing known: now', q(null, null, null, '2026-12-03 01:05'), at('2026-12-03 01:05'))
+check('isoMs: Peak Period Manager form', core.isoMs('2026-12-03T01:00:00-05:00'), at('2026-12-03 01:00'))
+check('isoMs: Z', core.isoMs('2026-12-03T06:00:00Z'), at('2026-12-03 01:00'))
+check('isoMs: none', core.isoMs('none'), null)
+check('isoMs: missing', core.isoMs(null), null)
+check('isoMs: empty', core.isoMs(''), null)
+check('isoMs: garbage', core.isoMs('01:00'), null)
+check('isoMs: no offset', core.isoMs('2026-12-03T01:00:00'), null)
 check('anchor AM, plan missing: night hold 20.5, no pre-heat', r(anc + [plan: null]), [4, 'hold', 20.5G])
 check('anchor AM, plan missing: no fallback', d(anc + [plan: null]).wakeAt, null)
 check('anchor AM, plan missing: the night hold setting is used', r(anc + [plan: null], cfg + [nightHold: 21.0G]), [4, 'hold', 21.0G])

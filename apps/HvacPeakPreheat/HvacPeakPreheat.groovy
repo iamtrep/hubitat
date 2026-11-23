@@ -22,10 +22,11 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "HVAC Peak Pre-heat"
-@Field static final String CODE_VERSION = "0.1.1"
+@Field static final String CODE_VERSION = "0.1.2"
 @Field static final Integer DEBUG_AUTO_OFF_MINUTES = 30
 
-@Field static final List<String> PHASE_ATTRS = ["phase", "window", "eventDate"]
+// anchorStart: the silence fallback counts from it, so a window moved by a fetch re-arms the fallback.
+@Field static final List<String> PHASE_ATTRS = ["phase", "window", "eventDate", "anchorStart"]
 // Every plan attribute re-runs the decision.
 @Field static final List<String> PLAN_ATTRS = ["anchorPlan", "anchorTarget", "anchorUsed", "anchorStop", "anchorChecked",
                                                "advice", "keepUse", "eventUsed", "eventDate", "window"]
@@ -89,7 +90,7 @@ Map mainPage() {
             section("Status") { paragraph statusText() }
         }
         section("Inputs") {
-            input "phaseDevice", "capability.actuator", title: "Hydro peak device (phase, window, eventDate)", required: true
+            input "phaseDevice", "capability.actuator", title: "Hydro peak device (phase, window, eventDate, anchorStart)", required: true
             input "planDevice", "capability.sensor", title: "Winter credit plan device (anchorPlan, anchorStop, advice, keepUse, eventUsed)", required: true
             input "thermostat", "capability.thermostat", title: "Thermostat to hold", required: true
             input "awayModes", "mode", title: "Away modes: another app owns the thermostat, no hold (none selected: the mode named Away)",
@@ -258,6 +259,7 @@ void reevaluate(String why) {
     if (!phaseDevice || !planDevice || !thermostat) return
     long t = now()
     String phase = phaseDevice.currentValue("phase") as String
+    // When the app first saw this visit to the anchor: the silence fallback's start only when anchorStart can't be read.
     if (phase == "anchor") {
         if (state.anchorSince == null) state.anchorSince = t
     } else {
@@ -277,7 +279,7 @@ void reevaluate(String why) {
         advice       : planDevice.currentValue("advice"),
         eventUsed    : toNum(planDevice.currentValue("eventUsed")),
         keepUse      : toNum(planDevice.currentValue("keepUse")),
-        quietRef     : quietRef(t)
+        quietRef     : quietRef(state.beatAt as Long, isoMs(phaseDevice.currentValue("anchorStart")), state.anchorSince as Long, t)
     ]
     Map cfg = holdConfig()
     Map d = decide(inp, cfg)
@@ -370,14 +372,6 @@ private void componentChanged(def cd, String asked) {
     getChildDevice(holdDni())?.parse([[name: "switch", value: want]])
 }
 
-// The silence fallback counts from the later of the last stop-check heartbeat and the anchor window's start.
-private Long quietRef(long t) {
-    Long heard = state.beatAt as Long
-    Long since = state.anchorSince as Long
-    if (heard == null && since == null) return t
-    return Math.max(heard ?: 0L, since ?: 0L)
-}
-
 private String scale() { (location.temperatureScale ?: "C") as String }
 
 private BigDecimal tolerance() { SETPOINT_TOLERANCE[scale()] ?: SETPOINT_TOLERANCE.C }
@@ -402,8 +396,8 @@ private int nightMinutes() {
 
 // The decision, first match wins. inp: now (ms), tz, away, phase, window, eventDate (the phase
 // device's), plan (anchorPlan), anchorStop, planEventDate, planWindow, advice, eventUsed, keepUse,
-// quietRef (ms the stop-check silence counts from: the later of its last heartbeat and the
-// window's start). cfg: nightMins, silenceMs and the six holds.
+// quietRef (ms the stop-check silence counts from, from quietRef() below). cfg: nightMins,
+// silenceMs and the six holds.
 // Returns rule (1-7), action (disown, release, hold), setpoint, reason, and wakeAt (ms) while an
 // "at most" pre-heat waits on the plan device.
 static Map decide(Map inp, Map cfg) {
@@ -450,6 +444,30 @@ static Map decide(Map inp, Map cfg) {
 
 static Map hold(int rule, Object sp, String reason) {
     return [rule: rule, action: "hold", setpoint: toNum(sp), reason: reason]
+}
+
+// Where the stop-check silence counts from: the later of the last heartbeat (heard) and the anchor window's start
+// (windowStart, the phase device's anchorStart), however often the phase has left the anchor and come back, so a
+// return after the silence has run out stops the pre-heat at once. A heartbeat from an earlier window is older than
+// this window's start and so doesn't count. A start in the future counts as now, so the stop is never later than
+// the silence after now. Without a readable anchorStart, from when the app first saw this visit to the anchor
+// (seen): no earlier than the window's start, so after a return the stop can be late by the time spent away.
+@CompileStatic
+static Long quietRef(Long heard, Long windowStart, Long seen, long t) {
+    Long start = windowStart != null ? Math.min(windowStart, t) : seen
+    if (heard == null && start == null) return t
+    return Math.max(heard ?: 0L, start ?: 0L)
+}
+
+// An ISO 8601 time with offset (Peak Period Manager's anchorStart) in ms; null for none, empty or unreadable.
+static Long isoMs(Object v) {
+    String s = known(v)
+    if (s == null) return null
+    try {
+        return java.time.OffsetDateTime.parse(v.toString().trim()).toInstant().toEpochMilli()
+    } catch (Exception ignored) {
+        return null
+    }
 }
 
 // am or pm, from the phase device's window; when it has none, from the hour.

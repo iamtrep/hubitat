@@ -37,7 +37,7 @@ Each time something changes, the app works out the whole decision again from the
 | 6 | Phase `active` | Advice `keep` and `eventUsed` below `keepUse`: holds 20.5 °C; otherwise 18 °C |
 | 7 | Anything else (an evening event announced, a morning event before the nightly time) | Releases its hold |
 
-**The silence fallback.** During an "at most" pre-heat, the stop comes from the plan device's stop check, whose heartbeat is `anchorChecked`: it changes every minute of an announced event's "at most" anchor window. When neither `anchorChecked` nor `anchorStop` has changed for 10 minutes, the app holds the stop temperature, so the pre-heat can't run to the end of the window without its stop check. Other plan attributes, such as `anchorUsed` from the power stream, still re-run the decision but don't count as a heartbeat: they keep arriving when the stop check doesn't run (a plan device that hasn't learned of the event). The 10 minutes count from the later of the last heartbeat and the start of the anchor window, so with no heartbeat at all the stop comes 10 minutes into the window. When the heartbeat comes back with `anchorStop` false, the pre-heat resumes. The fallback can stop the pre-heat early, never late.
+**The silence fallback.** During an "at most" pre-heat, the stop comes from the plan device's stop check, whose heartbeat is `anchorChecked`: it changes every minute of an announced event's "at most" anchor window. When neither `anchorChecked` nor `anchorStop` has changed for 10 minutes, the app holds the stop temperature, so the pre-heat can't run to the end of the window without its stop check. Other plan attributes, such as `anchorUsed` from the power stream, still re-run the decision but don't count as a heartbeat: they keep arriving when the stop check doesn't run (a plan device that hasn't learned of the event). The 10 minutes count from the later of the last heartbeat and the start of the anchor window (the Hydro peak device's `anchorStart`), so with no heartbeat at all the stop comes 10 minutes into the window, even when the phase left the anchor and came back. Without a readable `anchorStart`, they count from when the app saw the phase turn `anchor`. When the heartbeat comes back with `anchorStop` false, the pre-heat resumes. The fallback can stop the pre-heat early, never late.
 
 **Holds.** A hold is sent when the thermostat's heating setpoint differs from it, and also when the app doesn't own the hold yet. On an Ecobee, any setpoint written creates a hold, even one equal to the current setpoint, and only `resumeProgram` returns to the schedule; sending it anyway makes sure the program can't move the setpoint later. A setpoint within 0.3 °C (0.5 °F) of the hold counts as the hold: an Ecobee stores a setpoint sent to it in whole °F, so 18 °C reads back as 17.8 and 20.5 as 20.6. 30 seconds after a hold, the app warns in the log if the thermostat doesn't show it.
 
@@ -45,13 +45,13 @@ Each time something changes, the app works out the whole decision again from the
 
 **The plan's event.** When the plan device and the Hydro peak device both name an event (`eventDate`, `window`) and they differ, the plan is treated as missing. The 22.5 °C pre-heat never runs on a missing plan.
 
-**Triggers.** A change of the Hydro peak device's `phase`, `window` or `eventDate`; any change on the plan device; a mode change, acted on 5 seconds later so that another app's `resumeProgram` on the way back from Away lands first; the nightly time; hub start; Done.
+**Triggers.** A change of the Hydro peak device's `phase`, `window`, `eventDate` or `anchorStart`; any change on the plan device; a mode change, acted on 5 seconds later so that another app's `resumeProgram` on the way back from Away lands first; the nightly time; hub start; Done.
 
 ## Settings
 
 | Setting | Default | Notes |
 |---|---|---|
-| Hydro peak device | | `phase`, `window`, `eventDate` |
+| Hydro peak device | | `phase`, `window`, `eventDate`, `anchorStart` |
 | Winter credit plan device | | `anchorPlan`, `anchorStop`, `anchorChecked`, `advice`, `keepUse`, `eventUsed`, `eventDate`, `window` |
 | Thermostat | | Needs `setHeatingSetpoint` and `resumeProgram` |
 | Away modes | the mode named Away | No hold while the hub is in one of them |
