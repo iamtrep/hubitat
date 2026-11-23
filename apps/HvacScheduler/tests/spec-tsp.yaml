@@ -437,7 +437,7 @@ cases:
       - { device: test-tsp scheduler, attribute: profile, value: Away }
       - { device: test-tsp-th1, attribute: heatingSetpoint, value: 16.0, tolerance: 0.05 }
 
-  - name: delete-active-schedule-refused
+  - name: delete-default-schedule-refused
     allow_warnings: true
     actions:
       - { button: btnScheduleDelete }
@@ -445,7 +445,7 @@ cases:
     assert:
       - { device: test-tsp scheduler, attribute: schedule, value: Modes }
     assert_logs:
-      - { pattern: "Modes is the active schedule", level: warn }
+      - { pattern: "Modes is the default schedule", level: warn }
   - name: hold-through-main-page
     actions:
       - settings: { holdSel: Home, holdUntil: indefinite }

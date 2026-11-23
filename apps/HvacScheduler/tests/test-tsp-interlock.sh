@@ -12,7 +12,8 @@
 # and by its own switch at once, lifted in both orders; the program paused by
 # the group (pause while off) and by a second switch (pause while on); that
 # switch moved to the eco list (eco while on), alone and with eco set by
-# command.
+# command; a second schedule selected by that switch, alone and under the
+# Away mode override (followed on the event socket).
 #
 # Rig (set up once): virtual thermostat "test-tsp-ilk-th", virtual switch
 # "test-tsp-ilk-sw", virtual contact "test-tsp-ilk-window", HVAC Interlock group "test-ilk-tsp" (permit, that
@@ -22,7 +23,9 @@
 # "test-tsp-maker". Needs hub firmware 2.5.2.133 or later (hub variables
 # admin API).
 # Each run creates the program "test-tsp-ilk" and the hub variable
-# "zz_tsp_ilk_heat", and deletes both before exiting.
+# "zz_tsp_ilk_heat", and deletes both before exiting. The schedule cases
+# change the hub mode to Away and back, and restore the mode found at start.
+# They need the websockets package (scripts/lib/eventsocket.py).
 #
 # Usage:
 #   bash tests/test-tsp-interlock.sh            # default hub
@@ -42,10 +45,14 @@ for arg in "$@"; do
     if [[ "$arg" == @* ]]; then HUB_NAME="${arg#@}"; fi
 done
 
-python3 - "$HUB_NAME" "$CONFIG_FILE" <<'PYTHON_SCRIPT'
+LIB_DIR="$PROJECT_ROOT/scripts/lib"
+
+python3 - "$HUB_NAME" "$CONFIG_FILE" "$LIB_DIR" <<'PYTHON_SCRIPT'
 import json, re, sys, time, urllib.request, urllib.error, urllib.parse, http.cookiejar
 
-hub_name_arg, config_file = sys.argv[1], sys.argv[2]
+hub_name_arg, config_file, lib_dir = sys.argv[1], sys.argv[2], sys.argv[3]
+sys.path.insert(0, lib_dir)
+from eventsocket import EventCapture
 PARENT_TYPE = "HVAC Scheduler"
 GROUP_TYPE = "HVAC Interlock Group"
 GROUP_LABEL = "test-ilk-tsp"
@@ -306,6 +313,35 @@ code, text = post_json("/hub2/variables/create", {"name": VAR, "type": "bigdecim
 if code not in (200, 204):
     die(f"creating hub variable {VAR} answered {code} (firmware before 2.5.2.133?): {text}")
 
+def press(app_id, button):
+    post_form("/installedapp/btn", {"id": str(app_id), "name": button, f"settings[{button}]": "clicked", f"{button}.type": "button"})
+
+def set_mode(mode_id):
+    code, _ = http_json("GET", f"http://{hub_ip}/apps/api/{maker_id}/modes/{mode_id}", maker_token)
+    if code != 200:
+        die(f"Maker API mode {mode_id} answered {code}")
+
+def event_after(cap, mark, dev_id, name, want, timeout=20):
+    """Wait for an event of device `dev_id` on `name` with value `want` among the events after `mark`."""
+    end = time.time() + timeout
+    while time.time() < end:
+        for e in cap.events[mark:]:
+            if str(e.get("deviceId")) == str(dev_id) and e.get("name") == name and num(e.get("value")) == num(want):
+                return True
+        time.sleep(0.2)
+    return False
+
+def events_of(cap, mark, dev_id, name):
+    return [e.get("value") for e in cap.events[mark:] if str(e.get("deviceId")) == str(dev_id) and e.get("name") == name]
+
+modes_doc = fetch("/modes/json")
+start_mode = modes_doc.get("currentModeId")
+away_mode = next((m["id"] for m in modes_doc["modes"] if m["name"].lower() == "away"), None)
+if away_mode is None:
+    die("The hub needs a mode named Away")
+# The schedule cases start outside Away; the mode found at start is restored at the end.
+base_mode = start_mode if start_mode != away_mode else next(m["id"] for m in modes_doc["modes"] if m["id"] != away_mode)
+
 prog_id = None
 try:
     save_settings(parent_id, page_of(parent_id, "debugEnable"), {"debugEnable": True})
@@ -450,7 +486,62 @@ try:
     run_method(prog_dev, "setEco", "off")
     check("both clear: setpoint restored", wait_for(therm_id, "heatingSetpoint", 22.0), 22.0)
     check("program device eco off", wait_for(prog_dev, "eco", "off"), "off")
+
+    # ── Schedule selected by a switch ────────────────────────────────
+    section("Schedule selected by a switch")
+    save_settings(prog_id, page_of(prog_id, "ecoWhenOn"), {"ecoWhenOn": []})
+    s, doc = call("GET", f"/programs/{prog_id}")
+    cfg = doc["config"]
+    cfg["profiles"] += [{"name": "Low", "heat": 17.0}, {"name": "Away", "heat": 16.0}]
+    cfg["schedules"].append({"name": "Peak", "type": "time", "groups": [
+        {"name": "All", "days": [1, 2, 3, 4, 5, 6, 7],
+         "periods": [{"name": "Low", "profile": "Low", "start": {"kind": "time", "at": "00:00"}}]}]})
+    cfg["overrides"] = [{"modeId": away_mode, "profile": "Away"}]
+    s, b = call("PUT", f"/programs/{prog_id}", {"revision": doc["revision"], "config": cfg})
+    if s != 200:
+        die(f"PUT with the Peak schedule answered {s} {b}")
+    peak_sched = next(x for x in b["config"]["schedules"] if x["name"] == "Peak")
+    check("schedules carry ids", all(isinstance(x.get("id"), int) for x in b["config"]["schedules"]), True)
+    press(prog_id, f"esc~{b['config']['schedules'].index(peak_sched)}")
+    save_settings(prog_id, "schedulesPage", {f"scheduleWhenOn_{peak_sched['id']}": [peak_id]})
+    if start_mode != base_mode:
+        set_mode(base_mode)
+    check("default schedule before the switch", wait_for(prog_dev, "schedule", "Normal"), "Normal")
+    with EventCapture(hub_ip=hub_ip, opener=opener) as cap:
+        mark = len(cap.events)
+        maker(peak_id, "on")
+        check("switch on: the Peak schedule's setpoint", event_after(cap, mark, therm_id, "heatingSetpoint", 17.0), True)
+        check("switch on: schedule attribute names Peak", event_after(cap, mark, prog_dev, "schedule", "Peak"), True)
+        st = call("GET", f"/programs/{prog_id}")[1].get("status", {})
+        check("status JSON: schedule and default schedule", [st.get("schedule"), st.get("defaultSchedule")], ["Peak", "Normal"])
+
+        mark = len(cap.events)
+        maker(peak_id, "off")
+        check("switch off: back to the default schedule's setpoint", event_after(cap, mark, therm_id, "heatingSetpoint", 22.0), True)
+        check("switch off: schedule attribute names Normal", event_after(cap, mark, prog_dev, "schedule", "Normal"), True)
+
+        mark = len(cap.events)
+        set_mode(away_mode)
+        check("Away mode: the override's setpoint", event_after(cap, mark, therm_id, "heatingSetpoint", 16.0), True)
+        mark = len(cap.events)
+        maker(peak_id, "on")
+        check("switch on under the override: schedule attribute names Peak", event_after(cap, mark, prog_dev, "schedule", "Peak"), True)
+        time.sleep(3)
+        check("switch on under the override: no setpoint write", events_of(cap, mark, therm_id, "heatingSetpoint"), [])
+        check("switch on under the override: status mode", prog_status(), "mode")
+
+        mark = len(cap.events)
+        set_mode(base_mode)
+        check("override ends: the Peak schedule's setpoint", event_after(cap, mark, therm_id, "heatingSetpoint", 17.0), True)
+        mark = len(cap.events)
+        maker(peak_id, "off")
+        check("switch off: the default schedule's setpoint", event_after(cap, mark, therm_id, "heatingSetpoint", 22.0), True)
 finally:
+    try:
+        if fetch("/modes/json").get("currentModeId") != start_mode:
+            set_mode(start_mode)
+    except Exception as e:
+        info(f"could not restore hub mode {start_mode}: {e}")
     maker(window_id, "close")
     maker(peak_id, "off")
     if prog_id: delete_program(prog_id)

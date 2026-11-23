@@ -29,7 +29,7 @@ A program controls one or more thermostats that share a schedule, usually one zo
 
 The program's main page shows what is in effect and why, the next period, the thermostats (a setpoint the thermostat's mode doesn't use is dimmed), and the week of the active schedule as a timeline. Its controls are the **Running** and **Eco** switches, **Apply now**, a hold (profile, until, **Hold**), and **Skip to** the next period or **Resume schedule**. Four pages hold the setup: **Schedule**, **Comfort** (the profiles), **When it changes** (mode overrides, occupancy and pause conditions) and **Thermostats and advanced**.
 
-Clicking a period, profile or override opens its editor in place of the list, with **Save** and **Cancel**. Settings on *When it changes* and *Thermostats and advanced* apply as soon as they change, without **Done**.
+Clicking a period, profile or override opens its editor in place of the list, with **Save** and **Cancel**. Settings on *When it changes* and *Thermostats and advanced*, and a schedule's switches, apply as soon as they change, without **Done**.
 
 A new program starts with the profiles Home, Sleep and Away, one schedule, Normal, with Wake at 06:30 (Home) and Night at 22:00 (Sleep) every day, and an override from the Away mode to the Away profile.
 
@@ -41,7 +41,11 @@ Setpoints use the hub's temperature scale. Valid values are 0 to 40 °C or 32 to
 
 ### Schedules
 
-A program can have several schedules, for example Normal and Vacation. One is active, and the `setSchedule` command switches it. Each schedule is one of two types:
+A program can have several schedules, for example Normal and Vacation. The active schedule is the one running now; the default schedule is the one used when no switch asks for another. **Make *X* the default schedule** on the *Schedule* page and the `setSchedule` command change the default.
+
+Every schedule has two optional switch lists, **Use this schedule while any of these is on** and **Use this schedule while any of these is off**, for example a peak-day schedule selected by a switch. The active schedule is the first schedule in the list whose switches ask for it; when none does, it is the default schedule. **Move up** and **Move down** set the order. A change of active schedule applies like a period transition, and the main page says which switch made a schedule active. Renaming a schedule keeps its switches; a copy starts without them. The default schedule cannot be deleted; a schedule active because of a switch can, and the program falls back.
+
+Each schedule is one of two types:
 
 - **Time of day:** day groups, each with its own periods. Every day belongs to exactly one group. A period starts at a fixed time, at sunrise or sunset with an offset in minutes, or at the time held in a DateTime hub variable, and uses a profile or its own custom setpoints. Before the first period of a day, the previous day's last period is in effect. On the *Schedule* page each group shows the seven days as buttons: clicking a day moves it into that group, and clicking a day the group already has gives it a group of its own with a copy of its periods.
 - **Hub mode:** rows that map one or more hub modes to a profile or custom setpoints. A mode with no row leaves the thermostats as they are. Modes are matched by id, so renaming a mode keeps its row.
@@ -70,7 +74,7 @@ A hold replaces the scheduled values until it ends. It holds a profile or explic
 
 | End | Meaning |
 |---|---|
-| `next` | Until the next schedule transition, or until a mode override starts or ends |
+| `next` | Until the next schedule transition or change of active schedule, or until a mode override starts or ends |
 | minutes | For that many minutes (1 to 999999) |
 | ISO time | Until a date and time, for example `2026-10-03T22:00:00-04:00` |
 | `indefinite` | Until resumed |
@@ -79,7 +83,7 @@ A hold replaces the scheduled values until it ends. It holds a profile or explic
 
 ### Precedence
 
-The program resolves one target from these layers, highest first, and applies the eco offset last: paused or restricted, hold, mode override, active schedule (with the occupied profile in periods that use it while the zone is occupied). Turning one layer off re-resolves the rest, so nothing stale is left behind.
+The program resolves one target from these layers, highest first, and applies the eco offset last: paused or restricted, hold, mode override, active schedule (the first schedule a switch asks for, else the default schedule, with the occupied profile in periods that use it while the zone is occupied). Turning one layer off re-resolves the rest, so nothing stale is left behind.
 
 ### Writing to thermostats
 
@@ -117,7 +121,7 @@ The device is how rules, Maker API, dashboards and other apps reach one program;
 |---|---|
 | `switch` | `on` running, `off` paused |
 | `status` | `schedule`, `mode`, `hold`, `manual`, `paused`, `restricted` |
-| `schedule` | Active schedule name |
+| `schedule` | Active schedule name: the schedule running now |
 | `profile` | Profile in effect, `custom` for explicit setpoints, or `none`. The occupied profile while it raises the heating or lowers the cooling setpoint |
 | `heatingTarget`, `coolingTarget` | Resolved setpoints in °C or °F (hub's scale), eco offset included. When no target applies to one of them, it keeps its last value; `status` and `profile` show when no target applies |
 | `holdEnd` | `next`, `indefinite`, an ISO time, or `none` |
@@ -136,7 +140,7 @@ The device is how rules, Maker API, dashboards and other apps reach one program;
 | `advance` | Apply the next period's values now, as a `next` hold (time schedules only) |
 | `holdProfile` | profile, end (`next`, `indefinite`, minutes or ISO time; blank means `next`) |
 | `holdSetpoints` | heating, cooling (at least one), end |
-| `setSchedule` | Schedule name |
+| `setSchedule` | Schedule name: sets the default schedule; a schedule a switch asks for still runs first |
 | `setEco` | `on` or `off` |
 | `setEcoOffset` | Number from -10 to 10 |
 | `refresh` | Re-publish the status |
@@ -166,12 +170,14 @@ curl -s -X POST -H 'Content-Type: application/json' \
 The reply carries the new status:
 
 ```json
-{"ok": true, "id": 12, "name": "Living room", "switch": "on", "status": "hold", "schedule": "Normal",
+{"ok": true, "id": 12, "name": "Living room", "switch": "on", "status": "hold", "schedule": "Normal", "defaultSchedule": "Normal",
  "profile": "Sleep", "heatingTarget": 18.0, "coolingTarget": 26.0, "holdEnd": "next",
  "nextTransition": "2026-10-04T06:30:00-04:00", "nextProfile": "Home", "eco": "off", "ecoOffset": 2.0, "lastApply": "ok"}
 ```
 
-`PUT` takes `{"revision": <from GET>, "config": {...}}`, where `config` has the shape `GET` returns. Profiles, schedules, the active schedule and overrides are required and replace the program's, with `occupancy` (`{"profile": "<name>"}`) optional; periods and rows may carry `"useOccupied": true`; `eco`, `options` and `restrictions` are optional and, when present, replace those settings. A configuration changed since the `GET` answers 409 with the current `revision`; a configuration that does not validate answers 400 with an `errors` list. A hold on a profile the new configuration drops ends.
+`schedule` is the schedule running now and `defaultSchedule` the default schedule. In the configuration, `active` names the default schedule; the key is the one earlier versions used, so existing clients keep working. Each schedule carries an `id`, which keeps its switch lists across a rename; the switch lists themselves are program settings and are not part of the configuration.
+
+`PUT` takes `{"revision": <from GET>, "config": {...}}`, where `config` has the shape `GET` returns. Profiles, schedules, the default schedule (`active`) and overrides are required and replace the program's, with `occupancy` (`{"profile": "<name>"}`) optional; periods and rows may carry `"useOccupied": true`; `eco`, `options` and `restrictions` are optional and, when present, replace those settings. A configuration changed since the `GET` answers 409 with the current `revision`; a configuration that does not validate answers 400 with an `errors` list. A hold on a profile the new configuration drops ends. A schedule sent without an `id` takes the id, and so the switches, of the current schedule with the same name, or a new id; the switches of a schedule the configuration drops are removed.
 
 Errors carry an `error` field: 400 for a body that is not a JSON object or a bad command or argument, 403 when local or cloud access is off, 404 for an unknown program, 409 for a disabled one. A malformed JSON body sent as `application/json` gets an empty 200 from the platform before the app runs.
 
@@ -188,7 +194,7 @@ Run from the repository root. On-hub tests target the default hub in `.hubitat.j
 | `RUN_SLOW_TESTS=1 bash apps/HvacScheduler/tests/test-tsp-retry.sh` | Write check, with the Stubborn Thermostat test driver |
 | `bash apps/HvacScheduler/tests/test-tsp-api.sh` | HTTP API, on the program `test-tsp.sh` provisions |
 | `bash apps/HvacScheduler/tests/test-tsp-import.sh` | Importing the built-in scheduler the parity test uses |
-| `bash apps/HvacScheduler/tests/test-tsp-interlock.sh` | Hub variable setpoints, eco by device command and by eco lists, pausing on an HVAC Interlock group |
+| `bash apps/HvacScheduler/tests/test-tsp-interlock.sh` | Hub variable setpoints, eco by device command and by eco lists, pausing on an HVAC Interlock group, a schedule selected by a switch |
 | `RUN_SLOW_TESTS=1 bash apps/HvacScheduler/tests/test-tsp-occupancy.sh` | Occupancy: both delays, the occupied profile, eco, holds, pauses |
 | `RUN_SLOW_TESTS=1 bash apps/HvacScheduler/tests/test-tsp-parity.sh` | Side by side with a built-in Thermostat Scheduler |
 

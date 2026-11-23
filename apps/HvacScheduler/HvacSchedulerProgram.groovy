@@ -15,7 +15,7 @@ import com.hubitat.hub.domain.State
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.5.1"
+@Field static final String CODE_VERSION = "0.6.0"
 
 definition(
     name: "HVAC Scheduler Program",
@@ -202,6 +202,7 @@ boolean saveConfig(Map doc, Map renamed = null) {
     if (errs) { uiErr(errs.join('; ')); logWarn "not saved: ${errs.join('; ')}"; return false }
     state.remove('uiError')
     state.config = doc
+    pruneScheduleSwitches(doc)
     if (renamed) renameHeldProfile(renamed.from as String, renamed.to as String)
     clearEdits()
     resubscribe()
@@ -231,13 +232,15 @@ Map mainPage() {
             paragraph h.toString()
             input "btnImportDismiss", "button", title: "Dismiss", width: 2, inputClass: SEC
         }
+        String running = null
         if (installed && thermostats) {
             Map cfg = coreConfig()
             Map rt = state.rt as Map
             Map ctx = buildCtx(cfg)
             Map target = (rt.lastTarget ?: [layer: 'none']) as Map
             Map sm = statusMap(cfg, rt, target, ctx)
-            Map sched = (cfg.schedules as List<Map>).find { it.name == cfg.active }
+            Map sched = effectiveSchedule(cfg, ctx)
+            running = sched?.name as String
             Map nx = sched?.type == 'time' ? nextTransitionOf(sched, ctx) : null
             section {
                 paragraph nowHtml(cfg, rt, target, ctx, sm), width: 8
@@ -273,7 +276,7 @@ Map mainPage() {
         }
         section("Setup") {
             Map cfg = uiCfg()
-            href "schedulesPage", title: "Schedule", description: esc((cfg.schedules as List<Map>).collect { Map s -> s.name == cfg.active ? "${s.name} (active)${s.type == 'time' ? ': ' + (s.groups as List<Map>)*.name.join(', ') : ''}" : s.name }.join(' · ')), width: 6
+            href "schedulesPage", title: "Schedule", description: esc(scheduleSummary(cfg, running)), width: 6
             String occ = occupiedProfile(cfg)
             href "profilesPage", title: "Comfort", description: esc((cfg.profiles as List<Map>)*.name.join(', ') + (occ ? " · occupied: ${occ}" : '')), width: 6
             href "optionsPage", title: "When it changes", description: esc(optionsSummary(cfg)), width: 6
@@ -283,6 +286,14 @@ Map mainPage() {
             label title: "Program name", required: true
         }
     }
+}
+
+// The default schedule with its groups; the schedule running now, when a switch picked another.
+String scheduleSummary(Map cfg, String running) {
+    return (cfg.schedules as List<Map>).collect { Map s ->
+        if (s.name == cfg.active) return "${s.name} (default)${s.type == 'time' ? ': ' + (s.groups as List<Map>)*.name.join(', ') : ''}".toString()
+        return s.name == running ? "${s.name} (active)".toString() : s.name as String
+    }.join(' · ')
 }
 
 String optionsSummary(Map cfg) {
@@ -305,7 +316,7 @@ String nowHtml(Map cfg, Map rt, Map target, Map ctx, Map sm) {
     if (target.layer in ['schedule', 'mode', 'hold']) {
         h << "<div class='tsp-big'>${esc(prof)} · ${heatSpan(target.heat)}${target.cool != null ? ' / ' + coolSpan(target.cool) : ''} ${unit()}</div>"
     } else h << "<div class='tsp-big'>${status == 'paused' ? 'Paused' : (status == 'restricted' ? 'Paused by a condition' : 'Nothing scheduled')}</div>"
-    Map sched = (cfg.schedules as List<Map>).find { it.name == cfg.active }
+    Map sched = effectiveSchedule(cfg, ctx)
     Map cur = sched?.type == 'time' ? currentTransition(sched, ctx) : null
     String why
     if (status == 'paused') why = "The program is switched off. While paused: ${(cfg.options as Map).whilePaused == 'off' ? 'thermostats off' : 'thermostats left as they are'}."
@@ -316,7 +327,7 @@ String nowHtml(Map cfg, Map rt, Map target, Map ctx, Map sm) {
         why = "Held until ${until}"
     } else if (target.layer == 'mode') why = "The hub is in ${modeName(target.overrideModeId)} mode"
     else if (sched?.type == 'mode') why = target.layer == 'none' ? "${sched.name} has no row for ${modeName(ctx.modeId)}: thermostats left as they are" : "${sched.name} schedule, hub mode ${modeName(ctx.modeId)}"
-    else why = cur ? "${cur.group} · ${cur.period} since ${hhmmOf(cur.at as long, tz)}" : "${cfg.active} has no period yet"
+    else why = cur ? "${cur.group} · ${cur.period} since ${hhmmOf(cur.at as long, tz)}" : "${sched?.name ?: cfg.active} has no period yet"
     Map occ = rt.occ as Map
     if (occupancySensor && occ && target.occupied && cur) {
         Map pv = cur.custom ? valuesOf(cur.custom as Map, ctx) : profileValues(cfg, cur.profile as String, ctx)
@@ -324,6 +335,8 @@ String nowHtml(Map cfg, Map rt, Map target, Map ctx, Map sm) {
     } else if (occupancySensor && occ) {
         h << "<div>${occ.state == 'occupied' ? 'Occupied' : 'Vacant'} since ${hhmmOf(occ.since as long, tz)} (${esc(occupancySensor.displayName)})</div>"
     }
+    Map ask = sched && sched.name != cfg.active ? ((ctx.scheduleAsks ?: [:]) as Map)[sched.id?.toString()] as Map : null
+    if (ask) h << "<div>${esc(sched.name)} is active because ${esc(ask.name)} is ${esc(ask.state)}</div>"
     h << "<div>${esc(why)}</div>"
     if (status == 'manual') {
         List names = (thermostats ?: []).findAll { (rt.manual as List).contains(it.id as String) }*.displayName
@@ -542,6 +555,8 @@ int uiSchedIndex(Map cfg) {
 
 Map schedulesPage() {
     dynamicPage(name: "schedulesPage", title: "Schedule") {
+        ensureScheduleIds()
+        applyLiveSettings()
         Map cfg = uiCfg()
         Map ui = uiState()
         List<Map> scheds = cfg.schedules as List<Map>
@@ -557,26 +572,37 @@ Map schedulesPage() {
         if (ui.schedule == si && s.type == 'time' && ui.group != null && ui.period != null && (ui.group as int) < (s.groups as List).size()) { periodEditor(cfg, s, ui); return }
         if (ui.schedule == si && s.type == 'mode' && ui.row != null) { rowEditor(cfg, s, ui); return }
         if (ui.schedule == si && s.type == 'time' && ui.groupName != null) { groupNameEditor(s, ui); return }
+        Map ctx = buildCtx(coreConfig())
+        String running = effectiveSchedule(cfg, ctx)?.name
         section {
             scheds.eachWithIndex { Map x, int i ->
-                input "esc~${i}", "button", title: esc(x.name == cfg.active ? "${x.name} · active" : x.name), width: 2, inputClass: i == si ? PRI : SEC
+                input "esc~${i}", "button", title: esc("${x.name}${x.name == cfg.active ? ' · default' : ''}${x.name == running ? ' · active' : ''}"), width: 2, inputClass: i == si ? PRI : SEC
             }
             input "btnScheduleNew", "button", title: "+ New schedule", width: 2, inputClass: SEC
         }
-        Map ctx = buildCtx(coreConfig())
         if (s.type == 'time') {
             section { paragraph timelineHtml(cfg, s, ctx) }
             timeScheduleSections(cfg, s, si, ui, ctx)
         } else modeScheduleSections(cfg, s, si, ui)
-        section("Schedule settings", hideable: true, hidden: !(settings.edSchedName || settings.edSchedType)) {
+        String onKey = s.id != null ? scheduleSwitchKey(s.id, true) : null
+        String offKey = s.id != null ? scheduleSwitchKey(s.id, false) : null
+        boolean hasSwitches = s.id != null && (settings[onKey] || settings[offKey])
+        section("Schedule settings", hideable: true, hidden: !(settings.edSchedName || settings.edSchedType || hasSwitches)) {
             input "edSchedName", "text", title: "Schedule name", defaultValue: s.name, width: 6, submitOnChange: true, required: false
             input "edSchedType", "enum", title: "Schedule by", options: [time: "Time of day", mode: "Hub mode"], defaultValue: s.type, width: 6, submitOnChange: true, required: false
             if ((settings.edSchedName && settings.edSchedName != s.name) || (settings.edSchedType && settings.edSchedType != s.type))
                 input "btnScheduleSave", "button", title: "Save name and type", width: 3, inputClass: PRI
+            if (s.id != null) {
+                input onKey, "capability.switch", title: "Use this schedule while any of these is on", multiple: true, required: false, submitOnChange: true, width: 6
+                input offKey, "capability.switch", title: "Use this schedule while any of these is off", multiple: true, required: false, submitOnChange: true, width: 6
+            }
+            paragraph "<p class='tsp-note'>The active schedule is the first schedule in this list whose switches ask for it, or the default schedule when none does.</p>"
             input "btnScheduleCopy", "button", title: "Copy to a new schedule", width: 3, inputClass: SEC
-            if (s.name != cfg.active) input "btnScheduleActivate", "button", title: "Make ${esc(s.name)} the active schedule", width: 4, inputClass: PRI
+            if (si > 0) input "btnScheduleUp", "button", title: "Move up", width: 2, inputClass: SEC
+            if (si < scheds.size() - 1) input "btnScheduleDown", "button", title: "Move down", width: 2, inputClass: SEC
+            if (s.name != cfg.active) input "btnScheduleActivate", "button", title: "Make ${esc(s.name)} the default schedule", width: 4, inputClass: PRI
             if (s.name != cfg.active) input "btnScheduleDelete", "button", title: "Delete schedule", width: 3, inputClass: DANGER
-            else paragraph "<p class='tsp-note'>The active schedule can't be deleted; make another one active first.</p>"
+            else paragraph "<p class='tsp-note'>The default schedule can't be deleted; make another one the default first.</p>"
         }
     }
 }
@@ -585,7 +611,7 @@ Map schedulesPage() {
 
 void timeScheduleSections(Map cfg, Map s, int si, Map ui, Map ctx) {
     List<Map> groups = s.groups as List<Map>
-    Map cur = s.name == cfg.active ? currentTransition(s, ctx) : null
+    Map cur = s.name == effectiveSchedule(cfg, ctx)?.name ? currentTransition(s, ctx) : null
     String occ = occupiedProfile(cfg)
     groups.eachWithIndex { Map g, int gi ->
         section(esc(g.name as String)) {
@@ -861,8 +887,13 @@ Map advancedPage() {
     'restrictFrom', 'restrictFromAt', 'restrictFromOffset', 'restrictTo', 'restrictToAt', 'restrictToOffset', 'restrictDays', 'restrictModes',
     'whilePaused', 'onResume', 'ecoOffset', 'ecoOnOverrides', 'separation', 'verifyWrites', 'applyOnStart']
 
+// The schedule switch inputs that hold switches join the live keys.
+List<String> liveKeys() {
+    return LIVE_KEYS + settings.keySet().findAll { String k -> k ==~ SCHEDULE_SWITCH_KEY && settings[k] }.sort()
+}
+
 String liveSig() {
-    return LIVE_KEYS.collect { String k ->
+    return liveKeys().collect { String k ->
         Object v = settings[k]
         String s = v instanceof Collection ? (v as Collection).collect { it instanceof DeviceWrapper ? (it as DeviceWrapper).id.toString() : it.toString() }.sort().join(',')
                  : (v instanceof DeviceWrapper ? (v as DeviceWrapper).id.toString() : v?.toString())
@@ -1073,9 +1104,11 @@ boolean scheduleButton(String btn, Map ui) {
     }
     if (btn == "btnScheduleNew" || btn == "btnScheduleCopy") {
         Map c = cfgCopy(); List<Map> scheds = c.schedules as List<Map>
-        Map ns = btn == 'btnScheduleNew' ? [name: uniqueName(scheds*.name as List<String>, "New schedule"), type: 'time',
+        // A new id: a copy does not take the original's switches.
+        int id = nextScheduleId(scheds)
+        Map ns = btn == 'btnScheduleNew' ? [id: id, name: uniqueName(scheds*.name as List<String>, "New schedule"), type: 'time',
                                              groups: [[name: 'Every day', days: [1, 2, 3, 4, 5, 6, 7], periods: []]]]
-                                           : (parseJson(groovy.json.JsonOutput.toJson(scheds[si])) as Map) + [name: uniqueName(scheds*.name as List<String>, "${scheds[si].name} copy".toString())]
+                                           : (parseJson(groovy.json.JsonOutput.toJson(scheds[si])) as Map) + [id: id, name: uniqueName(scheds*.name as List<String>, "${scheds[si].name} copy".toString())]
         scheds << ns
         if (saveConfig(c)) state.ui = [schedule: scheds.size() - 1]
         return true
@@ -1095,13 +1128,21 @@ boolean scheduleButton(String btn, Map ui) {
         if (saveConfig(c)) state.ui = [schedule: si]
         return true
     }
+    if (btn == "btnScheduleUp" || btn == "btnScheduleDown") {
+        Map c = cfgCopy(); List<Map> scheds = c.schedules as List<Map>
+        int to = si + (btn == "btnScheduleUp" ? -1 : 1)
+        if (to < 0 || to >= scheds.size()) return true
+        scheds.add(to, scheds.remove(si))
+        if (saveConfig(c)) state.ui = [schedule: to]
+        return true
+    }
     if (btn == "btnScheduleActivate") {
         apiCommand([command: 'setSchedule', schedule: (cfg.schedules as List<Map>)[si].name])
         return true
     }
     if (btn == "btnScheduleDelete") {
         String n = (cfg.schedules as List<Map>)[si].name
-        if (n == cfg.active) { uiErr("${n} is the active schedule".toString()); logWarn "${n} is the active schedule"; return true }
+        if (n == cfg.active) { uiErr("${n} is the default schedule".toString()); logWarn "${n} is the default schedule"; return true }
         Map c = cfgCopy(); (c.schedules as List).remove(si)
         if (saveConfig(c)) state.ui = [:]
         return true
@@ -1216,6 +1257,7 @@ Map newRt() {
 void initialize() {
     checkVersion(false)
     if (!state.config) state.config = newConfig()
+    ensureScheduleIds()
     if (state.rt == null) state.rt = newRt()
     if (!settings.testClock) app.removeSetting("testClock")
     programDevice()
@@ -1236,6 +1278,7 @@ void subscribeAll() {
     subscribe(location, "systemStart", "startHandler")
     [pauseWhenOn, pauseWhenOff].each { if (it) subscribe(it, "switch", "pauseSwitchHandler") }
     [ecoWhenOn, ecoWhenOff].each { if (it) subscribe(it, "switch", "ecoSwitchHandler") }
+    scheduleSwitchKeys((state.config ?: [:]) as Map).each { String k -> if (settings[k]) subscribe(settings[k], "switch", "scheduleSwitchHandler") }
     if (occupancySensor) subscribe(occupancySensor, "motion", "occupancyHandler")
     List<String> vars = varNames((state.config ?: [:]) as Map)
     removeAllInUseGlobalVar()
@@ -1324,7 +1367,51 @@ Map buildCtx(Map cfg) {
                occupied: occupancySensor ? (((state.rt as Map)?.occ as Map)?.state == 'occupied') : null]
     ctx.restricted = restrictedNow(cfg.restrictions as Map, ctx) || switchRestricted()
     ctx.ecoSwitch = !ecoSwitchesOn().isEmpty()
+    ctx.scheduleAsks = scheduleAsks(cfg)
     return ctx
+}
+
+// ── Schedule switches ──
+// Each schedule has two switch lists, named by its id so a rename keeps them.
+
+@Field static final String SCHEDULE_SWITCH_KEY = /scheduleWhen(On|Off)_\d+/
+
+String scheduleSwitchKey(Object id, boolean on) { return "scheduleWhen${on ? 'On' : 'Off'}_${id}".toString() }
+
+List<String> scheduleSwitchKeys(Map cfg) {
+    return ((cfg.schedules ?: []) as List<Map>).findAll { it.id != null }.collectMany { Map s -> [scheduleSwitchKey(s.id, true), scheduleSwitchKey(s.id, false)] }
+}
+
+List<Map> switchStates(Object devs) {
+    return ((devs ?: []) as List).collect { [name: it.displayName as String, value: it.currentValue("switch") as String] }
+}
+
+// Schedule id → the switch asking for that schedule, for the schedules a switch asks for.
+Map scheduleAsks(Map cfg) {
+    Map out = [:]
+    ((cfg.schedules ?: []) as List<Map>).each { Map s ->
+        if (s.id == null) return
+        Map ask = switchAsk(switchStates(settings[scheduleSwitchKey(s.id, true)]), switchStates(settings[scheduleSwitchKey(s.id, false)]))
+        if (ask) out[s.id.toString()] = ask
+    }
+    return out
+}
+
+boolean hasScheduleSwitches() { return settings.keySet().any { String k -> k ==~ SCHEDULE_SWITCH_KEY && settings[k] } }
+
+// Settings of schedules that no longer exist.
+void pruneScheduleSwitches(Map cfg) {
+    List<String> keep = scheduleSwitchKeys(cfg)
+    settings.keySet().findAll { String k -> k ==~ SCHEDULE_SWITCH_KEY && !keep.contains(k) }.each { String k -> app.removeSetting(k) }
+}
+
+// Configurations saved before 0.6.0 have schedules without ids.
+void ensureScheduleIds() {
+    Map c = state.config as Map
+    if (c && assignScheduleIds(c.schedules as List<Map>, [])) {
+        state.config = c
+        logCfg "schedule ids added"
+    }
 }
 
 // ── Occupancy ──
@@ -1409,6 +1496,8 @@ List<Map> thermostatStates(Map modeOverride = [:]) {
 
 boolean sameTarget(Map a, Map b) {
     if (a == null || b == null) return false
+    // A target from before 0.6.0 has no schedule id.
+    if (a.scheduleId != null && b.scheduleId != null && a.scheduleId.toString() != b.scheduleId.toString()) return false
     return ['layer', 'profile', 'heat', 'cool', 'fan', 'mode', 'eco', 'transitionKey', 'overrideModeId'].every { String k -> a[k]?.toString() == b[k]?.toString() }
 }
 
@@ -1423,6 +1512,11 @@ void evaluate(String why, boolean force, String onlyId = null) {
         logCfg "hold ended"
         rt.hold = null
         target = resolveTarget(cfg, rt, ctx)
+    }
+    Map last = rt.lastTarget as Map
+    if (last?.scheduleId != null && target.scheduleId != null && last.scheduleId.toString() != target.scheduleId.toString() && hasScheduleSwitches()) {
+        Map ask = ((ctx.scheduleAsks ?: [:]) as Map)[target.scheduleId.toString()] as Map
+        logCfg "${target.schedule} is active${ask ? " because ${ask.name} is ${ask.state}" : ' (the default schedule)'}"
     }
     // Armed before any device command, so a failing write cannot leave the program without a wake.
     armWake(cfg, rt, ctx)
@@ -1546,7 +1640,7 @@ void verifyWrites() {
 
 Map statusMap(Map cfg, Map rt, Map target, Map ctx) {
     TimeZone tz = ctx.tz as TimeZone
-    Map sched = (cfg.schedules as List<Map>)?.find { it.name == cfg.active }
+    Map sched = effectiveSchedule(cfg, ctx)
     Map next = sched?.type == 'time' ? nextTransitionOf(sched, ctx) : null
     java.text.SimpleDateFormat iso = new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX")
     iso.setTimeZone(tz)
@@ -1555,15 +1649,16 @@ Map statusMap(Map cfg, Map rt, Map target, Map ctx) {
     Map hold = rt.hold as Map
     String holdEnd = !hold ? 'none' : (hold.end == 'at' ? iso.format(new Date(hold.until as long)) : hold.end as String)
     return [
-        switch: rt.paused ? 'off' : 'on', status: status, schedule: cfg.active, profile: target.profile ?: 'none',
+        switch: rt.paused ? 'off' : 'on', status: status, schedule: sched?.name ?: cfg.active, defaultSchedule: cfg.active, profile: target.profile ?: 'none',
         heatingTarget: target.heat, coolingTarget: target.cool, holdEnd: holdEnd,
         nextTransition: next ? iso.format(new Date(next.at as long)) : 'none', nextProfile: next?.profile ?: 'none',
         eco: rt.eco || ctx.ecoSwitch ? 'on' : 'off', ecoOffset: (cfg.eco as Map).offset, lastApply: rt.lastApply,
         occupancy: occupancySensor ? (((rt.occ as Map)?.state ?: 'none') as String) : 'none']
 }
 
+// The device has no defaultSchedule attribute; the status JSON has it.
 void publish(Map cfg, Map rt, Map target, Map ctx) {
-    programDevice().updateStatus(statusMap(cfg, rt, target, ctx))
+    programDevice().updateStatus(statusMap(cfg, rt, target, ctx).findAll { k, v -> k != 'defaultSchedule' })
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────
@@ -1572,6 +1667,7 @@ void wakeHandler() { checkVersion(); evaluate("wake", false) }
 void modeHandler(evt) { checkVersion(); logEvt "mode ${evt.value}"; evaluate("mode", false) }
 void pauseSwitchHandler(evt) { checkVersion(); logEvt "pause switch ${evt.displayName} ${evt.value}"; evaluate("pause switch", false) }
 void ecoSwitchHandler(evt) { checkVersion(); logEvt "eco switch ${evt.displayName} ${evt.value}"; evaluate("eco switch", false) }
+void scheduleSwitchHandler(evt) { checkVersion(); logEvt "schedule switch ${evt.displayName} ${evt.value}"; evaluate("schedule switch", false) }
 void startHandler(evt = null) {
     checkVersion()
     Map rt = state.rt as Map
@@ -1631,7 +1727,10 @@ void replaceConfig(Map doc, Map optionGroups, boolean force) {
         state.rt = rt
         logCfg "hold on ${hold.profile} ended: the profile was removed"
     }
+    // A schedule sent without an id keeps the id, and so the switches, of the schedule with its name.
+    assignScheduleIds(doc.schedules as List<Map>, ((state.config as Map)?.schedules ?: []) as List<Map>)
     state.config = doc
+    pruneScheduleSwitches(doc)
     state.ui = [:]
     clearEdits()
     logCfg "configuration replaced"
@@ -1698,7 +1797,7 @@ Map apiCommand(Map req) {
             Map cur = resolveTarget(cfg, rt + [hold: null], ctx)
             Map hold
             if (p.name == 'advance') {
-                Map sched = (cfg.schedules as List<Map>).find { it.name == cfg.active }
+                Map sched = effectiveSchedule(cfg, ctx)
                 Map nx = sched?.type == 'time' ? nextTransitionOf(sched, ctx) : null
                 if (!nx) return [ok: false, error: 'no next transition']
                 hold = nx.custom ? [kind: 'setpoints', heat: (nx.custom as Map).heat, cool: (nx.custom as Map).cool] : [kind: 'profile', profile: nx.profile]
@@ -1712,6 +1811,7 @@ Map apiCommand(Map req) {
             if (a.end == 'at') hold.until = a.until
             hold.transitionKey = cur.transitionKey
             hold.overrideModeId = cur.overrideModeId
+            hold.scheduleId = cur.scheduleId
             rt.hold = hold
             break
     }
@@ -1762,6 +1862,7 @@ void checkVersion(boolean reinit = true) {
     logVer "version ${CODE_VERSION} (was ${state.version})"
     state.version = CODE_VERSION
     migratePauseSwitch()
+    ensureScheduleIds()
     if (reinit) runIn(1, "updated")
 }
 
@@ -1952,14 +2053,67 @@ Map profileValues(Map cfg, String name, Map ctx) {
     return p ? valuesOf(p, ctx) + [profile: name] : null
 }
 
+// The first switch asking for a schedule: one in its on list that is on, else one in its off list that is off.
+// Each list holds [name, value] per switch.
+@CompileStatic
+Map switchAsk(List<Map> whenOn, List<Map> whenOff) {
+    Map on = whenOn?.find { Map x -> x.value == 'on' }
+    if (on) return [name: on.name, state: 'on']
+    Map off = whenOff?.find { Map x -> x.value == 'off' }
+    return off ? [name: off.name, state: 'off'] : null
+}
+
+// The schedule running now: the first schedule in list order that a switch asks for (ctx.scheduleAsks,
+// keyed by schedule id), else the default schedule (cfg.active).
+@CompileStatic
+Map effectiveSchedule(Map cfg, Map ctx) {
+    List<Map> scheds = (cfg?.schedules ?: []) as List<Map>
+    Map asks = (ctx?.scheduleAsks ?: [:]) as Map
+    if (asks) {
+        Map asked = scheds.find { Map x -> x.id != null && asks.get(x.id.toString()) != null }
+        if (asked) return asked
+    }
+    return scheds.find { Map x -> x.name == cfg.active }
+}
+
+@CompileStatic
+int nextScheduleId(List<Map> scheds) {
+    int m = 0
+    List<Map> all = scheds ?: ([] as List<Map>)
+    for (Map x in all) if (x.id instanceof Number) m = Math.max(m, ((Number) x.id).intValue())
+    return m + 1
+}
+
+// Gives each schedule without an id one: the id of the prior schedule with the same name when no other
+// schedule has it, else one past the highest. Returns true when any id was added.
+@CompileStatic
+boolean assignScheduleIds(List<Map> scheds, List<Map> prior) {
+    if (!scheds) return false
+    boolean changed = false
+    Set<String> used = new HashSet<String>()
+    for (Map x in scheds) if (x.id != null) used.add(x.id.toString())
+    int next = Math.max(nextScheduleId(scheds), nextScheduleId(prior))
+    for (Map x in scheds) {
+        if (x.id != null) continue
+        Map same = (prior ?: ([] as List<Map>)).find { Map p -> p.name == x.name && p.id != null && !used.contains(p.id.toString()) }
+        if (same) x.put('id', same.id)
+        else x.put('id', next++)
+        used.add(x.id.toString())
+        changed = true
+    }
+    return changed
+}
+
 @CompileStatic
 Map resolveTarget(Map cfg, Map rt, Map ctx) {
     Long modeId = ctx.modeId as Long
-    Map sched = (cfg.schedules as List<Map>)?.find { Map s -> s.name == cfg.active }
+    Map sched = effectiveSchedule(cfg, ctx)
     Map cur = sched?.type == 'time' ? currentTransition(sched, ctx) : null
     String key = sched?.type == 'mode' ? "mode|${modeId}".toString() : (cur?.key as String)
     Map ov = (cfg.overrides as List<Map>)?.find { Map o -> (o.modeId as Long) == modeId }
-    if (rt.paused == true || ctx.restricted == true) return [layer: 'paused', transitionKey: key, overrideModeId: ov?.modeId as Long]
+    Object sid = sched?.id
+    String sname = sched?.name as String
+    if (rt.paused == true || ctx.restricted == true) return [layer: 'paused', transitionKey: key, overrideModeId: ov?.modeId as Long, scheduleId: sid, schedule: sname]
     Map hold = rt.hold as Map
     Map base = null
     String layer = 'none'
@@ -1983,7 +2137,7 @@ Map resolveTarget(Map cfg, Map rt, Map ctx) {
         layer = 'schedule'
         ticked = cur.useOccupied == true
     }
-    if (base == null) return [layer: 'none', transitionKey: key, overrideModeId: ov?.modeId as Long]
+    if (base == null) return [layer: 'none', transitionKey: key, overrideModeId: ov?.modeId as Long, scheduleId: sid, schedule: sname]
     boolean occupied = false
     if (layer == 'schedule' && ticked && ctx.occupied == true) {
         Map merged = occupiedMerge(base, profileValues(cfg, (cfg.occupancy as Map)?.profile as String, ctx))
@@ -2000,7 +2154,7 @@ Map resolveTarget(Map cfg, Map rt, Map ctx) {
         if (cool != null) cool = cool + off
     }
     return [layer: layer, profile: base.profile, heat: heat, cool: cool, fan: base.fan, mode: base.mode,
-            eco: ecoOn, occupied: occupied, transitionKey: key, overrideModeId: ov?.modeId as Long]
+            eco: ecoOn, occupied: occupied, transitionKey: key, overrideModeId: ov?.modeId as Long, scheduleId: sid, schedule: sname]
 }
 
 // While occupied, a ticked period takes the occupied profile's setpoints where they are more comfortable:
@@ -2037,6 +2191,8 @@ Map occupancyStep(String committed, String reading, Long changedAt, long now, lo
 boolean holdExpired(Map hold, Map target, long now) {
     if (!hold || hold.end == 'indefinite') return false
     if (hold.end == 'at') return now >= (hold.until as long)
+    // A change of active schedule ends a next hold, as a transition does. Holds from before 0.6.0 have no schedule id.
+    if (hold.scheduleId != null && target.scheduleId?.toString() != hold.scheduleId.toString()) return true
     return target.transitionKey != hold.transitionKey || (target.overrideModeId as Long) != (hold.overrideModeId as Long)
 }
 
@@ -2100,7 +2256,7 @@ long nextWake(Map cfg, Map rt, Map ctx) {
     long now = ctx.now as long
     TimeZone tz = ctx.tz as TimeZone
     List<Long> c = [atLocal(addDays(isoDate(now, tz), 1, tz), '00:00', tz)]
-    Map sched = (cfg.schedules as List<Map>)?.find { Map s -> s.name == cfg.active }
+    Map sched = effectiveSchedule(cfg, ctx)
     if (sched?.type == 'time') {
         Long n = nextTransitionOf(sched, ctx)?.at as Long
         if (n != null) c << n
@@ -2125,7 +2281,7 @@ Map defaultConfig(String scale) {
     return [v: 1,
         profiles: f ? [[name: 'Home', heat: 70.0, cool: 75.0], [name: 'Sleep', heat: 65.0, cool: 78.0], [name: 'Away', heat: 61.0, cool: 84.0]]
                     : [[name: 'Home', heat: 21.0, cool: 24.0], [name: 'Sleep', heat: 18.0, cool: 26.0], [name: 'Away', heat: 16.0, cool: 29.0]],
-        schedules: [[name: 'Normal', type: 'time', groups: [[name: 'Every day', days: [1, 2, 3, 4, 5, 6, 7], periods: [
+        schedules: [[id: 1, name: 'Normal', type: 'time', groups: [[name: 'Every day', days: [1, 2, 3, 4, 5, 6, 7], periods: [
             [name: 'Wake', start: [kind: 'time', at: '06:30'], profile: 'Home', custom: null],
             [name: 'Night', start: [kind: 'time', at: '22:00'], profile: 'Sleep', custom: null]]]]]],
         active: 'Normal', overrides: []]
@@ -2205,7 +2361,11 @@ List<String> validateConfig(Map doc, Map env) {
     }
     List<String> scheds = (doc.schedules as List<Map>)?.collect { it.name as String } ?: []
     scheds.countBy { it }.findAll { k, v -> v > 1 }.each { k, v -> e << "Schedule name used twice: ${k}".toString() }
-    if (!scheds.contains(doc.active)) e << "Active schedule ${doc.active} does not exist".toString()
+    if (!scheds.contains(doc.active)) e << "Default schedule ${doc.active} does not exist".toString()
+    (doc.schedules as List<Map>)?.each { Map s ->
+        if (s.id != null && !((s.id instanceof Integer || s.id instanceof Long) && (s.id as long) > 0)) e << "Schedule ${s.name}: id must be a whole number above 0".toString()
+    }
+    (doc.schedules as List<Map>)?.findAll { it.id != null }?.collect { it.id.toString() }?.countBy { it }?.findAll { k, v -> v > 1 }?.each { k, v -> e << "Schedule id used twice: ${k}".toString() }
     (doc.schedules as List<Map>)?.each { Map s ->
         if (s.type == 'time') {
             (1..7).each { int d ->

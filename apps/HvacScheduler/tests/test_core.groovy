@@ -474,6 +474,79 @@ check('week: occupied tick carried', wk[0].segs.find { it.period == 'Leave' }.us
 check('week: Saturday uses the weekend group', wk[5].segs*.group.unique() - ['Weekdays'], ['Weekend'])
 check('week: fall-back day still spans 1440 minutes', core.weekSegments(tickedNormal, ctxAt('2026-10-26', '12:00'), '2026-10-26')[6].segs[-1].to, 1440.0)
 
+// ── schedules by switch ──
+// Peak: Low (Sleep 18) from 00:00, Mid (Home 21) from 12:00. Event: Out all day. Cottage: by hub mode.
+peak = [id: 2, name: 'Peak', type: 'time', groups: [[name: 'All', days: [1, 2, 3, 4, 5, 6, 7], periods: [
+    [name: 'Low', start: [kind: 'time', at: '00:00'], profile: 'Sleep'], [name: 'Mid', start: [kind: 'time', at: '12:00'], profile: 'Home']]]]]
+event = [id: 3, name: 'Event', type: 'time', groups: [[name: 'All', days: [1, 2, 3, 4, 5, 6, 7], periods: [
+    [name: 'All day', start: [kind: 'time', at: '00:00'], profile: 'Out']]]]]
+cottage = [id: 4, name: 'Cottage', type: 'mode', rows: [[modes: [1, 2], profile: 'Home'], [modes: [3], profile: 'Sleep']]]
+cfgSw = cfgBase + [schedules: [normal + [id: 1], peak, event, cottage]]
+askA = [name: 'Peak switch', state: 'on']
+Map asking(String... ids) { ids.collectEntries { [(it): askA] } }
+check('switch: none asks, default schedule', r(cfgSw, rt0, at9).with { [it.heat, it.schedule, it.scheduleId] }, [19.0, 'Normal', 1])
+check('switch: one asks', r(cfgSw, rt0, at9 + [scheduleAsks: asking('2')]).with { [it.heat, it.profile, it.schedule] }, [18.0, 'Sleep', 'Peak'])
+check('switch: two ask, list order wins', core.effectiveSchedule(cfgSw, at9 + [scheduleAsks: asking('3', '2')]).name, 'Peak')
+check('switch: two ask, reordered list', core.effectiveSchedule(cfgSw + [schedules: [normal + [id: 1], event, peak, cottage]], at9 + [scheduleAsks: asking('2', '3')]).name, 'Event')
+check('switch: an ask for the default schedule runs it', core.effectiveSchedule(cfgSw, at9 + [scheduleAsks: asking('1', '2')]).name, 'Normal')
+check('switch: ask for an unknown id is ignored', core.effectiveSchedule(cfgSw, at9 + [scheduleAsks: asking('9')]).name, 'Normal')
+check('switchAsk: on list switch on', core.switchAsk([[name: 'A', value: 'on']], []), [name: 'A', state: 'on'])
+check('switchAsk: on list switch off', core.switchAsk([[name: 'A', value: 'off']], []), null)
+check('switchAsk: off list switch off', core.switchAsk([], [[name: 'B', value: 'off']]), [name: 'B', state: 'off'])
+check('switchAsk: off list switch on', core.switchAsk(null, [[name: 'B', value: 'on']]), null)
+check('switchAsk: on list first', core.switchAsk([[name: 'A', value: 'on']], [[name: 'B', value: 'off']]).name, 'A')
+// Two switches in one list, the second on before the first goes off: an ask at every step.
+check('two switches: first on', core.switchAsk([[name: 'A', value: 'on'], [name: 'B', value: 'off']], []).name, 'A')
+check('two switches: both on', core.switchAsk([[name: 'A', value: 'on'], [name: 'B', value: 'on']], []).name, 'A')
+check('two switches: first off, second on', core.switchAsk([[name: 'A', value: 'off'], [name: 'B', value: 'on']], []).name, 'B')
+check('two switches: both off', core.switchAsk([[name: 'A', value: 'off'], [name: 'B', value: 'off']], []), null)
+check('switch under Away override: override wins', r(cfgSw, rt0, at9 + [modeId: 4L, scheduleAsks: asking('2')]).with { [it.layer, it.profile, it.heat] }, ['mode', 'Away', 16.0])
+check('leaving the override returns to the switch schedule', r(cfgSw, rt0, at9 + [modeId: 1L, scheduleAsks: asking('2')]).with { [it.layer, it.heat, it.schedule] }, ['schedule', 18.0, 'Peak'])
+check('switch under a hold: hold wins', r(cfgSw, rt0 + [hold: [kind: 'profile', profile: 'Home', end: 'indefinite']], at9 + [scheduleAsks: asking('2')]).with { [it.layer, it.heat] }, ['hold', 21.0])
+check('switch while paused: paused', r(cfgSw, rt0 + [paused: true], at9 + [scheduleAsks: asking('2')]).with { [it.layer, it.scheduleId] }, ['paused', 2])
+check('switch: eco on the switch schedule', r(cfgSw, rt0 + [eco: true], at9 + [scheduleAsks: asking('2')]).heat, 16.0)
+check('switch: next transition from the active schedule', core.nextWake(cfgSw, rt0, at9 + [scheduleAsks: asking('2')]), T('2026-10-05', '12:00'))
+check('switch: no ask, next transition from the default', core.nextWake(cfgSw, rt0, at9), T('2026-10-05', '22:00'))
+check('switch: next period of the active schedule', core.nextTransitionOf(core.effectiveSchedule(cfgSw, at9 + [scheduleAsks: asking('2')]), at9).period, 'Mid')
+swTgt = r(cfgSw, rt0, at9)
+swHold = [end: 'next', transitionKey: swTgt.transitionKey, overrideModeId: null, scheduleId: swTgt.scheduleId]
+check('next hold kept while the active schedule stays', core.holdExpired(swHold, r(cfgSw, rt0, at9), at9.now as long), false)
+check('next hold ends when a switch picks another schedule', core.holdExpired(swHold, r(cfgSw, rt0, at9 + [scheduleAsks: asking('2')]), at9.now as long), true)
+check('next hold set on the switch schedule ends when the switch clears', core.holdExpired(swHold + [scheduleId: 2, transitionKey: r(cfgSw, rt0, at9 + [scheduleAsks: asking('2')]).transitionKey], swTgt, at9.now as long), true)
+twin = core.parseJsonLike(normal) + [id: 5, name: 'Twin']
+cfgTwin = cfgBase + [schedules: [normal + [id: 1], twin]]
+check('twin schedule has the same transition key', r(cfgTwin, rt0, at9 + [scheduleAsks: asking('5')]).transitionKey, swTgt.transitionKey)
+check('next hold ends on a change to a schedule with the same period names', core.holdExpired(swHold, r(cfgTwin, rt0, at9 + [scheduleAsks: asking('5')]), at9.now as long), true)
+check('hold without a schedule id (before 0.6.0) keeps the old rule', core.holdExpired(swHold - [scheduleId: 1], r(cfgTwin, rt0, at9 + [scheduleAsks: asking('5')]), at9.now as long), false)
+check('indefinite hold kept across a schedule change', core.holdExpired([end: 'indefinite', scheduleId: 1], r(cfgSw, rt0, at9 + [scheduleAsks: asking('2')]), at9.now as long), false)
+check('hub-mode schedule selected by switch', r(cfgSw, rt0, at9 + [modeId: 3L, scheduleAsks: asking('4')]).with { [it.profile, it.transitionKey, it.schedule] }, ['Sleep', 'mode|3', 'Cottage'])
+check('hub-mode schedule by switch: no wake from transitions', core.nextWake(cfgSw, rt0, at9 + [scheduleAsks: asking('4')]), T('2026-10-06', '00:00'))
+// rename, delete, copy
+renamed = core.parseJsonLike(cfgSw); renamed.schedules[1].name = 'Peak day'
+check('rename keeps the id', [core.assignScheduleIds(renamed.schedules, cfgSw.schedules), renamed.schedules[1].id], [false, 2])
+check('renamed schedule still selected by its id', core.effectiveSchedule(renamed, at9 + [scheduleAsks: asking('2')]).name, 'Peak day')
+deleted = cfgSw + [schedules: cfgSw.schedules.findAll { it.id != 2 }]
+check('deleted switch schedule: falls back to the default', core.effectiveSchedule(deleted, at9 + [scheduleAsks: asking('2')]).name, 'Normal')
+check('copy gets a new id', core.nextScheduleId(cfgSw.schedules), 5)
+noIds = [[name: 'Normal'], [name: 'Peak'], [name: 'New']]
+check('PUT without ids keeps ids by name', [core.assignScheduleIds(noIds, cfgSw.schedules), noIds*.id], [true, [1, 2, 5]])
+check('a new schedule never takes a dropped id', { List x = [[id: 1, name: 'Normal'], [name: 'Fresh']]; core.assignScheduleIds(x, cfgSw.schedules); x*.id }(), [1, 5])
+check('a name match whose id is taken gets a new id', { List x = [[id: 2, name: 'Normal'], [name: 'Peak']]; core.assignScheduleIds(x, cfgSw.schedules); x*.id }(), [2, 5])
+// validation and backward compatibility
+check('switch config validates', core.validateConfig(cfgSw + [v: 1], env), [])
+check('config without ids validates', core.validateConfig(cfgBase + [v: 1], env), [])
+check('schedule id used twice', core.validateConfig(cfgSw + [schedules: [normal + [id: 1], peak + [id: 1]]], env), ['Schedule id used twice: 1'])
+check('schedule id must be a whole number', core.validateConfig(cfgSw + [schedules: [normal + [id: 'x']]], env), ['Schedule Normal: id must be a whole number above 0'])
+check('schedule id must be above 0', core.validateConfig(cfgSw + [schedules: [normal + [id: 0]]], env).size(), 1)
+check('unknown default schedule named as default', core.validateConfig(cfgBase + [active: 'Nope'], env), ['Default schedule Nope does not exist'])
+check('no ids: default schedule, asks ignored', r(cfgBase, rt0, at9 + [scheduleAsks: asking('1', '2')]).with { [it.profile, it.scheduleId] }, ['Out', null])
+check('no ids: same target as with ids', r(cfgBase, rt0, at9).subMap(['layer', 'profile', 'heat', 'cool', 'transitionKey']), swTgt.subMap(['layer', 'profile', 'heat', 'cool', 'transitionKey']))
+migrated = core.parseJsonLike(cfgBase)
+check('migration adds ids in list order', [core.assignScheduleIds(migrated.schedules, []), migrated.schedules*.id], [true, [1, 2]])
+check('migration is idempotent', core.assignScheduleIds(migrated.schedules, []), false)
+check('migrated config resolves as before', r(migrated, rt0, at9).with { [it.heat, it.transitionKey] }, [19.0, swTgt.transitionKey])
+check('default config has an id', core.defaultConfig('C').schedules[0].id, 1)
+
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)
