@@ -10,7 +10,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.2.1"
+@Field static final String CODE_VERSION = "0.2.2"
 
 metadata {
     definition(
@@ -25,9 +25,6 @@ metadata {
 
         attribute "online", "string"
         attribute "healthStatus", "enum", ["online", "offline"]
-        attribute "firmwareVersion", "string"
-        attribute "syncModuleSerial", "string"
-        attribute "cameraCount", "number"
     }
 }
 
@@ -83,18 +80,28 @@ private void checkVersion() {
     if (state.version == CODE_VERSION) return
     logVer "New version: ${CODE_VERSION} (was: ${state.version})"
     state.version = CODE_VERSION
+    // Identity moved to data values in 0.2.2.
+    ["firmwareVersion", "syncModuleSerial", "cameraCount"].each { device.deleteCurrentState(it) }
 }
 
-// Called by the parent after each poll: offline while the Blink cloud is
-// unreachable or Blink reports the device offline. The reason goes in the event description.
+// Called by the parent with the service's own evidence: offline while the service is
+// unreachable or reports the device offline. The reason goes in the event description.
 void updateHealth(String status, String reason = null) {
     String prev = device.currentValue("healthStatus")
     String why = reason ? ": ${reason}" : ""
-    sendEvent(name: "healthStatus", value: status, descriptionText: "${device.displayName} is ${status}${why}")
-    if (prev != null && prev != status) {
-        if (status == "offline") logWarn "offline${why}"
-        else logInfo "back online"
-    }
+    if (!sendChanged(name: "healthStatus", value: status, descriptionText: "${device.displayName} is ${status}${why}")) return
+    if (prev == null) return
+    if (status == "offline") logWarn "offline${why}"
+    else logInfo "back online"
+}
+
+// Returns true when the event was sent. Values compare as text, the way the hub stores them.
+// An attribute the metadata does not declare has no current value and is sent every time.
+boolean sendChanged(Map evt) {
+    if (evt.value == null) return false
+    if (device.currentState(evt.name as String)?.value == evt.value.toString()) return false
+    sendEvent(evt)
+    return true
 }
 
 // Called by the parent on each poll with the latest network + sync module state.
@@ -106,21 +113,21 @@ void handleNetworkUpdate(Map data) {
     if (data.containsKey("armed")) {
         boolean armed = data.armed as boolean
         String value = armed ? "on" : "off"
-        sendEvent(name: "switch", value: value, descriptionText: "Network is ${armed ? 'armed' : 'disarmed'}")
-        logInfo "${armed ? 'armed' : 'disarmed'}"
+        if (sendChanged(name: "switch", value: value, descriptionText: "Network is ${armed ? 'armed' : 'disarmed'}")) {
+            logInfo "${armed ? 'armed' : 'disarmed'}"
+        }
     }
     if (data.containsKey("online")) {
-        sendEvent(name: "online", value: data.online?.toString() ?: "unknown")
+        sendChanged(name: "online", value: data.online?.toString() ?: "unknown")
     }
-    if (data.firmwareVersion) {
-        sendEvent(name: "firmwareVersion", value: data.firmwareVersion.toString())
-    }
-    if (data.syncModuleSerial) {
-        sendEvent(name: "syncModuleSerial", value: data.syncModuleSerial.toString())
-    }
-    if (data.containsKey("cameraCount")) {
-        sendEvent(name: "cameraCount", value: data.cameraCount as int)
-    }
+    setData("firmwareVersion", data.firmwareVersion)
+    setData("syncModuleSerial", data.syncModuleSerial)
+    if (data.containsKey("cameraCount")) setData("cameraCount", data.cameraCount as int)
+}
+
+private void setData(String key, Object value) {
+    if (value == null || value.toString() == "") return
+    if (device.getDataValue(key) != value.toString()) device.updateDataValue(key, value.toString())
 }
 
 void turnOffDebugLogging() {

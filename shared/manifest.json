@@ -2179,6 +2179,13 @@
                 "logInfo",
                 "logDebug"
             ]
+        },
+        "send-changed": {
+            "version": 1,
+            "items": [
+                "sendChanged",
+                "updateHealth"
+            ]
         }
     },
     "integrations/Blink/BlinkManager.groovy": {
@@ -2223,6 +2230,13 @@
                 "logTrace",
                 "logInfo",
                 "logDebug"
+            ]
+        },
+        "send-changed": {
+            "version": 1,
+            "items": [
+                "sendChanged",
+                "updateHealth"
             ]
         }
     },
@@ -2280,6 +2294,13 @@
             "version": 1,
             "items": [
                 "logsOff"
+            ]
+        },
+        "send-changed": {
+            "version": 1,
+            "items": [
+                "sendChanged",
+                "updateHealth"
             ]
         }
     },

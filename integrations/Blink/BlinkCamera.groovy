@@ -16,7 +16,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.2.1"
+@Field static final String CODE_VERSION = "0.2.2"
 
 metadata {
     definition(
@@ -42,7 +42,6 @@ metadata {
         attribute "batteryBars", "number"
         attribute "online", "string"
         attribute "healthStatus", "enum", ["online", "offline"]
-        attribute "firmwareVersion", "string"
         attribute "batteryState", "string"
         attribute "batteryVoltage", "number"
         attribute "acPower", "string"
@@ -121,18 +120,28 @@ private void checkVersion() {
     if (state.version == CODE_VERSION) return
     logVer "New version: ${CODE_VERSION} (was: ${state.version})"
     state.version = CODE_VERSION
+    // Identity moved to data values in 0.2.2.
+    device.deleteCurrentState("firmwareVersion")
 }
 
-// Called by the parent after each poll: offline while the Blink cloud is
-// unreachable or Blink reports the device offline. The reason goes in the event description.
+// Called by the parent with the service's own evidence: offline while the service is
+// unreachable or reports the device offline. The reason goes in the event description.
 void updateHealth(String status, String reason = null) {
     String prev = device.currentValue("healthStatus")
     String why = reason ? ": ${reason}" : ""
-    sendEvent(name: "healthStatus", value: status, descriptionText: "${device.displayName} is ${status}${why}")
-    if (prev != null && prev != status) {
-        if (status == "offline") logWarn "offline${why}"
-        else logInfo "back online"
-    }
+    if (!sendChanged(name: "healthStatus", value: status, descriptionText: "${device.displayName} is ${status}${why}")) return
+    if (prev == null) return
+    if (status == "offline") logWarn "offline${why}"
+    else logInfo "back online"
+}
+
+// Returns true when the event was sent. Values compare as text, the way the hub stores them.
+// An attribute the metadata does not declare has no current value and is sent every time.
+boolean sendChanged(Map evt) {
+    if (evt.value == null) return false
+    if (device.currentState(evt.name as String)?.value == evt.value.toString()) return false
+    sendEvent(evt)
+    return true
 }
 
 private void publishBattery(double voltage, boolean blinkSaysLow) {
@@ -140,8 +149,8 @@ private void publishBattery(double voltage, boolean blinkSaysLow) {
     double smoothed = smoothBatteryVoltage(voltage)
     int pct = batteryPctFromVoltage(smoothed, BATTERY_CURVE_V, BATTERY_CURVE_PCT)
     if (blinkSaysLow) pct = Math.min(pct, BATTERY_LOW_MAX_PCT)
-    sendEvent(name: "batteryVoltage", value: voltage, unit: "V", descriptionText: "Battery voltage is ${voltage} V")
-    sendEvent(name: "battery", value: pct, unit: "%", descriptionText: "Battery is ${pct}%")
+    sendChanged(name: "batteryVoltage", value: voltage, unit: "V", descriptionText: "Battery voltage is ${voltage} V")
+    sendChanged(name: "battery", value: pct, unit: "%", descriptionText: "Battery is ${pct}%")
 }
 
 // Returns the new smoothed voltage (see BATTERY_EMA_ALPHA); a jump of BATTERY_BIG_JUMP_V means new cells.
@@ -185,16 +194,16 @@ void handleCameraUpdate(Map data) {
 
     if (data.motion != null) {
         String motion = data.motion as String
-        sendEvent(name: "motion", value: motion, descriptionText: "Motion is ${motion}")
-        if (motion == "active") logInfo "motion detected"
+        boolean sent = sendChanged(name: "motion", value: motion, descriptionText: "Motion is ${motion}")
+        if (sent && motion == "active") logInfo "motion detected"
     }
     if (data.containsKey("motionEnabled")) {
         boolean enabled = data.motionEnabled as boolean
-        sendEvent(name: "switch", value: enabled ? "on" : "off",
+        sendChanged(name: "switch", value: enabled ? "on" : "off",
                   descriptionText: "Motion detection ${enabled ? 'enabled' : 'disabled'}")
     }
     if (data.batteryState) {
-        sendEvent(name: "batteryState", value: data.batteryState as String)
+        sendChanged(name: "batteryState", value: data.batteryState as String)
     }
     if (data.batteryVoltage instanceof Number) {
         String batState = (data.batteryState ?: device.currentValue("batteryState")) as String
@@ -204,38 +213,38 @@ void handleCameraUpdate(Map data) {
         Number raw = data.temperature as Number
         String temp = convertTemperatureIfNeeded(raw, "F", 1)
         String unit = "°${location.temperatureScale}"
-        sendEvent(name: "temperature", value: temp, unit: unit,
+        sendChanged(name: "temperature", value: temp, unit: unit,
                   descriptionText: "Temperature is ${temp}${unit}")
     }
     if (data.wifiSignal != null) {
-        sendEvent(name: "wifiSignal", value: data.wifiSignal as int, unit: "dBm")
+        sendChanged(name: "wifiSignal", value: data.wifiSignal as int, unit: "dBm")
     }
     if (data.lfrSignal != null) {
-        sendEvent(name: "lfrSignal", value: data.lfrSignal as int)
+        sendChanged(name: "lfrSignal", value: data.lfrSignal as int)
     }
     if (data.batteryBars != null) {
-        sendEvent(name: "batteryBars", value: data.batteryBars as int)
+        sendChanged(name: "batteryBars", value: data.batteryBars as int)
     }
     if (data.online) {
-        sendEvent(name: "online", value: data.online as String)
+        sendChanged(name: "online", value: data.online as String)
     }
-    if (data.firmwareVersion) {
-        sendEvent(name: "firmwareVersion", value: data.firmwareVersion as String)
+    if (data.firmwareVersion && device.getDataValue("firmwareVersion") != data.firmwareVersion.toString()) {
+        device.updateDataValue("firmwareVersion", data.firmwareVersion.toString())
     }
     if (data.acPower != null) {
-        sendEvent(name: "acPower", value: data.acPower as String)
+        sendChanged(name: "acPower", value: data.acPower as String)
     }
     if (data.lastThumbnailUrl) {
-        sendEvent(name: "lastThumbnailUrl", value: data.lastThumbnailUrl as String)
+        sendChanged(name: "lastThumbnailUrl", value: data.lastThumbnailUrl as String)
     }
     if (data.lastUpdated) {
-        sendEvent(name: "lastUpdated", value: data.lastUpdated as String)
+        sendChanged(name: "lastUpdated", value: data.lastUpdated as String)
     }
     if (data.lastClipUrl) {
-        sendEvent(name: "lastClipUrl", value: data.lastClipUrl as String)
+        sendChanged(name: "lastClipUrl", value: data.lastClipUrl as String)
     }
     if (data.lastClipTime) {
-        sendEvent(name: "lastClipTime", value: data.lastClipTime as String)
+        sendChanged(name: "lastClipTime", value: data.lastClipTime as String)
     }
 }
 

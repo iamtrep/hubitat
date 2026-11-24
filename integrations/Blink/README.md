@@ -46,9 +46,7 @@ The access token is refreshed automatically 5 minutes before expiry. Refresh tok
 - `Switch` — `on` = armed network, `off` = disarmed
 - `online` — sync module connectivity (`online` / `offline`)
 - `healthStatus` — `online` / `offline`. Offline when the sync module reports offline, or after 5 consecutive failed polls of the Blink cloud. The event description gives the reason.
-- `firmwareVersion` — sync module firmware
-- `syncModuleSerial` — hardware serial
-- `cameraCount` — number of cameras attached
+- Data values: `firmwareVersion` (sync module firmware), `syncModuleSerial` (hardware serial), `cameraCount` (cameras attached)
 
 ### Blink Camera
 
@@ -60,8 +58,9 @@ The access token is refreshed automatically 5 minutes before expiry. Refresh tok
 - `lastClipUrl` / `lastClipTime` — most recent recorded clip (the actual `.mp4`)
 - `lastThumbnailUrl` / `lastUpdated` — most recent still-image snapshot and camera-config update time
 - `wifiSignal` (dBm) / `lfrSignal` (1–5 bars, sync-module link quality)
-- `online` (`online` / `offline`) / `firmwareVersion` / `batteryState` (`"ok"` / `"low"`) / `batteryBars` (1–3) / `acPower` (wired cameras only)
+- `online` (`online` / `offline`) / `batteryState` (`"ok"` / `"low"`) / `batteryBars` (1–3) / `acPower` (wired cameras only)
 - `healthStatus` — `online` / `offline`. Offline when Blink reports the camera offline, or after 5 consecutive failed polls of the Blink cloud. The event description gives the reason.
+- Data value: `firmwareVersion`
 - `snapThumbnail` / `recordClip` commands
 
 Per-camera motion enable/disable currently works only for standard cameras (not Mini/Owl, doorbells, or floodlights). The other variants are exposed but their `on()` / `off()` will log a warning; this is the path that will be split into per-type child drivers in a follow-up.

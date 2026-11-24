@@ -281,14 +281,14 @@ private void writeMode(String mode) {
 }
 
 private void emitMode(String fujMode, BigDecimal temp, BigDecimal sp) {
-    sendEvent(name: "fujitsuMode", value: fujMode,
+    sendChanged(name: "fujitsuMode", value: fujMode,
               descriptionText: "${device} fujitsuMode is ${fujMode}")
     String tMode = THERMOSTAT_MODE_FOR[fujMode]
-    sendEvent(name: "thermostatMode", value: tMode,
+    sendChanged(name: "thermostatMode", value: tMode,
               descriptionText: "${device} mode is ${tMode}")
     String opState = deriveOperatingState(fujMode, temp, sp,
                                           device.currentValue("thermostatOperatingState") as String)
-    sendEvent(name: "thermostatOperatingState", value: opState,
+    sendChanged(name: "thermostatOperatingState", value: opState,
               descriptionText: "${device} operating state is ${opState}")
 }
 
@@ -324,10 +324,10 @@ private void writeFanSpeed(String speed) {
 
 // Any fixed speed is a continuously running fan, which the canonical enum calls "on".
 private void emitFanSpeed(String speed) {
-    sendEvent(name: "fanSpeed", value: speed,
+    sendChanged(name: "fanSpeed", value: speed,
               descriptionText: "${device} fanSpeed is ${speed}")
     String fanMode = speed == "auto" ? "auto" : "on"
-    sendEvent(name: "thermostatFanMode", value: fanMode,
+    sendChanged(name: "thermostatFanMode", value: fanMode,
               descriptionText: "${device} thermostatFanMode is ${fanMode}")
 }
 
@@ -451,36 +451,36 @@ void updateState(Map data) {
     // Temperature and setpoint go out before the mode and operating state, so a
     // subscriber to thermostatOperatingState reads the values it was derived from.
     if (unitTemp != null) {
-        sendEvent(name: "unitTemperature", value: unitTemp, unit: getTemperatureScale(),
+        sendChanged(name: "unitTemperature", value: unitTemp, unit: getTemperatureScale(),
                   descriptionText: "${device} unit sensor is ${unitTemp}${getTemperatureScale()}")
     }
     if (adjustTemp != null) {
         BigDecimal unitSp = aylaSetpointToScale(adjustTemp)
-        sendEvent(name: "unitSetpoint", value: unitSp, unit: getTemperatureScale(),
+        sendChanged(name: "unitSetpoint", value: unitSp, unit: getTemperatureScale(),
                   descriptionText: "${device} unit setpoint is ${unitSp}${getTemperatureScale()}")
     }
     BigDecimal room = roomTemperature()
     if (room != null) {
-        sendEvent(name: "temperature", value: room, unit: getTemperatureScale(),
+        sendChanged(name: "temperature", value: room, unit: getTemperatureScale(),
                   descriptionText: "${device} temperature is ${room}${getTemperatureScale()} (room sensors)")
     } else if (temp != null) {
         String onUnit = off != 0 ? " (unit sensor ${unitTemp}${getTemperatureScale()})" : ""
-        sendEvent(name: "temperature", value: temp, unit: getTemperatureScale(),
+        sendChanged(name: "temperature", value: temp, unit: getTemperatureScale(),
                   descriptionText: "${device} temperature is ${temp}${getTemperatureScale()}${onUnit}")
     }
     if (sp != null) {
-        sendEvent(name: "thermostatSetpoint", value: sp, unit: getTemperatureScale(),
+        sendChanged(name: "thermostatSetpoint", value: sp, unit: getTemperatureScale(),
                   descriptionText: "${device} thermostatSetpoint is ${sp}${getTemperatureScale()}")
         // Mirror to mode-specific slot. Bootstrap empty heat/cool attributes on first observation.
         String modeNow = fujMode ?: device.currentValue("fujitsuMode")
         // A held setpoint is the user's newer intent; don't overwrite it with the unit's old value.
         boolean holding = state.heldSetpoint != null
         if ((modeNow == "heat" && !holding) || device.currentValue("heatingSetpoint") == null) {
-            sendEvent(name: "heatingSetpoint", value: sp, unit: getTemperatureScale(),
+            sendChanged(name: "heatingSetpoint", value: sp, unit: getTemperatureScale(),
                       descriptionText: "${device} heatingSetpoint is ${sp}${getTemperatureScale()}")
         }
         if (modeNow == "cool" || device.currentValue("coolingSetpoint") == null) {
-            sendEvent(name: "coolingSetpoint", value: sp, unit: getTemperatureScale(),
+            sendChanged(name: "coolingSetpoint", value: sp, unit: getTemperatureScale(),
                       descriptionText: "${device} coolingSetpoint is ${sp}${getTemperatureScale()}")
         }
     }
@@ -496,13 +496,13 @@ void updateState(Map data) {
     }
     if (data.outdoorTemp != null) {
         BigDecimal ot = aylaSensorToScale(data.outdoorTemp)
-        sendEvent(name: "outdoorTemperature", value: ot, unit: getTemperatureScale(),
+        sendChanged(name: "outdoorTemperature", value: ot, unit: getTemperatureScale(),
                   descriptionText: "${device} outdoor temperature is ${ot}${getTemperatureScale()}")
     }
     if (data.errorCode != null) {
         Integer prev = device.currentValue("errorCode") as Integer
         Integer code = data.errorCode as Integer
-        sendEvent(name: "errorCode", value: code,
+        sendChanged(name: "errorCode", value: code,
                   descriptionText: "${device} errorCode is ${code}")
         if (prev != null && prev == 0 && code != 0) {
             logWarn "errorCode set to ${code}"
@@ -513,7 +513,7 @@ void updateState(Map data) {
     if (data.opStatus != null) {
         Integer prev = device.currentValue("opStatus") as Integer
         Integer st = data.opStatus as Integer
-        sendEvent(name: "opStatus", value: st,
+        sendChanged(name: "opStatus", value: st,
                   descriptionText: "${device} opStatus is ${st}")
         if (prev != null && prev != st) {
             logInfo "opStatus changed: ${prev} -> ${st}"
@@ -547,17 +547,24 @@ void pushHeldSetpoint() {
     if (held && state.unitMode == "heat") pushSetpointToUnit("heat", held.value as BigDecimal)
 }
 
-// Called by the parent with the unit's cloud link state, or "offline" when the
-// cloud itself is unreachable. The reason goes in the event description.
+// Called by the parent with the service's own evidence: offline while the service is
+// unreachable or reports the device offline. The reason goes in the event description.
 void updateHealth(String status, String reason = null) {
     String prev = device.currentValue("healthStatus")
     String why = reason ? ": ${reason}" : ""
-    sendEvent(name: "healthStatus", value: status,
-              descriptionText: "${device} is ${status}${why}")
-    if (prev != null && prev != status) {
-        if (status == "offline") logWarn "unit is offline${why}"
-        else logInfo "unit is back online"
-    }
+    if (!sendChanged(name: "healthStatus", value: status, descriptionText: "${device.displayName} is ${status}${why}")) return
+    if (prev == null) return
+    if (status == "offline") logWarn "offline${why}"
+    else logInfo "back online"
+}
+
+// Returns true when the event was sent. Values compare as text, the way the hub stores them.
+// An attribute the metadata does not declare has no current value and is sent every time.
+boolean sendChanged(Map evt) {
+    if (evt.value == null) return false
+    if (device.currentState(evt.name as String)?.value == evt.value.toString()) return false
+    sendEvent(evt)
+    return true
 }
 
 // Called by the parent with the outcome of each property write. A failed write

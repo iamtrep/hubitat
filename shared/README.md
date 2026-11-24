@@ -19,6 +19,7 @@ Hubitat apps and drivers go to the hub as one file each, so a helper several of 
 | [quiet-sensors](quiet-sensors.groovy) | Counts a sensor as quiet from its last activity (`getLastActivity()`, so check-ins count). The limit is learned per sensor: twice its second-longest recent gap, never under the app's setting or floor. `recordActivity`, `quietLimitMs`, `isQuiet`. | Switched Heater Thermostat, Sensor Aggregator (both children), HVAC Interlock group |
 | [oauth-self-enable](oauth-self-enable.groovy) | An app with mappings turns OAuth on for its own app type and creates its token, so nobody toggles OAuth in the code editor. `checkOAuth`, `autoEnableOAuth`. Needs `oauth: true`, `logDebug`, `logError`. | Code Manager, Event History, Hub Inspector, HVAC Scheduler, Multi-Hub Inventory, Tool Access Prototype |
 | [github-version](github-version.groovy) | The latest `CODE_VERSION` of the app on GitHub, asked at most hourly, for an "update available" note. `checkGithubVersion`, `githubVersionCallback`. Needs `IMPORT_URL_APP`, `refreshUpdateLabel()`, `logNet`. | Code Manager, Hub Inspector, Multi-Hub Inventory, Well Monitor |
+| [send-changed](send-changed.groovy) | For drivers fed by a poll of a cloud or LAN service: `sendChanged(Map evt)` sends an event only when the value differs from the attribute's current value, and `updateHealth(status, reason)` sends `healthStatus` on change and logs the transition. Needs `logWarn`, `logInfo`, and the attribute declared in the metadata. | Blink Camera, Blink Network, Fujitsu Mini-Split |
 
 ## Commands
 

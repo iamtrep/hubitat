@@ -24,7 +24,7 @@ Several standard Groovy and Java patterns are blocked or behave differently in t
 - **`value.getClass()` is sandbox-blocked.** The hub rejects the code when it is saved, so a `try`/`catch` can't guard it. Use the global `getObjectClassName(value)` to get a runtime class name string. *([verified 2.5.2.129–2.5.3.102](docs/hubitat-platform-notes.md#object-introspection))*
 - **Change an `atomicState` collection by writing the whole value back** (or `atomicState.updateMapValue(key, mapKey, value)` in an app; drivers don't have it). In-place changes to an `atomicState` collection (`atomicState.m.k = v`, `atomicState.l << v`, or through a local alias) are lost, because `atomicState` hands back a copy. In-place changes to plain `state` collections persist, in apps and drivers, from every entry point *([verified 2.5.2.134](docs/hubitat-platform-notes.md#platform-behavior))*. Key `state` maps by `id.toString()`: numeric keys come back as Strings, so `state.m[device.id]` misses after a reload.
 - **Pushing source code does not trigger `updated()`.** Updated Groovy takes effect immediately, but `updated()` and `initialize()` are not called. Subscriptions and `state` from the previous version persist until the user re-saves the app's preferences in the hub UI, and `@Field static` values are reset. *([verified 2.5.2.129–2.5.3.102](docs/hubitat-platform-notes.md#platform-behavior))* See *Version constants and code-push detection* below for the workaround.
-- **`sendEvent()` deduplicates unless someone asks for repeats.** An unchanged value without `isStateChange: true` is not stored and not delivered to default subscribers. A subscriber that passes `[filterEvents: false]` receives every repeat, and the repeats are then stored too. *([verified 2.5.2.129–2.5.3.102](docs/hubitat-platform-notes.md#platform-behavior))* A consumer that needs every sample subscribes with `filterEvents: false`. Drivers call `sendEvent` on every report and set `isStateChange: true` only for events that are new by nature, such as button presses.
+- **`sendEvent()` deduplicates unless someone asks for repeats.** An unchanged value without `isStateChange: true` is not stored and not delivered to default subscribers. A subscriber that passes `[filterEvents: false]` receives every repeat, and the repeats are then stored too. *([verified 2.5.2.129–2.5.3.102](docs/hubitat-platform-notes.md#platform-behavior))* A consumer that needs every sample subscribes with `filterEvents: false`. Drivers call `sendEvent` on every device report, since the report shows the device is alive, and set `isStateChange: true` only for events that are new by nature, such as button presses. A value read by polling a cloud or LAN service is sent only when it changed: see [Cloud and LAN polling](#cloud-and-lan-polling).
 - **Concurrent async HTTP calls are capped at 8 per app, and at 5 per destination host and port**. Calls beyond either limit queue and complete later; none are lost. The call's `timeout` runs while it waits for a connection to its destination, but not while it waits for one of the app's 8 slots: a call held back behind 8 others starts its timeout when it gets a slot. A reaper deadline set above the timeout is safe only for code that keeps at most 8 calls in flight itself *([verified 2.5.2.134–2.5.3.123](docs/hubitat-platform-notes.md#platform-behavior))*. *([verified 2.5.2.129–2.5.3.102](docs/hubitat-platform-notes.md#platform-behavior))* Code that fans out one request per device serializes behind the pool at scale. Prefer batched or aggregated endpoints.
 
 ### State tiers: `state`, `atomicState`, `@Field static`
@@ -277,6 +277,21 @@ For monitoring, diagnostics, and dashboard-style apps, partial data is usually b
 - text-fetch failures should degrade to `null`
 
 This default does not apply to writes or destructive actions, which should fail loudly.
+
+### Cloud and LAN polling
+
+An answer to a poll shows that the service is reachable. It does not show that the device reported. A driver fed by a poll follows these rules:
+
+- Send an attribute only when its value differs from the current one, with `sendChanged` from the `send-changed` shared block. `device.lastActivity` then gives the device's last real change, where a `sendEvent` on every poll would move it each time whatever the device did.
+- Declare every polled attribute in the metadata. An undeclared one has no current value and is sent on every poll.
+- Send `healthStatus` on change, from the service's own evidence (`updateHealth` in the same block, and the outage rules below).
+- Don't keep the time of the last poll in an attribute: it changes on every poll, so it is stored every time. Keep it in memory or in `state` when code needs it. A time the service gives for its own data, such as a sample time, changes only with new data and is fine as an attribute.
+- Identity that does not change between polls (firmware version, serial number) goes in data values (see [`device.updateDataValue` for device metadata](#deviceupdatedatavalue-for-device-metadata)).
+- The poll interval is the user's setting. Offer the choices the service allows and don't override the pick.
+- Log a change, not a poll: no info line on every poll.
+- An app that judges a sensor's freshness from `getLastActivity()` reads a polled sensor whose values have not changed as silent.
+
+Hubitat staff on comparing before sending: the current value is cached, so the check is cheap ([mike.maxwell](https://community.hubitat.com/t/best-way-to-decide-when-to-fire-events-compare-currentvalue-or-not/30822)).
 
 ### Cloud API outages
 

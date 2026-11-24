@@ -9,7 +9,7 @@ import groovy.transform.Field
 @Field String src = new File(new File(getClass().protectionDomain.codeSource.location.path).parentFile, '../BlinkCamera.groovy').text
 
 String extract(String name) {
-    java.util.regex.Matcher m = src =~ /(?m)^(?:private\s+)?(?:static\s+)?(?:void|int|double)\s+${name}\(/
+    java.util.regex.Matcher m = src =~ /(?m)^(?:private\s+)?(?:static\s+)?(?:void|int|double|boolean)\s+${name}\(/
     assert m.find() : "function not found: ${name}"
     int start = m.start(); int open = src.indexOf('{', start); int depth = 0; int i = open
     for (; i < src.length(); i++) { char c = src.charAt(i); if (c == '{') depth++; else if (c == '}') { depth--; if (depth == 0) { i++; break } } }
@@ -21,13 +21,15 @@ String constant(String name) {
     return m.group(1)
 }
 List<String> consts = ['BATTERY_CURVE_V', 'BATTERY_CURVE_PCT', 'BATTERY_EMA_ALPHA', 'BATTERY_BIG_JUMP_V', 'BATTERY_LOW_MAX_PCT'].collect { constant(it) }
-List<String> funcs = ['publishBattery', 'smoothBatteryVoltage', 'batteryPctFromVoltage'].collect { extract(it) }
+List<String> funcs = ['publishBattery', 'smoothBatteryVoltage', 'batteryPctFromVoltage', 'sendChanged'].collect { extract(it) }
 
 String harness = """
 class H {
     ${consts.join('\n    ')}
     Map state = [:]; List events = []
     void sendEvent(Map e) { events << e }
+    // The current state is the last event sent, as text.
+    Map device = [currentState: { String n -> Object v = lastValue(n); v == null ? null : [value: v.toString()] }]
     void logInfo(String m) {}; void logTrace(String m) {}
     Object lastValue(String name) { events.findAll { it.name == name }.collect { it.value }.with { it ? it[-1] : null } }
 ${funcs.join('\n')}

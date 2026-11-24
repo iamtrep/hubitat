@@ -22,6 +22,7 @@ abstract class StubDriver extends Script {
     def getDevice() {
         def d = new Expando(id: 1, deviceNetworkId: 'fglair-unit-TEST', displayName: 'Test Unit')
         d.currentValue = { String n -> current[n] }
+        d.currentState = { String n -> current[n] == null ? null : [value: current[n].toString()] }
         d.getDataValue = { String n -> null }
         d.updateDataValue = { String n, String v -> }
         d.updateSetting = { String n, Map v -> }

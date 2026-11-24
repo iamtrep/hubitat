@@ -1659,9 +1659,8 @@ void recentClipsResponse(resp, data) {
     }
 
     // Dispatch motion (and lastClipUrl/lastClipTime when applicable) to every Blink Camera
-    // child, including motion=inactive when nothing arrived. Hubitat's sendEvent dedups the
-    // inactive case after the first fire, so this is cheap. An error response says nothing
-    // about motion, so nothing is sent for it.
+    // child, including motion=inactive when nothing arrived. The child sends it only when it
+    // changed. An error response says nothing about motion, so nothing is sent for it.
     String base = "${restBase(state.tier as String)}"
     int active = 0, inactive = 0, missingName = 0
     Set<String> activeNames = [] as Set<String>
