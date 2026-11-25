@@ -110,6 +110,10 @@ metadata {
 // The PIN flow's authorization code, by device id, from connect() to authorize(); memory only.
 // The PIN expires in minutes, and a reboot in between means running connect() again.
 @Field static final ConcurrentHashMap<String, String> PIN_CODES = new ConcurrentHashMap<>()
+// The last runtime.lastStatusModified seen, by device id; memory only. It moves when the
+// thermostat posts its runtime, so a poll that finds it unmoved is a repeat of held values.
+// Empty after a reboot or code push, which makes the next poll count as a report.
+@Field static final ConcurrentHashMap<String, String> LAST_REPORT = new ConcurrentHashMap<>()
 
 // OAuth and API endpoints
 @Field static final String ECOBEE_API_BASE= "https://api.ecobee.com"
@@ -174,6 +178,7 @@ void uninstalled() {
     dropCachedTokens()
     TOKEN_CACHE.remove("${device.id}:apiKey".toString())
     PIN_CODES.remove(device.id.toString())
+    LAST_REPORT.remove(device.id.toString())
 }
 
 // Convergence point for install and save. The poll is a cron schedule, which survives a
@@ -975,58 +980,85 @@ private void applyPolledState(Map thermostat, String recovery) {
     }
     Map weather = thermostat.weather
 
-    // Update temperature and humidity
-    BigDecimal tempC = ecobeeToCelsius(runtime.actualTemperature)
-    sendEvent(name: "temperature", value: tempC, unit: "°C", descriptionText: "${device.displayName} temperature is ${tempC}°C")
-    sendEvent(name: "humidity", value: runtime.actualHumidity, unit: "%", descriptionText: "${device.displayName} humidity is ${runtime.actualHumidity}%")
+    // A moved lastStatusModified means the thermostat posted its runtime: send every value, as
+    // for a device report. Otherwise the answer repeats held values: send only what changed,
+    // since settings, holds and the program can change without a runtime post.
+    String key = device.id.toString()
+    String reportedAt = runtime?.lastStatusModified?.toString()
+    String lastSeen = LAST_REPORT.get(key)
+    boolean reported = runtimeReported(lastSeen, reportedAt)
+    List<String> sent = []
+    Closure send = { Map evt ->
+        boolean out = reported ? sendNow(evt) : sendChanged(evt)
+        if (out) sent << (evt.name as String)
+    }
 
-    // Update setpoints
+    BigDecimal tempC = ecobeeToCelsius(runtime.actualTemperature)
+    send(name: "temperature", value: tempC, unit: "°C", descriptionText: "${device.displayName} temperature is ${tempC}°C")
+    send(name: "humidity", value: runtime.actualHumidity, unit: "%", descriptionText: "${device.displayName} humidity is ${runtime.actualHumidity}%")
+
     BigDecimal heatC = ecobeeToCelsius(runtime.desiredHeat)
     BigDecimal coolC = ecobeeToCelsius(runtime.desiredCool)
-    sendEvent(name: "heatingSetpoint", value: heatC, unit: "°C", descriptionText: "${device.displayName} heating setpoint is ${heatC}°C")
-    sendEvent(name: "coolingSetpoint", value: coolC, unit: "°C", descriptionText: "${device.displayName} cooling setpoint is ${coolC}°C")
+    send(name: "heatingSetpoint", value: heatC, unit: "°C", descriptionText: "${device.displayName} heating setpoint is ${heatC}°C")
+    send(name: "coolingSetpoint", value: coolC, unit: "°C", descriptionText: "${device.displayName} cooling setpoint is ${coolC}°C")
 
-    // Update HVAC mode: custom hvacMode carries the Ecobee wire value as-is;
+    // Custom hvacMode carries the Ecobee wire value as-is;
     // thermostatMode is translated to the HE-canonical value (auxHeatOnly -> "emergency heat").
     String hvacModeValue = thermostat.settings?.hvacMode?.toString() ?: "unknown"
     String thermostatModeValue = HE_TO_ECOBEE_MODE.find { k, v -> v == hvacModeValue }?.key ?: hvacModeValue
-    sendEvent(name: "hvacMode", value: hvacModeValue, descriptionText: "${device.displayName} HVAC mode is set to ${hvacModeValue}")
-    sendEvent(name: "thermostatMode", value: thermostatModeValue, descriptionText: "${device.displayName} thermostat mode is ${thermostatModeValue}")
+    send(name: "hvacMode", value: hvacModeValue, descriptionText: "${device.displayName} HVAC mode is set to ${hvacModeValue}")
+    send(name: "thermostatMode", value: thermostatModeValue, descriptionText: "${device.displayName} thermostat mode is ${thermostatModeValue}")
 
-    // Update current program
     String currentProgramValue = thermostat.program?.currentClimateRef?.toString() ?: "unknown"
-    sendEvent(name: "currentProgram", value: currentProgramValue, descriptionText: "${device.displayName} current program is ${currentProgramValue}")
+    send(name: "currentProgram", value: currentProgramValue, descriptionText: "${device.displayName} current program is ${currentProgramValue}")
 
-    // Determine operating state
     String operatingState = operatingStateFromEquipment(thermostat.equipmentStatus)
-    sendEvent(name: "thermostatOperatingState", value: operatingState, descriptionText: "${device.displayName} thermostat operating state is ${operatingState}")
+    send(name: "thermostatOperatingState", value: operatingState, descriptionText: "${device.displayName} thermostat operating state is ${operatingState}")
 
-    // Update weather
+    // Weather comes from Ecobee's weather service, not the thermostat: on change only.
     if (weather?.forecasts?.size() > 0) {
         Map current = weather.forecasts[0]
         BigDecimal outdoorTempC = ecobeeToCelsius(current.temperature)
-        sendEvent(name: "outdoorTemperature", value: outdoorTempC, unit: "°C", descriptionText: "${device.displayName} outdoor temperature is ${outdoorTempC}°C")
+        if (sendChanged(name: "outdoorTemperature", value: outdoorTempC, unit: "°C", descriptionText: "${device.displayName} outdoor temperature is ${outdoorTempC}°C")) sent << "outdoorTemperature"
         String weatherValue = current.condition?.toString() ?: ""
-        sendEvent(name: "weatherCondition", value: weatherValue, descriptionText: "${device.displayName} weather is ${weatherValue}")
+        if (sendChanged(name: "weatherCondition", value: weatherValue, descriptionText: "${device.displayName} weather is ${weatherValue}")) sent << "weatherCondition"
     }
 
-    // Update hold status
     Map activeHold = thermostat.events?.find { it.type == "hold" && it.running == true }
     if (activeHold) {
-        sendEvent(name: "holdStatus", value: "active")
-        sendEvent(name: "holdClimate", value: activeHold.holdClimateRef?.toString() ?: "temperature")
-        sendEvent(name: "holdEndTime", value: (activeHold.endDate && activeHold.endTime) ?
+        send(name: "holdStatus", value: "active")
+        send(name: "holdClimate", value: activeHold.holdClimateRef?.toString() ?: "temperature")
+        send(name: "holdEndTime", value: (activeHold.endDate && activeHold.endTime) ?
             "${activeHold.endDate} ${activeHold.endTime}".toString() : "indefinite")
     } else {
-        sendEvent(name: "holdStatus", value: "none")
-        sendEvent(name: "holdClimate", value: "")
-        sendEvent(name: "holdEndTime", value: "")
+        // Not "": the hub keeps the previous value as current for an empty one, so the last
+        // hold's climate and end time would stay current, and every poll would differ.
+        send(name: "holdStatus", value: "none")
+        send(name: "holdClimate", value: "none")
+        send(name: "holdEndTime", value: "none")
     }
 
-    // Concise log summary
-    logInfo "State: ${tempC}°C, ${runtime.actualHumidity}%, Heat ${heatC}°C, Cool ${coolC}°C, ${operatingState}, ${activeHold ? 'Hold active' : 'No hold'}"
+    if (reported) LAST_REPORT.put(key, reportedAt)
+    logDebug "${reported ? 'report' : 'repeat'}: lastStatusModified ${reportedAt} (was ${lastSeen}); sent ${sent ?: 'nothing'}"
+    logTrace "State: ${tempC}°C, ${runtime.actualHumidity}%, Heat ${heatC}°C, Cool ${coolC}°C, ${operatingState}, ${activeHold ? 'Hold active' : 'No hold'}"
 
     state.lastUpdate = new Date().format("yyyy-MM-dd HH:mm:ss")
+}
+
+private boolean sendNow(Map evt) {
+    if (evt.value == null) return false
+    sendEvent(evt)
+    return true
+}
+
+// True when the thermostat posted its runtime since the last poll: lastStatusModified
+// (UTC "yyyy-MM-dd HH:mm:ss", so text order is time order) is newer than the last one seen.
+// None seen yet counts as a report; a missing or unmoved time is a repeat.
+@CompileStatic
+private static boolean runtimeReported(String lastSeen, String reportedAt) {
+    if (!reportedAt) return false
+    if (!lastSeen) return true
+    return reportedAt > lastSeen
 }
 
 // ========================================
@@ -1265,8 +1297,8 @@ private String pollSucceeded() {
 
 private void setHealth(String status, String reason) {
     String prev = device.currentValue("healthStatus")
-    sendEvent(name: "healthStatus", value: status, descriptionText: "${device.displayName} is ${status}: ${reason}")
-    if (prev != null && prev != status) {
+    if (!sendChanged(name: "healthStatus", value: status, descriptionText: "${device.displayName} is ${status}: ${reason}")) return
+    if (prev != null) {
         if (status == "offline") logWarn "offline: ${reason}"
         else logInfo "back online"
     }
@@ -1545,3 +1577,23 @@ void logError(String m) { log.error logp('🛑') + m }
 void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
 void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
 void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }
+
+// Returns true when the event was sent. Values compare as text, the way the hub stores them.
+// An attribute the metadata does not declare has no current value and is sent every time.
+boolean sendChanged(Map evt) {
+    if (evt.value == null) return false
+    if (device.currentState(evt.name as String)?.value == evt.value.toString()) return false
+    sendEvent(evt)
+    return true
+}
+
+// Called by the parent with the service's own evidence: offline while the service is
+// unreachable or reports the device offline. The reason goes in the event description.
+void updateHealth(String status, String reason = null) {
+    String prev = device.currentValue("healthStatus")
+    String why = reason ? ": ${reason}" : ""
+    if (!sendChanged(name: "healthStatus", value: status, descriptionText: "${device.displayName} is ${status}${why}")) return
+    if (prev == null) return
+    if (status == "offline") logWarn "offline${why}"
+    else logInfo "back online"
+}

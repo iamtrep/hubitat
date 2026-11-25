@@ -1,7 +1,8 @@
 // Copyright (c) 2026 PJ
 // SPDX-License-Identifier: MIT
 //
-// Unit test (TESTING.md Mode 4, extraction variant): Ecobee operating state from equipmentStatus (L-3) and PIN expiry (L-1).
+// Unit test (TESTING.md Mode 4, extraction variant): Ecobee operating state from equipmentStatus (L-3), PIN expiry (L-1)
+// and the report-time rule (runtime.lastStatusModified).
 // Run: groovy drivers/tests/test-ecobee-equipment-state.groovy   (no hub)
 
 File scriptFile = new File(getClass().protectionDomain.codeSource.location.toURI())
@@ -24,7 +25,8 @@ def check = { String name, boolean cond ->
 File src = System.getenv("SRC_OVERRIDE") ? new File(System.getenv("SRC_OVERRIDE")) : new File(scriptFile.parentFile.parentFile, "EcobeeCompanion.groovy")
 String text = src.text
 def h = new GroovyShell().parse(extract(text, "private static String operatingStateFromEquipment(") + "\n" +
-        extract(text, "private static long pinExpiryMs(") + "\nreturn this\n").run()
+        extract(text, "private static long pinExpiryMs(") + "\n" +
+        extract(text, "private static boolean runtimeReported(") + "\nreturn this\n").run()
 
 println "L-3: equipmentStatus tokens"
 ["heatPump", "heatPump2", "heatPump3", "auxHeat1", "auxHeat2", "auxHeat3"].each { String t ->
@@ -51,6 +53,15 @@ check "token match is exact (not case folded substring)", h.operatingStateFromEq
 println "\nL-1: PIN expiry is minutes"
 check "9 minutes is 540000 ms", h.pinExpiryMs(1000L, 9) == 1000L + 540000L
 check "integer-valued BigDecimal accepted", h.pinExpiryMs(0L, 9G) == 540000L
+
+println "\nReport time: runtime.lastStatusModified"
+check "first poll (none seen) is a report", h.runtimeReported(null, "2026-11-24 15:03:12")
+check "newer time is a report", h.runtimeReported("2026-11-24 15:03:12", "2026-11-24 15:08:40")
+check "newer across midnight is a report", h.runtimeReported("2026-11-24 23:59:58", "2026-11-25 00:02:01")
+check "unmoved time is a repeat", !h.runtimeReported("2026-11-24 15:03:12", "2026-11-24 15:03:12")
+check "older time is a repeat", !h.runtimeReported("2026-11-24 15:08:40", "2026-11-24 15:03:12")
+check "missing time is a repeat", !h.runtimeReported("2026-11-24 15:03:12", null)
+check "missing time on first poll is a repeat", !h.runtimeReported(null, "")
 
 println "\n${pass} passed, ${fail} failed"
 System.exit(fail ? 1 : 0)
