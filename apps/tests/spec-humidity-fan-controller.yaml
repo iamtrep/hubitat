@@ -239,6 +239,9 @@ cases:
   # 2s delay); with wait_seconds=1 the delay hasn't fired, so fan stays
   # off and hi-sw stays off. Prior case left motion=active; setup_wait=4
   # plus inter-case overhead pushes lastMotionActiveTime > 5s stale.
+  # The delay is still armed when this case ends; the next case's setup
+  # waits for it to fire (hi-sw on), which shows the fall-through reached
+  # HIGH and keeps that setup from racing the timer.
   - name: occupancy-gate-blocks-fast-climb
     setup:
       - { device: test-hfc-bath,   command: setHumidity, args: [40] }
@@ -274,6 +277,7 @@ cases:
   # PENDING_HIGH entry path is exercised by code review only — no realistic humidity Δ available.
   - name: excessive-change-bypasses-from-normal
     setup:
+      - await: { device: test-hfc-hi-sw, attribute: switch, value: "on", timeout_seconds: 4 }
       - { device: test-hfc-bath,     command: setHumidity, args: [30] }
       - { device: test-hfc-ref,      command: setHumidity, args: [50] }
       - { device: test-hfc-restrict, command: "off" }
