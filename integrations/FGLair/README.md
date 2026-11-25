@@ -129,6 +129,8 @@ Default poll interval is 60 s. Configurable to 30 / 60 / 120 / 300 s. Each cycle
 
 Room and outdoor temperatures are "sensed" properties: the cloud serves a cached value it refreshes on its own only about once a day. The manager wakes each unit's sensors by writing `refresh=1` once per **Wake sensed temps every** interval (10 / 15 / 30 / 60 min, default 15), independent of the poll interval; a later poll reads the fresh values. Writing it more often risks jamming the unit's cloud write queue, which blocks setpoint changes from every source.
 
+The cloud stamps each property with the time the unit last posted it. A poll that finds a newer time for a property sends its attributes even when the value is unchanged, so the device's last activity shows when the unit last reported. A poll that finds the same time repeats what the cloud already held, and only a changed value goes out. After a hub reboot or a code update the first poll sends every attribute.
+
 The device's **Refresh** command wakes the sensors and reads 15 s later. Wakes are limited to one per minute per unit; a refresh inside that window only reads.
 
 ## Orphans

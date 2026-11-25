@@ -93,6 +93,10 @@ metadata {
 // back whole, so it lives here and changes only through atomic map methods. A reboot or push
 // loses it, which is harmless once WRITE_SETTLE_MS has passed.
 @Field static final ConcurrentHashMap<String, ConcurrentHashMap<String, Map>> RECENT_WRITES = new ConcurrentHashMap<>()
+// The newest cloud update time seen per device and polled property (data_updated_at, keyed as in
+// updateState's map). A newer time is a report from the unit; the same time is a repeat. Empty
+// after a reboot or push, so the first poll after one sends every value.
+@Field static final ConcurrentHashMap<String, ConcurrentHashMap<String, String>> LAST_REPORT = new ConcurrentHashMap<>()
 @Field static final int DEBUG_LOG_TIMEOUT = 1800
 
 @Field static final List<String> SUPPORTED_STD_MODES = ["\"off\"", "\"heat\"", "\"cool\"", "\"auto\""]
@@ -280,16 +284,18 @@ private void writeMode(String mode) {
     emitMode(mode, device.currentValue("temperature") as BigDecimal, sp)
 }
 
-private void emitMode(String fujMode, BigDecimal temp, BigDecimal sp) {
-    sendChanged(name: "fujitsuMode", value: fujMode,
-              descriptionText: "${device} fujitsuMode is ${fujMode}")
+// report: operation_mode is a new report from the unit; opReport: so is any source of the
+// operating state. Commands pass neither and send on change only.
+private void emitMode(String fujMode, BigDecimal temp, BigDecimal sp, boolean report = false, boolean opReport = false) {
+    sendPolled(report, [name: "fujitsuMode", value: fujMode,
+              descriptionText: "${device} fujitsuMode is ${fujMode}"])
     String tMode = THERMOSTAT_MODE_FOR[fujMode]
-    sendChanged(name: "thermostatMode", value: tMode,
-              descriptionText: "${device} mode is ${tMode}")
+    sendPolled(report, [name: "thermostatMode", value: tMode,
+              descriptionText: "${device} mode is ${tMode}"])
     String opState = deriveOperatingState(fujMode, temp, sp,
                                           device.currentValue("thermostatOperatingState") as String)
-    sendChanged(name: "thermostatOperatingState", value: opState,
-              descriptionText: "${device} operating state is ${opState}")
+    sendPolled(opReport, [name: "thermostatOperatingState", value: opState,
+              descriptionText: "${device} operating state is ${opState}"])
 }
 
 private boolean isOptimistic() {
@@ -323,12 +329,31 @@ private void writeFanSpeed(String speed) {
 }
 
 // Any fixed speed is a continuously running fan, which the canonical enum calls "on".
-private void emitFanSpeed(String speed) {
-    sendChanged(name: "fanSpeed", value: speed,
-              descriptionText: "${device} fanSpeed is ${speed}")
+private void emitFanSpeed(String speed, boolean report = false) {
+    sendPolled(report, [name: "fanSpeed", value: speed,
+              descriptionText: "${device} fanSpeed is ${speed}"])
     String fanMode = speed == "auto" ? "auto" : "on"
-    sendChanged(name: "thermostatFanMode", value: fanMode,
-              descriptionText: "${device} thermostatFanMode is ${fanMode}")
+    sendPolled(report, [name: "thermostatFanMode", value: fanMode,
+              descriptionText: "${device} thermostatFanMode is ${fanMode}"])
+}
+
+// A value the unit reported goes out changed or not, so device.lastActivity moves; a repeat of
+// what the cloud already held goes out only if it differs from the current value.
+private void sendPolled(boolean report, Map evt) {
+    if (!report) { sendChanged(evt); return }
+    if (evt.value != null) sendEvent(evt)
+}
+
+// True when the poll carries a newer update time for this property than this device has seen.
+// ISO-8601 UTC times in one format sort as text.
+private boolean newReport(Map updatedAt, String key) {
+    String t = updatedAt?.get(key)?.toString()
+    if (!t) return false
+    ConcurrentHashMap<String, String> seen = LAST_REPORT.computeIfAbsent(device.id.toString(), { String k -> new ConcurrentHashMap<String, String>() } as java.util.function.Function)
+    String prev = seen.get(key)
+    if (prev != null && t.compareTo(prev) <= 0) return false
+    seen.put(key, t)
+    return true
 }
 
 // Callers pass numbers or strings, depending on the app.
@@ -441,6 +466,14 @@ void updateState(Map data) {
     def opMode = settled("operation_mode", data.opMode)
     def adjustTemp = settled("adjust_temperature", data.adjustTemp)
     def fanSpeed = settled("fan_speed", data.fanSpeed)
+    // Per property: a newer cloud update time is a report from the unit, sent changed or not;
+    // otherwise the poll repeats what the cloud held and only a changed value goes out. A value
+    // ignored by settled() leaves its time unseen.
+    Map updatedAt = data.updatedAt as Map
+    boolean modeRpt = opMode != null && newReport(updatedAt, "opMode")
+    boolean spRpt = adjustTemp != null && newReport(updatedAt, "adjustTemp")
+    boolean fanRpt = fanSpeed != null && newReport(updatedAt, "fanSpeed")
+    boolean tempRpt = data.displayTemp != null && newReport(updatedAt, "displayTemp")
     String fujMode = opMode != null ? OP_MODE[(int) opMode] : null
     if (roleOf(fujMode)) state.lastRole = roleOf(fujMode)
     String role = roleOf(fujMode) ?: activeRole()
@@ -451,13 +484,13 @@ void updateState(Map data) {
     // Temperature and setpoint go out before the mode and operating state, so a
     // subscriber to thermostatOperatingState reads the values it was derived from.
     if (unitTemp != null) {
-        sendChanged(name: "unitTemperature", value: unitTemp, unit: getTemperatureScale(),
-                  descriptionText: "${device} unit sensor is ${unitTemp}${getTemperatureScale()}")
+        sendPolled(tempRpt, [name: "unitTemperature", value: unitTemp, unit: getTemperatureScale(),
+                  descriptionText: "${device} unit sensor is ${unitTemp}${getTemperatureScale()}"])
     }
     if (adjustTemp != null) {
         BigDecimal unitSp = aylaSetpointToScale(adjustTemp)
-        sendChanged(name: "unitSetpoint", value: unitSp, unit: getTemperatureScale(),
-                  descriptionText: "${device} unit setpoint is ${unitSp}${getTemperatureScale()}")
+        sendPolled(spRpt, [name: "unitSetpoint", value: unitSp, unit: getTemperatureScale(),
+                  descriptionText: "${device} unit setpoint is ${unitSp}${getTemperatureScale()}"])
     }
     BigDecimal room = roomTemperature()
     if (room != null) {
@@ -465,45 +498,46 @@ void updateState(Map data) {
                   descriptionText: "${device} temperature is ${room}${getTemperatureScale()} (room sensors)")
     } else if (temp != null) {
         String onUnit = off != 0 ? " (unit sensor ${unitTemp}${getTemperatureScale()})" : ""
-        sendChanged(name: "temperature", value: temp, unit: getTemperatureScale(),
-                  descriptionText: "${device} temperature is ${temp}${getTemperatureScale()}${onUnit}")
+        sendPolled(tempRpt, [name: "temperature", value: temp, unit: getTemperatureScale(),
+                  descriptionText: "${device} temperature is ${temp}${getTemperatureScale()}${onUnit}"])
     }
     if (sp != null) {
-        sendChanged(name: "thermostatSetpoint", value: sp, unit: getTemperatureScale(),
-                  descriptionText: "${device} thermostatSetpoint is ${sp}${getTemperatureScale()}")
+        sendPolled(spRpt, [name: "thermostatSetpoint", value: sp, unit: getTemperatureScale(),
+                  descriptionText: "${device} thermostatSetpoint is ${sp}${getTemperatureScale()}"])
         // Mirror to mode-specific slot. Bootstrap empty heat/cool attributes on first observation.
         String modeNow = fujMode ?: device.currentValue("fujitsuMode")
         // A held setpoint is the user's newer intent; don't overwrite it with the unit's old value.
         boolean holding = state.heldSetpoint != null
         if ((modeNow == "heat" && !holding) || device.currentValue("heatingSetpoint") == null) {
-            sendChanged(name: "heatingSetpoint", value: sp, unit: getTemperatureScale(),
-                      descriptionText: "${device} heatingSetpoint is ${sp}${getTemperatureScale()}")
+            sendPolled(spRpt, [name: "heatingSetpoint", value: sp, unit: getTemperatureScale(),
+                      descriptionText: "${device} heatingSetpoint is ${sp}${getTemperatureScale()}"])
         }
         if (modeNow == "cool" || device.currentValue("coolingSetpoint") == null) {
-            sendChanged(name: "coolingSetpoint", value: sp, unit: getTemperatureScale(),
-                      descriptionText: "${device} coolingSetpoint is ${sp}${getTemperatureScale()}")
+            sendPolled(spRpt, [name: "coolingSetpoint", value: sp, unit: getTemperatureScale(),
+                      descriptionText: "${device} coolingSetpoint is ${sp}${getTemperatureScale()}"])
         }
     }
     if (fujMode != null) {
         state.unitMode = fujMode  // poll-confirmed, unlike the optimistic fujitsuMode attribute
         emitMode(fujMode, temp != null ? temp : device.currentValue("temperature") as BigDecimal,
-                 sp != null ? sp : device.currentValue("thermostatSetpoint") as BigDecimal)
+                 sp != null ? sp : device.currentValue("thermostatSetpoint") as BigDecimal,
+                 modeRpt, modeRpt || tempRpt || spRpt)
     }
     sendHeldSetpoint()
     if (fanSpeed != null) {
         String speed = FAN_MODE[(int) fanSpeed]
-        if (speed != null) emitFanSpeed(speed)
+        if (speed != null) emitFanSpeed(speed, fanRpt)
     }
     if (data.outdoorTemp != null) {
         BigDecimal ot = aylaSensorToScale(data.outdoorTemp)
-        sendChanged(name: "outdoorTemperature", value: ot, unit: getTemperatureScale(),
-                  descriptionText: "${device} outdoor temperature is ${ot}${getTemperatureScale()}")
+        sendPolled(newReport(updatedAt, "outdoorTemp"), [name: "outdoorTemperature", value: ot, unit: getTemperatureScale(),
+                  descriptionText: "${device} outdoor temperature is ${ot}${getTemperatureScale()}"])
     }
     if (data.errorCode != null) {
         Integer prev = device.currentValue("errorCode") as Integer
         Integer code = data.errorCode as Integer
-        sendChanged(name: "errorCode", value: code,
-                  descriptionText: "${device} errorCode is ${code}")
+        sendPolled(newReport(updatedAt, "errorCode"), [name: "errorCode", value: code,
+                  descriptionText: "${device} errorCode is ${code}"])
         if (prev != null && prev == 0 && code != 0) {
             logWarn "errorCode set to ${code}"
         } else if (prev != null && prev != 0 && code == 0) {
@@ -513,8 +547,8 @@ void updateState(Map data) {
     if (data.opStatus != null) {
         Integer prev = device.currentValue("opStatus") as Integer
         Integer st = data.opStatus as Integer
-        sendChanged(name: "opStatus", value: st,
-                  descriptionText: "${device} opStatus is ${st}")
+        sendPolled(newReport(updatedAt, "opStatus"), [name: "opStatus", value: st,
+                  descriptionText: "${device} opStatus is ${st}"])
         if (prev != null && prev != st) {
             logInfo "opStatus changed: ${prev} -> ${st}"
         }

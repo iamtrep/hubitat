@@ -1001,9 +1001,15 @@ private void handlePropertiesResponse(resp, String dsn) {
     clearAuthRejects()
 
     Map<String, Object> props = [:]
+    // Each property's data_updated_at: the unit moves it when it re-posts, even an unchanged value.
+    Map<String, String> times = [:]
     parsed.each { item ->
         def p = item instanceof Map ? ((Map) item).property : null
-        if (p instanceof Map && p.name) props[p.name.toString().toLowerCase()] = p.value
+        if (p instanceof Map && p.name) {
+            String pName = p.name.toString().toLowerCase()
+            props[pName] = p.value
+            if (p.data_updated_at) times[pName] = p.data_updated_at.toString()
+        }
     }
     if (parsed && !props) {
         noteUnitFailure(dsn, "fetchProperties(${dsn}): unrecognized response shape — keeping last state")
@@ -1025,6 +1031,16 @@ private void handlePropertiesResponse(resp, String dsn) {
         deviceName      : props["device_name"],
         commVersion     : props["comm_version"]
     ]
+    // The same keys as above, for the polled values the child sends on a new report.
+    stateMap.updatedAt = [
+        opMode      : times["operation_mode"],
+        fanSpeed    : times["fan_speed"],
+        adjustTemp  : times["adjust_temperature"],
+        displayTemp : times["display_temperature"],
+        outdoorTemp : times["outdoor_temperature"],
+        errorCode   : times["error_code"],
+        opStatus    : times["op_status"]
+    ].findAll { k, v -> v != null }
     logTrace "fetchProperties(${dsn}) -> ${stateMap}"
     ChildDeviceWrapper child = getChildDevice("${DNI_PREFIX_UNIT}${dsn}")
     try {

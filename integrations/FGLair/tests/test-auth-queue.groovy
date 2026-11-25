@@ -5,7 +5,8 @@
 // logic: runs FGLairManager.groovy under plain Groovy on a stub of the hub's app API (a
 // controllable clock, recorded asynchttp calls, recorded child calls) and drives the 401 chain
 // (noteAuthReject, refreshToken, the write 401 retry), the pending-write queue, the request
-// budget (fetchNextQueued, hasRequestRoom), the failure streaks and Retry-After. No network.
+// budget (fetchNextQueued, hasRequestRoom), the failure streaks, Retry-After and the map a
+// properties answer becomes (values plus updatedAt). No network.
 //
 // Run: groovy integrations/FGLair/tests/test-auth-queue.groovy   (a few seconds, no hub)
 
@@ -259,6 +260,20 @@ a.clock += 61_000L
 a.children.clear()      // wakeDueUnits types its closure on the hub's ChildDeviceWrapper, which is not stubbed
 a.pollTick()
 check "pollTick polls again once the pause ends", posts(a, "fetchDevicesCallback").size() == 1
+
+println "Properties answer: each property's update time goes to the child"
+a = fresh()
+a.children.clear()      // the hub's ChildDeviceWrapper type is not stubbed; the trace line shows the map
+a.settings.traceEnable = true
+String body = '[{"property":{"name":"display_temperature","value":7000,"data_updated_at":"2026-11-24T12:00:00Z"}},' +
+              '{"property":{"name":"operation_mode","value":6,"data_updated_at":"2026-11-24T12:00:04Z"}},' +
+              '{"property":{"name":"model_name","value":"X","data_updated_at":"2026-11-01T00:00:00Z"}},' +
+              '{"property":{"name":"fan_speed","value":4}}]'
+def okResp = new Expando(hasError: { false }, getStatus: { 200 }, getHeaders: { [:] }, getData: { body })
+a.handlePropertiesResponse(okResp, "D1")
+String trace = a.logs.find { it[0] == 'trace' && (it[1] as String).contains('fetchProperties(D1) ->') }?.getAt(1)
+check "values keep their keys", trace?.contains('displayTemp:7000') && trace?.contains('opMode:6')
+check "updatedAt keyed like the values", trace?.contains('updatedAt:[opMode:2026-11-24T12:00:04Z, displayTemp:2026-11-24T12:00:00Z]')
 
 println ""
 println "${pass} passed, ${fail} failed"
