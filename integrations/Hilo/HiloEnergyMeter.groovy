@@ -38,7 +38,6 @@ metadata {
         attribute "energyLastHour",  "number"
         attribute "lastHourStart",   "string"
         attribute "healthStatus",    "enum", ["online", "offline"]
-        attribute "lastUpdate",      "string"
     }
 
     preferences {
@@ -51,7 +50,7 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "0.1.4"
+@Field static final String CODE_VERSION = "0.1.5"
 
 // Event descriptions and preference titles, in the language the parent app sets. Logs stay in
 // English and never come from here.
@@ -117,6 +116,8 @@ metadata {
 void installed() { logDebug "installed"; state.version = CODE_VERSION }
 
 void updated() {
+    // 0.1.4 and earlier stamped the time of each hourly read in an attribute.
+    device.deleteCurrentState("lastUpdate")
     logDebug "updated"
     unschedule()   // safety-lint:ok unschedule-kills-timers: initialize() reconnects, and each connect re-arms streamCheck
     closeStream()
@@ -184,7 +185,6 @@ void updateEnergy(Map m) {
                                        kwh: uiLang() == "fr" ? m.energyLastHour.toString().replace(".", ",") : m.energyLastHour]))
         sendEvent(name: "lastHourStart", value: m.lastHourStart)
     }
-    sendEvent(name: "lastUpdate", value: new Date().format("yyyy-MM-dd HH:mm:ss", location.timeZone))
     if (device.currentValue("healthStatus") == null) updateHealth("online")
 }
 

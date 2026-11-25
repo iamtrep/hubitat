@@ -12,8 +12,9 @@
 
 import groovy.transform.CompileStatic
 import groovy.transform.Field
+import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.2.3"
+@Field static final String CODE_VERSION = "0.2.4"
 @Field static final String RSQAQ_URL = "https://services3.arcgis.com/0lL78GhXbg1Po7WO/arcgis/rest/services/IQA_resultat_REST/FeatureServer/0/query"
 // CKAN datastore; GET ignores filters, so queries are POSTed
 @Field static final String MTL_DATASTORE_URL = "https://donnees.montreal.ca/api/3/action/datastore_search"
@@ -25,6 +26,9 @@ import groovy.transform.Field
 // warn every OUTAGE_REMINDER_MS until a poll succeeds.
 @Field static final int FAILURE_ERROR_THRESHOLD = 3
 @Field static final long OUTAGE_REMINDER_MS = 3_600_000L
+// Per device and station: the last observation time seen, in epoch ms. In memory: empty after a
+// code push or reboot, and the first poll then sends everything.
+@Field static final ConcurrentHashMap<String, Long> LAST_REPORT = new ConcurrentHashMap<>()
 
 // Sub-index fields: RSQAQ column / Montréal pollutant label -> attribute
 @Field static final Map<String, String> RSQAQ_POLLUTANTS = [PM25: "pm25", O3: "o3", NO2: "no2", SO2: "so2", CO: "co"]
@@ -57,7 +61,6 @@ metadata {
 
         attribute "stationName", "string"
         attribute "observationTime", "string"
-        attribute "lastUpdated", "string"
         attribute "healthStatus", "enum", ["online", "offline"]
 
         command "findNearestStation"
@@ -88,6 +91,8 @@ void installed() {
 
 void uninstalled() {
     unschedule()
+    String prefix = "${device.id}:"
+    LAST_REPORT.keySet().findAll { String k -> k.startsWith(prefix) }.each { LAST_REPORT.remove(it) }
 }
 
 void updated() {
@@ -103,6 +108,8 @@ void initialize() {
     if (state.version != CODE_VERSION) {
         logVer "New driver version: ${CODE_VERSION} (was: ${state.version})"
         state.version = CODE_VERSION
+        // 0.2.3 and earlier stamped the time of each poll in an attribute.
+        device.deleteCurrentState("lastUpdated")
     }
 
     if (debugEnable || traceEnable) {
@@ -304,31 +311,56 @@ private void publishObservation(int iqa, Map<String, Integer> subs, String name,
     }
     String dominant = subs ? subs.max { it.value }.key : null
     String category = iqaCategory(iqa)
+    // A newer observation time is a station report: its values go out, changed or not.
+    // Otherwise the feed repeats the last hour and only a changed value goes out.
+    boolean fresh = isNewObservation(obsMillis)
 
-    sendEvent(name: "iqa", value: iqa, unit: "IQA")
-    sendEvent(name: "airQualityIndex", value: iqaToAQI(iqa))
-    sendEvent(name: "iqaCategory", value: category)
-    if (dominant) sendEvent(name: "dominantPollutant", value: POLLUTANT_LABELS[dominant])
-    subs.each { String attr, Integer v -> sendEvent(name: attr, value: v, unit: "IQA") }
-    if (name) sendEvent(name: "stationName", value: name)
+    boolean changed = sendReading(fresh, [name: "iqa", value: iqa, unit: "IQA"])
+    sendReading(fresh, [name: "airQualityIndex", value: iqaToAQI(iqa)])
+    changed = sendReading(fresh, [name: "iqaCategory", value: category]) || changed
+    if (dominant) sendReading(fresh, [name: "dominantPollutant", value: POLLUTANT_LABELS[dominant]])
+    subs.each { String attr, Integer v -> sendReading(fresh, [name: attr, value: v, unit: "IQA"]) }
+    if (name) sendChanged(name: "stationName", value: name)
 
     String obsText = ""
     if (obsMillis) {
         state.lastObservationMillis = obsMillis
         obsText = new Date(obsMillis).format("yyyy-MM-dd HH:mm", location.timeZone)
-        sendEvent(name: "observationTime", value: obsText)
+        sendReading(fresh, [name: "observationTime", value: obsText])
     }
-    sendEvent(name: "lastUpdated", value: new Date().format("yyyy-MM-dd HH:mm:ss"))
-    logInfo "IQA ${iqa} (${category}${dominant ? ', ' + POLLUTANT_LABELS[dominant] : ''}) observed at ${obsText}"
+    String line = "IQA ${iqa} (${category}${dominant ? ', ' + POLLUTANT_LABELS[dominant] : ''}) observed at ${obsText}"
+    if (changed) logInfo line
+    else logDebug "${line}${fresh ? '' : ' (repeat)'}"
     checkStaleness()
 }
 
-// Runs after every answered poll and sets healthStatus from the station's last report.
+// True when obsMillis is newer than the last observation time seen for this device and station,
+// and records it. A missing time counts as a repeat.
+private boolean isNewObservation(Long obsMillis) {
+    if (!obsMillis) return false
+    String key = "${device.id}:${resolveStationId()}".toString()
+    Long last = LAST_REPORT.get(key)
+    if (last != null && obsMillis <= last) return false
+    LAST_REPORT.put(key, obsMillis)
+    return true
+}
+
+// A station report goes out with plain sendEvent; a repeat through sendChanged.
+// Returns true when the value differs from the current one.
+private boolean sendReading(boolean fresh, Map evt) {
+    if (!fresh) return sendChanged(evt)
+    boolean changed = device.currentState(evt.name as String)?.value != evt.value.toString()
+    sendEvent(evt)
+    return changed
+}
+
+// Runs after every answered poll and sets healthStatus from the station's last report. Sent on
+// change only (updateHealth); the recovery line rides on the online event that ends an outage.
 private void checkStaleness() {
     String online = (state.remove("recoveryNote") ?: "reporting") as String
     Long last = state.lastObservationMillis as Long
     if (!last) {
-        setHealth("online", online)
+        updateHealth("online", online)
         return
     }
     int thresholdHours = (staleThreshold != null) ? staleThreshold as int : 6
@@ -340,8 +372,8 @@ private void checkStaleness() {
         logInfo "Station reporting again"
     }
     state.stale = stale
-    if (stale) setHealth("offline", "station has not reported for ${ageHours} h")
-    else setHealth("online", online)
+    if (stale) updateHealth("offline", "station has not reported for ${ageHours} h")
+    else updateHealth("online", online)
 }
 
 // --- Outage handling ---
@@ -358,7 +390,7 @@ private void pollFailed(String msg) {
     } else if (n == FAILURE_ERROR_THRESHOLD) {
         logError "IQA service unreachable since ${formatClock(since)}: ${msg}"
         state.lastOutageReminder = t
-        setHealth("offline", "IQA service unreachable")
+        updateHealth("offline", "IQA service unreachable")
     } else if (t - ((state.lastOutageReminder ?: 0L) as long) >= OUTAGE_REMINDER_MS) {
         logWarn "IQA service still unreachable after ${formatDuration(t - since)} (${n} polls failed): ${msg}"
         state.lastOutageReminder = t
@@ -380,15 +412,6 @@ private void pollSucceeded() {
     state.remove("pollFailures")
     state.remove("pollFailingSince")
     state.remove("lastOutageReminder")
-}
-
-private void setHealth(String status, String reason) {
-    String prev = device.currentValue("healthStatus")
-    sendEvent(name: "healthStatus", value: status, descriptionText: "${device.displayName} is ${status}: ${reason}")
-    if (prev != null && prev != status) {
-        if (status == "offline") logWarn "offline: ${reason}"
-        else logInfo "back online"
-    }
 }
 
 private String formatClock(long t) {
@@ -534,4 +557,24 @@ void turnOffDebugLogging() {
     logWarn "Debug logging disabled"
     device.updateSetting("debugEnable", [value: "false", type: "bool"])
     device.updateSetting("traceEnable", [value: "false", type: "bool"])
+}
+
+// Returns true when the event was sent. Values compare as text, the way the hub stores them.
+// An attribute the metadata does not declare has no current value and is sent every time.
+boolean sendChanged(Map evt) {
+    if (evt.value == null) return false
+    if (device.currentState(evt.name as String)?.value == evt.value.toString()) return false
+    sendEvent(evt)
+    return true
+}
+
+// Called by the parent with the service's own evidence: offline while the service is
+// unreachable or reports the device offline. The reason goes in the event description.
+void updateHealth(String status, String reason = null) {
+    String prev = device.currentValue("healthStatus")
+    String why = reason ? ": ${reason}" : ""
+    if (!sendChanged(name: "healthStatus", value: status, descriptionText: "${device.displayName} is ${status}${why}")) return
+    if (prev == null) return
+    if (status == "offline") logWarn "offline${why}"
+    else logInfo "back online"
 }

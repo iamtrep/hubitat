@@ -15,6 +15,8 @@
 
 import groovy.transform.CompileStatic
 import groovy.transform.Field
+import java.time.OffsetDateTime
+import java.util.concurrent.ConcurrentHashMap
 
 metadata {
     definition(name: "Awair Element",
@@ -68,6 +70,10 @@ metadata {
 @Field static final long OUTAGE_REMINDER_MS = 3_600_000L
 @Field static final String constLocalPathToAirData = "/air-data/latest"
 @Field static final String constLocalPathToConfig = "/settings/config/data"
+// Per device: the last air-data timestamp seen, in epoch ms. The device's clock sets it, so it moves
+// only when the device takes a new reading. In memory: empty after a code push or reboot, and the
+// first poll then sends everything.
+@Field static final ConcurrentHashMap<String, Long> LAST_REPORT = new ConcurrentHashMap<>()
 
 // Runs when the driver is installed
 void installed() {
@@ -105,6 +111,8 @@ void refresh() {
 
 void uninstalled() {
     unschedule()
+    String prefix = "${device.id}:"
+    LAST_REPORT.keySet().findAll { String k -> k.startsWith(prefix) }.each { LAST_REPORT.remove(it) }
 }
 
 private void initState() {
@@ -221,7 +229,11 @@ private static double satVaporPressure(double tempC) {
     return 6.1094d * Math.exp((17.625d * tempC) / (tempC + 243.04d))
 }
 
-private void processEvent(String name, def value, String unit = null, String description = null) {
+// fresh: the device took a new reading, so the value goes out with plain sendEvent, changed or
+// not. Otherwise the answer repeats an earlier reading and only a changed value goes out.
+// Logs at info only a value that changed.
+private void processEvent(String name, def value, String unit = null, String description = null, boolean fresh = true) {
+    if (value == null) return
     Map evt = [
         name : name,
         value: value
@@ -233,11 +245,35 @@ private void processEvent(String name, def value, String unit = null, String des
 
     if (description != null) {
         evt.descriptionText = description
-        logInfo evt.descriptionText
     }
 
-    sendEvent(evt)
-    logDebug "event: ${evt}"
+    boolean changed = device.currentState(name)?.value != value.toString()
+    if (fresh) sendEvent(evt)
+    else sendChanged(evt)
+    if (changed && description != null) logInfo description
+    else logDebug "event${changed ? '' : ' (unchanged)'}: ${evt}"
+}
+
+// True when the air-data timestamp is newer than the last one seen for this device and address,
+// and records it. A missing or unreadable timestamp counts as a repeat.
+private boolean isNewReading(String timestamp) {
+    Long t = parseTimestamp(timestamp)
+    if (t == null) return false
+    String key = "${device.id}:${ip}".toString()
+    Long last = LAST_REPORT.get(key)
+    if (last != null && t <= last) return false
+    LAST_REPORT.put(key, t)
+    return true
+}
+
+// The device writes ISO-8601 UTC, e.g. 2026-11-24T15:38:24.111Z.
+private static Long parseTimestamp(String ts) {
+    if (!ts) return null
+    try {
+        return OffsetDateTime.parse(ts).toInstant().toEpochMilli()
+    } catch (Exception ignored) {
+        return null
+    }
 }
 
 // Air Quality Thresholds
@@ -256,27 +292,31 @@ private void processAwairData(response, data) {
         try {
             Map awairData = parseJson(response.data)
             logTrace "processAwairData(): ${awairData}"
+            String ts = awairData.timestamp as String
+            boolean fresh = isNewReading(ts)
+            if (!fresh) logDebug "no new reading since ${ts}"
 
             // VOC
-            processAirQualityMetric("voc", awairData.voc, "ppb", VOC_THRESHOLDS, "good", "voc_desc")
+            processAirQualityMetric("voc", awairData.voc, "ppb", VOC_THRESHOLDS, "good", "voc_desc", fresh)
 
             // PM 10
-            processAirQualityMetric("pm10", awairData.pm10_est, "ug/m3", PM10_THRESHOLDS, "good", "pm10_desc")
+            processAirQualityMetric("pm10", awairData.pm10_est, "ug/m3", PM10_THRESHOLDS, "good", "pm10_desc", fresh)
 
             // PM 2.5
-            processAirQualityMetric("pm25", awairData.pm25, "ug/m3", PM25_THRESHOLDS, "good", "pm25_desc")
+            processAirQualityMetric("pm25", awairData.pm25, "ug/m3", PM25_THRESHOLDS, "good", "pm25_desc", fresh)
 
-            // EPA AQI calculation
+            // EPA AQI calculation: a repeated reading does not enter the average. Without a
+            // timestamp every answer counts, as before.
             List readings = (state.pm25readings ?: []) as List
-            if (awairData.pm25 != null) {
+            if (awairData.pm25 != null && (fresh || !ts)) {
                 readings << awairData.pm25
                 state.pm25readings = readings
             }
             int currAqi = calculateAqi()
-            processEvent("airQualityIndex", currAqi, "", "Current calculated AQI is ${currAqi}")
+            processEvent("airQualityIndex", currAqi, "", "Current calculated AQI is ${currAqi}", fresh)
 
             // AIQ Score - https://support.getawair.com/hc/en-us/articles/19504367520023-Understanding-Awair-Score-and-Air-Quality-Factors-Measured-By-Awair-Element
-            processAirQualityMetric("awairScore", awairData.score, "", AIQ_THRESHOLDS, "poor", "aiq_desc")
+            processAirQualityMetric("awairScore", awairData.score, "", AIQ_THRESHOLDS, "poor", "aiq_desc", fresh)
 
             // Temperature — device reports °C; apply the offset in Celsius, convert to display scale at the emit edge
             Double rawTempC = (awairData.temp != null) ? (awairData.temp as double) : null
@@ -284,11 +324,11 @@ private void processAwairData(response, data) {
             Double correctedTempC = (rawTempC != null) ? (rawTempC + offsetC) : null
             if (correctedTempC != null) {
                 String temperature = convertTemperatureIfNeeded(correctedTempC as BigDecimal, "c", 1)
-                processEvent("temperature", temperature, "°${location.temperatureScale}", "Temperature is ${temperature}°${location.temperatureScale}")
+                processEvent("temperature", temperature, "°${location.temperatureScale}", "Temperature is ${temperature}°${location.temperatureScale}", fresh)
             }
 
             // CO2
-            processAirQualityMetric("carbonDioxide", awairData.co2, "ppm", CO2_THRESHOLDS, "good", "co2_desc")
+            processAirQualityMetric("carbonDioxide", awairData.co2, "ppm", CO2_THRESHOLDS, "good", "co2_desc", fresh)
 
             // Humidity — optionally correct RH for the temperature offset (hold absolute humidity constant), then apply the flat offset
             if (awairData.humid != null) {
@@ -299,7 +339,7 @@ private void processAwairData(response, data) {
                 rh += (humidityOffset ?: 0) as double
                 rh = Math.max(0.0d, Math.min(100.0d, rh))
                 int humidity = Math.round(rh) as int
-                processEvent("humidity", humidity, "%", "humidity is ${humidity}%")
+                processEvent("humidity", humidity, "%", "humidity is ${humidity}%", fresh)
             }
             pollSucceeded()
         } catch (groovy.json.JsonException e) {
@@ -326,7 +366,7 @@ private void pollFailed(String msg) {
     } else if (n == FAILURE_ERROR_THRESHOLD) {
         logError "Awair unreachable at ${ip} since ${formatClock(since)}: ${msg}"
         state.lastOutageReminder = t
-        setHealth("offline", "Awair unreachable at ${ip}")
+        updateHealth("offline", "Awair unreachable at ${ip}")
     } else if (t - ((state.lastOutageReminder ?: 0L) as long) >= OUTAGE_REMINDER_MS) {
         logWarn "Awair still unreachable after ${formatDuration(t - since)} (${n} polls failed): ${msg}"
         state.lastOutageReminder = t
@@ -347,16 +387,8 @@ private void pollSucceeded() {
     state.remove("pollFailures")
     state.remove("pollFailingSince")
     state.remove("lastOutageReminder")
-    setHealth("online", recovery ?: "reporting")
-}
-
-private void setHealth(String status, String reason) {
-    String prev = device.currentValue("healthStatus")
-    sendEvent(name: "healthStatus", value: status, descriptionText: "${device.displayName} is ${status}: ${reason}")
-    if (prev != null && prev != status) {
-        if (status == "offline") logWarn "offline: ${reason}"
-        else logInfo "back online"
-    }
+    // Sent on change only; the recovery line rides on the online event that ends an outage.
+    updateHealth("online", recovery ?: "reporting")
 }
 
 private String formatClock(long t) {
@@ -369,15 +401,18 @@ private static String formatDuration(long ms) {
     return "${minutes.intdiv(60L)} h ${minutes % 60} min"
 }
 
+// The category follows its metric: sent with it, on the same fresh/repeat rule.
 private void processAirQualityMetric(String metricName, Number level, String unit,
-                                     Map<Integer, String> thresholds, String defaultDesc, String descAttribute) {
-    processEvent(metricName, level, unit, "${metricName} is ${level} ${unit}")
+                                     Map<Integer, String> thresholds, String defaultDesc, String descAttribute,
+                                     boolean fresh = true) {
+    if (level == null) return
+    processEvent(metricName, level, unit, "${metricName} is ${level} ${unit}", fresh)
 
     String newDesc = thresholds.find { threshold, desc ->
         level > threshold
     }?.value ?: defaultDesc
 
-    processEvent(descAttribute, newDesc)
+    processEvent(descAttribute, newDesc, null, "${descAttribute} is ${newDesc}", fresh)
 }
 
 // AQI calculations
@@ -471,3 +506,23 @@ void logError(String m) { log.error logp('🛑') + m }
 void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
 void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
 void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }
+
+// Returns true when the event was sent. Values compare as text, the way the hub stores them.
+// An attribute the metadata does not declare has no current value and is sent every time.
+boolean sendChanged(Map evt) {
+    if (evt.value == null) return false
+    if (device.currentState(evt.name as String)?.value == evt.value.toString()) return false
+    sendEvent(evt)
+    return true
+}
+
+// Called by the parent with the service's own evidence: offline while the service is
+// unreachable or reports the device offline. The reason goes in the event description.
+void updateHealth(String status, String reason = null) {
+    String prev = device.currentValue("healthStatus")
+    String why = reason ? ": ${reason}" : ""
+    if (!sendChanged(name: "healthStatus", value: status, descriptionText: "${device.displayName} is ${status}${why}")) return
+    if (prev == null) return
+    if (status == "offline") logWarn "offline${why}"
+    else logInfo "back online"
+}

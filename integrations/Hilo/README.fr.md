@@ -94,7 +94,6 @@ Le jeton d'actualisation est enregistré chiffré et renouvelé à chaque usage.
 - `energyLastHour` / `lastHourStart` — kWh consommés pendant la dernière heure publiée par Hilo, et le début de cette heure
 - `power` — la puissance du domicile en W, envoyée par Hilo environ une fois par minute
 - `healthStatus` — `online` / `offline`. La description de l'événement en donne la raison.
-- `lastUpdate` — moment de la dernière lecture de la consommation
 
 Les noms et les valeurs des attributs restent en anglais, quelle que soit la langue : les règles les comparent.
 

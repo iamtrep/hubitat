@@ -94,7 +94,6 @@ The refresh token is stored encrypted and renewed with each use. The access toke
 - `energyLastHour` / `lastHourStart` — kWh used in the latest hour Hilo has reported, and when that hour started
 - `power` — the home's power in W, pushed by Hilo about once a minute
 - `healthStatus` — `online` / `offline`. The event description gives the reason.
-- `lastUpdate` — time of the last consumption read
 
 Hilo publishes an hour's consumption with a delay of an hour or more, so `energy` lags the meter. **Refresh** reads consumption again and reopens the live stream if it has gone quiet.
 

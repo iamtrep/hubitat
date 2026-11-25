@@ -13,8 +13,9 @@
 
 import groovy.transform.CompileStatic
 import groovy.transform.Field
+import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.5.4"
+@Field static final String CODE_VERSION = "0.5.5"
 @Field static final String API_BASE = "https://api.weather.gc.ca/collections"
 @Field static final String ALERT_API_BASE = "https://weather.gc.ca/api/app/v3"
 @Field static final int HTTP_TIMEOUT = 15
@@ -22,6 +23,10 @@ import groovy.transform.Field
 // until this many in a row, then once at error, then at warn every OUTAGE_REMINDER_MS.
 @Field static final int FAILURE_ERROR_THRESHOLD = 3
 @Field static final long OUTAGE_REMINDER_MS = 3_600_000L
+// Per device and station: the last observation_datetime seen, in epoch ms. In memory: empty after a
+// code push or reboot, and the first poll then sends everything. The forecast and alert answers are
+// read without a time of their own, so their values go out on change only.
+@Field static final ConcurrentHashMap<String, Long> LAST_REPORT = new ConcurrentHashMap<>()
 
 // Station ID → Alert Zone Code mapping (Environment Canada, March 2026)
 @Field static final Map<String, String> STATION_TO_ZONE = [
@@ -129,8 +134,8 @@ metadata {
 
         // Meta
         attribute "stationName", "string"
-        attribute "lastUpdated", "string"
         attribute "dataSource", "enum", ["observation", "forecast"]
+        // "current", "unavailable" or the age of the last observation ("8h", "2d 3h"); on change only
         attribute "observationAge", "string"
         attribute "healthStatus", "enum", ["online", "offline"]
 
@@ -163,6 +168,8 @@ void installed() {
 
 void uninstalled() {
     unschedule()
+    String prefix = "${device.id}:"
+    LAST_REPORT.keySet().findAll { String k -> k.startsWith(prefix) }.each { LAST_REPORT.remove(it) }
 }
 
 void updated() {
@@ -181,6 +188,8 @@ void initialize() {
         // Per-poll scratch now travels in the async callback data
         state.remove("pollErrors")
         state.remove("pollObservationOk")
+        // 0.5.4 and earlier stamped the time of each poll in an attribute.
+        device.deleteCurrentState("lastUpdated")
     }
 
     if (debugEnable || traceEnable) {
@@ -242,7 +251,7 @@ void refresh() {
     Map poll = [sid: sid, errors: [], observationOk: false]
     if (state.noObservationFeed) {
         state.observationStale = true
-        sendEvent(name: "observationAge", value: "unavailable")
+        sendChanged(name: "observationAge", value: "unavailable")
         fetchForecast(poll)
         return
     }
@@ -358,25 +367,27 @@ boolean parseObservationResponse(resp, List errors) {
     int rounded = Math.round(aqhi) as int
     String risk = riskCategory(rounded)
 
-    state.lastObservationMillis = obsDt ? parseISO8601(obsDt) : now()
+    Long obsMillis = obsDt ? parseISO8601(obsDt) : 0L
+    // A newer observation_datetime is a station report: its values go out, changed or not.
+    // Otherwise the API repeats the last one and only a changed value goes out.
+    boolean fresh = isNewObservation(obsMillis)
+    state.lastObservationMillis = obsMillis ?: now()
     if (state.observationStale && state.staleWarned) logInfo "Observations are back (${obsTime})"
     state.observationStale = false
     state.remove("staleWarned")
 
-    sendEvent(name: "aqhi", value: aqhi, unit: "AQHI")
-    sendEvent(name: "airQualityIndex", value: aqhiToAQI(rounded))
-    sendEvent(name: "aqhiRisk", value: risk)
-    sendEvent(name: "observationTime", value: obsTime ?: "")
-    sendEvent(name: "dataSource", value: "observation")
-    sendEvent(name: "observationAge", value: "current")
+    boolean changed = sendReading(fresh, [name: "aqhi", value: aqhi, unit: "AQHI"])
+    sendReading(fresh, [name: "airQualityIndex", value: aqhiToAQI(rounded)])
+    sendReading(fresh, [name: "aqhiRisk", value: risk])
+    sendReading(fresh, [name: "observationTime", value: obsTime ?: ""])
+    sendChanged(name: "dataSource", value: "observation")
+    sendChanged(name: "observationAge", value: "current")
     if (locationName) {
-        sendEvent(name: "stationName", value: locationName)
+        sendChanged(name: "stationName", value: locationName)
     }
-    sendEvent(name: "lastUpdated", value: new Date().format("yyyy-MM-dd HH:mm:ss"))
 
-    if (txtEnable) {
-        logInfo "AQHI ${aqhi} (${risk}) observed at ${obsTime}"
-    }
+    if (changed) logInfo "AQHI ${aqhi} (${risk}) observed at ${obsTime}"
+    else logDebug "AQHI ${aqhi} (${risk}) observed at ${obsTime}${fresh ? '' : ' (repeat)'}"
     return true
 }
 
@@ -400,7 +411,8 @@ private void checkObservationStaleness() {
         ageText = "${days}d ${ageHours % 24}h"
     }
 
-    sendEvent(name: "observationAge", value: ageText)
+    // Its text moves by the hour, so this sends at most once an hour while observations are missing.
+    sendChanged(name: "observationAge", value: ageText)
 
     if (ageHours >= thresholdHours) {
         state.observationStale = true
@@ -509,10 +521,11 @@ boolean parseForecastResponse(resp, List errors) {
         }
     }
 
-    if (horizons[3] != null) sendEvent(name: "forecast3h", value: horizons[3], unit: "AQHI")
-    if (horizons[6] != null) sendEvent(name: "forecast6h", value: horizons[6], unit: "AQHI")
-    if (horizons[12] != null) sendEvent(name: "forecast12h", value: horizons[12], unit: "AQHI")
-    if (horizons[24] != null) sendEvent(name: "forecast24h", value: horizons[24], unit: "AQHI")
+    // The forecast is read without an issue time, so each value goes out on change only.
+    if (horizons[3] != null) sendChanged(name: "forecast3h", value: horizons[3], unit: "AQHI")
+    if (horizons[6] != null) sendChanged(name: "forecast6h", value: horizons[6], unit: "AQHI")
+    if (horizons[12] != null) sendChanged(name: "forecast12h", value: horizons[12], unit: "AQHI")
+    if (horizons[24] != null) sendChanged(name: "forecast24h", value: horizons[24], unit: "AQHI")
 
     // Forecast max
     BigDecimal maxAqhi = 0
@@ -527,8 +540,8 @@ boolean parseForecastResponse(resp, List errors) {
 
     if (maxAqhi > 0) {
         int rounded = Math.round(maxAqhi) as int
-        sendEvent(name: "forecastMax", value: maxAqhi, unit: "AQHI")
-        sendEvent(name: "forecastMaxRisk", value: riskCategory(rounded))
+        sendChanged(name: "forecastMax", value: maxAqhi, unit: "AQHI")
+        sendChanged(name: "forecastMaxRisk", value: riskCategory(rounded))
         logDebug "Forecast max AQHI: ${maxAqhi} (${riskCategory(rounded)})"
     }
 
@@ -552,7 +565,7 @@ boolean parseForecastResponse(resp, List errors) {
         } else {
             trend = "stable"
         }
-        sendEvent(name: "trend", value: trend)
+        sendChanged(name: "trend", value: trend)
     }
 
     // HTML tile
@@ -563,17 +576,16 @@ boolean parseForecastResponse(resp, List errors) {
     if (useForecastFallback && !futureForecasts.isEmpty()) {
         BigDecimal aqhi = futureForecasts[0].aqhi as BigDecimal
         int rounded = Math.round(aqhi) as int
-        sendEvent(name: "aqhi", value: aqhi, unit: "AQHI")
-        sendEvent(name: "airQualityIndex", value: aqhiToAQI(rounded))
-        sendEvent(name: "aqhiRisk", value: riskCategory(rounded))
-        sendEvent(name: "dataSource", value: "forecast")
+        boolean changed = sendChanged(name: "aqhi", value: aqhi, unit: "AQHI")
+        sendChanged(name: "airQualityIndex", value: aqhiToAQI(rounded))
+        sendChanged(name: "aqhiRisk", value: riskCategory(rounded))
+        changed = sendChanged(name: "dataSource", value: "forecast") || changed
         if (locationName) {
-            sendEvent(name: "stationName", value: locationName)
+            sendChanged(name: "stationName", value: locationName)
         }
-        sendEvent(name: "lastUpdated", value: new Date().format("yyyy-MM-dd HH:mm:ss"))
-        if (txtEnable) {
-            logInfo "AQHI ${aqhi} (${riskCategory(rounded)}) from forecast${state.noObservationFeed ? '' : ' fallback — observations unavailable'}"
-        }
+        String line = "AQHI ${aqhi} (${riskCategory(rounded)}) from forecast${state.noObservationFeed ? '' : ' fallback — observations unavailable'}"
+        if (changed) logInfo line
+        else logDebug line
     }
     return true
 }
@@ -604,7 +616,7 @@ private void pollFailed(String msg) {
     } else if (n == FAILURE_ERROR_THRESHOLD) {
         logError "AQHI service unreachable since ${formatClock(since)}: ${msg}"
         state.lastOutageReminder = t
-        setHealth("offline", "AQHI service unreachable")
+        updateHealth("offline", "AQHI service unreachable")
     } else if (t - ((state.lastOutageReminder ?: 0L) as long) >= OUTAGE_REMINDER_MS) {
         logWarn "AQHI service still unreachable after ${formatDuration(t - since)} (${n} polls failed): ${msg}"
         state.lastOutageReminder = t
@@ -625,16 +637,28 @@ private void pollSucceeded() {
     state.remove("pollFailures")
     state.remove("pollFailingSince")
     state.remove("lastOutageReminder")
-    setHealth("online", recovery ?: "reporting")
+    // Sent on change only; the recovery line rides on the online event that ends an outage.
+    updateHealth("online", recovery ?: "reporting")
 }
 
-private void setHealth(String status, String reason) {
-    String prev = device.currentValue("healthStatus")
-    sendEvent(name: "healthStatus", value: status, descriptionText: "${device.displayName} is ${status}: ${reason}")
-    if (prev != null && prev != status) {
-        if (status == "offline") logWarn "offline: ${reason}"
-        else logInfo "back online"
-    }
+// True when obsMillis is newer than the last observation time seen for this device and station,
+// and records it. A missing time counts as a repeat.
+private boolean isNewObservation(Long obsMillis) {
+    if (!obsMillis) return false
+    String key = "${device.id}:${resolveStationId()}".toString()
+    Long last = LAST_REPORT.get(key)
+    if (last != null && obsMillis <= last) return false
+    LAST_REPORT.put(key, obsMillis)
+    return true
+}
+
+// A station report goes out with plain sendEvent; a repeat through sendChanged.
+// Returns true when the value differs from the current one.
+private boolean sendReading(boolean fresh, Map evt) {
+    if (!fresh) return sendChanged(evt)
+    boolean changed = device.currentState(evt.name as String)?.value != evt.value.toString()
+    sendEvent(evt)
+    return changed
 }
 
 private String formatClock(long t) {
@@ -686,7 +710,7 @@ void buildForecastHtml(List<Map> forecasts) {
     }
     sb.append('</tr></table>')
 
-    sendEvent(name: "forecastHtml", value: sb.toString())
+    sendChanged(name: "forecastHtml", value: sb.toString())
 }
 
 // ---------- Alerts ----------
@@ -726,7 +750,8 @@ void parseAlertResponse(resp) {
     List alerts = data?.alerts as List ?: []
     int count = alerts.size()
 
-    sendEvent(name: "alertCount", value: count)
+    // The alert answer is read without a time of its own: values go out on change only.
+    sendChanged(name: "alertCount", value: count)
 
     if (count > 0) {
         // Concatenate alert descriptions
@@ -736,12 +761,10 @@ void parseAlertResponse(resp) {
             messages << desc
         }
         String msg = messages.join("; ")
-        sendEvent(name: "alertMessage", value: msg)
-        if (txtEnable) {
-            logInfo "AQHI alert(s): ${msg}"
-        }
+        if (sendChanged(name: "alertMessage", value: msg)) logInfo "AQHI alert(s): ${msg}"
+        else logDebug "AQHI alert(s) unchanged: ${msg}"
     } else {
-        sendEvent(name: "alertMessage", value: "none")
+        sendChanged(name: "alertMessage", value: "none")
     }
 }
 
@@ -903,4 +926,24 @@ void turnOffDebugLogging() {
     logWarn "Debug logging disabled"
     device.updateSetting("debugEnable", [value: "false", type: "bool"])
     device.updateSetting("traceEnable", [value: "false", type: "bool"])
+}
+
+// Returns true when the event was sent. Values compare as text, the way the hub stores them.
+// An attribute the metadata does not declare has no current value and is sent every time.
+boolean sendChanged(Map evt) {
+    if (evt.value == null) return false
+    if (device.currentState(evt.name as String)?.value == evt.value.toString()) return false
+    sendEvent(evt)
+    return true
+}
+
+// Called by the parent with the service's own evidence: offline while the service is
+// unreachable or reports the device offline. The reason goes in the event description.
+void updateHealth(String status, String reason = null) {
+    String prev = device.currentValue("healthStatus")
+    String why = reason ? ": ${reason}" : ""
+    if (!sendChanged(name: "healthStatus", value: status, descriptionText: "${device.displayName} is ${status}${why}")) return
+    if (prev == null) return
+    if (status == "offline") logWarn "offline${why}"
+    else logInfo "back online"
 }
