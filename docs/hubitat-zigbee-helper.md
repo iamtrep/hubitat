@@ -21,6 +21,7 @@ Every fact carries an evidence mark ([EVIDENCE.md](EVIDENCE.md)); the sources be
 - [What the `zigbee` object actually is](#what-the-zigbee-object-actually-is)
 - [Methods (curated, with semantics)](#methods-curated-with-semantics)
 - [Strings the helpers build](#strings-the-helpers-build)
+- [Requests the hub answers itself](#requests-the-hub-answers-itself)
 - [Cluster ID constants](#cluster-id-constants)
 - [`ZigbeeCluster` (the class the docs reference)](#zigbeecluster-the-class-the-docs-reference)
 - [`ZoneStatus` (IAS Zone status bitfield)](#zonestatus-ias-zone-status-bitfield)
@@ -159,6 +160,15 @@ How the hub turns a frame it received into the description string, from 564 fram
 - **A cluster-specific command is a `catchall` with the cluster-specific field `01`**: a Tuya data report as `catchall: 0104 EF00 01 01 0040 00 <dni> 01 00 0000 02 01 00556701000100`, an IKEA manufacturer-specific scene command as `catchall: 0104 0005 01 01 0040 00 <dni> 01 01 117C 08 00 000D00`. We have not matched one to its frame *(community: descriptions quoted in [kkossev's Tuya Multi Sensor 4 in 1 (V3)](https://github.com/kkossev/Hubitat/blob/development/Drivers/Tuya%20Multi%20Sensor%204%20In%201/Tuya%20Multi%20Sensor%204%20in%201%20(V3).groovy) and in [dan-danache's IKEA E2002 driver 5.8.1](https://codeberg.org/dan-danache/hubitat/src/branch/main/ikea-zigbee-drivers/Ikea_E2002.groovy))*.
 - **OTA requests from a device are said never to reach a driver**: the hub keeps the OTA cluster's traffic (Query Next Image Request and the rest) to itself, so a driver cannot serve a firmware image *(community: the header of [kkossev's Zigbee OTA Firmware Updater](https://github.com/kkossev/Hubitat/blob/development/Drivers/Zigbee%20OTA%20Firmware%20Updater/Zigbee%20OTA%20Firmware%20Updater.groovy), a driver that does not work for that reason)*.
 - **A device's own Time cluster reads did not reach its driver.** 28 Read Attributes for attribute `0007` on cluster `000A` from the TS0225, about one a minute, gave no description, while its other frames arrived *(probed 2.5.3.124, C-8 Pro, the hub's Zigbee log beside the descriptions two drivers logged, a Tuya TS0225 and an IKEA E2204)*. The platform notes record the same before 2.5.0.157.
+
+## Requests the hub answers itself
+
+Some requests a device sends after joining are answered by the hub's coordinator, not by the driver. A driver that answers them as well sends a second reply alongside the hub's *(inferred: from the Match_Desc_req item below)*.
+
+- **APS Request Key.** The trust center is configured to answer eligible Request Key messages after a device joins *(staff: [mike.maxwell](https://community.hubitat.com/t/167487/3))*. A capture of an Aqara FP300 routed through a repeater showed three Request Keys with no reply, after which the device left *(community: [kkossev](https://community.hubitat.com/t/164543/11))*.
+- **Match_Desc_req (ZDO `0x0006`).** The hub answers it, and the request also reaches the driver as a `catchall` *(staff: [mike.maxwell](https://community.hubitat.com/t/167487/3); reported: [Sonoff ZBMINIL2 and SNZB-02P logged by a driver](https://community.hubitat.com/t/167487/1), 2.5.3.123)*. In strict Zigbee 3.0 pairing mode, a request for a cluster no hub endpoint serves (0xFC57) got status NO_DESCRIPTOR instead of SUCCESS with zero matching endpoints, and the devices repeated the request. Staff said the next 2.5.3 beta returns SUCCESS *(staff: [mike.maxwell](https://community.hubitat.com/t/167487/3), not yet tested)*.
+- **Keep-Alive cluster (`0x0025`).** The hub did not return the standard Keep-Alive attribute values to a device's reads. Staff said the next 2.5.3 beta answers them, with APS-encrypted replies *(staff: [mike.maxwell](https://community.hubitat.com/t/167487/3), not yet tested)*.
+- **Time cluster (`0x000A`) reads.** Answered by the hub since 2.5.0.157; see [What `parse()` receives for a frame](#what-parse-receives-for-a-frame) and the platform notes *(staff: [gopher.ny](https://community.hubitat.com/t/163415/8))*.
 
 ## Cluster ID constants
 
