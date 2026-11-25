@@ -349,9 +349,11 @@ private Object hubRequest(String path, String name, String type = "json", int ti
 private Map hubMapRequest(String path, String name, int timeout = 30, boolean allowRetry = true) {
     Object raw = hubRequestInternal(path, name, "json", timeout, allowRetry)
     if (raw instanceof Map && ((Map) raw).error) return [ok: false, data: [:], error: (String) ((Map) raw).message]
-    return [ok: true, data: (Map) (raw ?: [:]), error: null]
+    return [ok: true, data: raw instanceof Map ? (Map) raw : [:], error: null]
 }
 // query goes through httpGet's query: param, never appended to path — firmware 2.5.1.x drops an inline query string.
+// A JSON read returns what the hub answered, empty list or map included (a hub with no libraries answers []); only no
+// answer at all becomes an empty map.
 private Object hubRequestInternal(String path, String name, String type, int timeout, boolean allowRetry, Map query = null) {
     long start = now()
     try {
@@ -362,7 +364,7 @@ private Object hubRequestInternal(String path, String name, String type, int tim
             if (resp.success) result = (type == "json") ? resp.data : (resp.data?.text?.trim() ?: resp.data?.toString()?.trim())
         }
         logTrace "Fetched ${name} in ${now() - start}ms"
-        return type == "json" ? (result ?: [:]) : result
+        return (type == "json" && result == null) ? [:] : result
     } catch (Exception e) {
         String ex = getObjectClassName(e)
         boolean transientErr = (ex == 'java.net.SocketTimeoutException' || ex == 'java.net.ConnectException')
