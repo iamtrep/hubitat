@@ -355,14 +355,16 @@ cases:
   # "Keep on" with the time limit: the limit rests the heaters 10 s into the sensor fault
   # and the app sets the thermostat idle. The limit is set once the heaters are off, so the
   # previous cases' run doesn't count toward it. 6 s spacing; the check comes more than
-  # 30 s after the last reading.
+  # 30 s after the last reading. The app's own 5-minute check (at a random second) can raise
+  # the fault up to ~20 s before btnCheck, and the limit then comes as early. The 30 s rest
+  # covers the asserts either way; an 8 s rest could end before them.
   - name: limit-under-keep-on
     setup:
       - settings: { quietAfter: 30, onSensorFault: "on", maxHeatMinutes: "none", frostTemp: -50, noRiseMinutes: "none", usePower: true, notifyPartial: true }
       - { device: test-sht-temp1, command: setTemperature, args: [21.5] }
       - { device: test-sht-temp2, command: setTemperature, args: [21.5] }
       - settings: { maxHeatMinutes: 10 }
-      - settings: { restMinutes: 8 }
+      - settings: { restMinutes: 30 }
       - { button: btnForgetGaps }
     command_spacing_seconds: 6
     actions:
@@ -381,15 +383,17 @@ cases:
       - { device: test-sht-th, attribute: thermostatOperatingState, value: idle }
       - { device: test-sht-heater1, attribute: switch, value: "off" }
       - { device: test-sht-heater2, attribute: switch, value: "off" }
-      - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: heaters on for 10 minutes, the limit. Off for 8 minutes." }
+      - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: heaters on for 10 minutes, the limit. Off for 30 minutes." }
     assert_events:
       - { attribute: "^switch$", value: "on", source: "test-sht-heater1" }
 
-  # Duty 50 % of 20 "minutes" (20 s): on for 10 s from the fault, then off for 10 s.
+  # Duty 50 % of 60 "minutes" (60 s): on for 30 s from the fault, then off for 30 s. The
+  # app's own 5-minute check can raise the fault a few seconds before btnCheck; a 30 s on
+  # phase still covers the assert 2 s after it.
   - name: sensor-fault-cycle
     setup:
       - settings: { quietAfter: 30, onSensorFault: "cycle", maxHeatMinutes: "none", frostTemp: -50, noRiseMinutes: "none", usePower: true, notifyPartial: true }
-      - settings: { cycleDutyPercent: 50, cyclePeriodMinutes: 20 }
+      - settings: { cycleDutyPercent: 50, cyclePeriodMinutes: 60 }
       - { button: btnForgetGaps }
     command_spacing_seconds: 6
     actions:
@@ -406,12 +410,13 @@ cases:
     assert:
       - { device: test-sht-sensorfault, attribute: switch, value: "on" }
       - { device: test-sht-heater1, attribute: switch, value: "on" }
-      - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: no temperature, all sensors quiet (test-sht-temp1, test-sht-temp2). Heaters on 50% of every 20 minutes." }
+      - { device: test-sht-notify, attribute: lastMessage, value: "test-sht: no temperature, all sensors quiet (test-sht-temp1, test-sht-temp2). Heaters on 50% of every 60 minutes." }
 
+  # Waits for the on phase to end, wherever the fault started it, then checks the off phase.
   - name: cycle-off-phase
     actions:
-      - { device: test-sht-notify, command: setFailing, args: ["false"] }
-    wait_seconds: 10
+      - { await: { device: test-sht-heater1, attribute: switch, value: "off", timeout_seconds: 35 } }
+    wait_seconds: 2
     assert:
       - { device: test-sht-sensorfault, attribute: switch, value: "on" }
       - { device: test-sht-th, attribute: thermostatOperatingState, value: idle }

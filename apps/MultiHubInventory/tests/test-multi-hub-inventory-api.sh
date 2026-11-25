@@ -432,8 +432,24 @@ else:
         fail("latestVersion missing")
 
 # ── Test: /api/ui/sync ───────────────────────────────────────────────
+# The sync downloads the UI from GitHub. success=false alone can't say whether GitHub was
+# unreachable from the hub or answered with something the app refused, so the app's log line
+# for this call decides: a network failure is reported as skipped, anything else fails.
+UNREACHABLE_RE = re.compile(r"Name or service not known|UnknownHost|timed out|Connection refused|"
+                            r"Network is unreachable|No route to host|Connection reset", re.I)
+
+def app_log_lines():
+    rows = fetch("/logs/past/json") or []
+    out = []
+    for r in rows:
+        line = r if isinstance(r, str) else json.dumps(r, ensure_ascii=False)
+        if f"app|{instance_id}|" in line: out.append(line)
+    return out
+
 section("/api/ui/sync")
-us = api_post("ui/sync")
+logs_before = set(app_log_lines())
+# The hub waits up to 30 s for GitHub, so the client waits longer.
+us = api_post("ui/sync", timeout=60)
 if "_error" in us:
     fail(f"Request failed: {us['_error']}")
 elif "success" not in us:
@@ -447,7 +463,14 @@ else:
     if us["success"] is True:
         ok("ui/sync success=true")
     else:
-        fail(f"ui/sync success=false: {json.dumps(us)[:200]}")
+        new = [l for l in app_log_lines() if l not in logs_before and ("UI sync" in l or "sync UI" in l)]
+        net = [l for l in new if "Failed to sync UI from GitHub" in l and UNREACHABLE_RE.search(l)]
+        if net:
+            warn(f"ui/sync skipped (offline): GitHub unreachable from the hub: {net[0][:200]}")
+        elif new:
+            fail(f"ui/sync success=false, GitHub reached: {new[0][:200]}")
+        else:
+            fail(f"ui/sync success=false and no app log line says why: {json.dumps(us)[:200]}")
 
 # ── Summary ──────────────────────────────────────────────────────────
 total = passed + failed

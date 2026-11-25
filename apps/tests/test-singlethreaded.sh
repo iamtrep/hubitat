@@ -314,8 +314,15 @@ for k in ("MT", "ST"):
 setup = trig("setup", driverMT=D, driverST=D_ST)   # idempotent: creates the driver devices only if missing
 # parse() is routed by the sender's IP, so the two copies are reached through
 # different ingress: the control on the hub's LAN IP, singleThreaded on loopback.
+# The control's network id is the hex of the LAN IP the hub reports for itself, so the
+# address is read back from it: the configured hub_ip can carry a port or name another route.
+def dni_ip(dni):
+    if not re.fullmatch(r"[0-9A-Fa-f]{8}", str(dni or "")):
+        die(f"driver probe network id {dni!r} is not an IPv4 address in hex")
+    return ".".join(str(b) for b in bytes.fromhex(dni))
 driver_targets = {k: {"domain": "driver", "tid": setup[k]["id"], "dni": setup[k]["dni"], "childDev": setup[k]["childId"],
-                      "childDev2": setup[k]["childId2"], "parseHost": hub_ip if k == "MT" else "127.0.0.1"} for k in ("MT", "ST")}
+                      "childDev2": setup[k]["childId2"], "parseHost": dni_ip(setup[k]["dni"]) if k == "MT" else "127.0.0.1"}
+                  for k in ("MT", "ST")}
 ok(f"probes provisioned: apps {iids['MT']}/{iids['ST']}, trigger {iids['TRIG']}, driver devices "
    f"{driver_targets['MT']['tid']}/{driver_targets['ST']['tid']}")
 ST_TIDS = {iids["ST"], driver_targets["ST"]["tid"]}

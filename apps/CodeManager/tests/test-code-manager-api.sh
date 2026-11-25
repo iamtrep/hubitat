@@ -166,7 +166,15 @@ try:
     (ok if j2.get("status") == "done" and (j2.get("result") or {}).get("error") else fail)(f"failed refresh ends done with result.error ({j2.get('status')}, {(j2.get('result') or {}).get('error')})")
     inv3 = api_get("inventory?force=1", timeout=300)
     after = {c.get("hubId") for c in inv3.get("components", []) if c.get("kind") == "library"}
-    (ok if before and before == after else fail)(f"inventory still lists every library after a failed read ({len(before)} -> {len(after)})")
+    if before:
+        (ok if before == after else fail)(f"inventory still lists every library after a failed read ({len(before)} -> {len(after)})")
+    else:
+        # A hub with no libraries is legitimate; an empty list is only wrong when the hub has some.
+        hub_libs = fetch("/hub2/userLibraries")
+        if hub_libs == []:
+            (ok if not after else fail)(f"hub has no libraries; inventory lists none after a failed read ({len(after)})")
+        else:
+            fail(f"inventory listed no library before the failed read; the hub lists {len(hub_libs) if isinstance(hub_libs, list) else hub_libs!r}")
     (ok if (inv3.get("libraries") or {}).get("asOf") == lib_asof1 else fail)("libraries.asOf unchanged by the failed read")
 finally:
     api_post("test/simulateLibFail", {"on": "0"})

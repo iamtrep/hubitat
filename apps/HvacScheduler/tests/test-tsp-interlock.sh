@@ -298,11 +298,17 @@ for p in b.get("programs", []):
         delete_program(p["id"]); info(f"deleted leftover program {p['id']}")
 remove_var()
 
-# Known starting state: window closed, thermostat in heat at 15.
+# Known starting state: window closed, thermostat in heat at 15, cooling setpoint far above every
+# heating setpoint the test writes (22 at most). The Virtual Thermostat keeps the cooling setpoint
+# 2° above the heating one, so a cooling setpoint under 24 would be pushed up by a heating write,
+# an event the program did not send, and the program would report manual.
 maker(window_id, "close")
 maker(peak_id, "off")
 maker(therm_id, "setThermostatMode", "heat")
 maker(therm_id, "setHeatingSetpoint", 15)
+maker(therm_id, "setCoolingSetpoint", 30)
+if wait_for(therm_id, "coolingSetpoint", 30.0) != 30.0:
+    die(f"{THERM}: cooling setpoint did not reach 30")
 save_settings(group_id, "", {"debugEnable": True})
 save_settings(group_id, "", {"testCloseDelay": CLOSE_DELAY_S})
 if wait_for(status_id, "switch", "on", 15) != "on":
@@ -414,9 +420,9 @@ try:
     st = prog_status()
     check("program back on its schedule", st, "schedule")
     if st != "schedule":
-        evs = fetch(f"/device/events/{therm_id}/dataTablesJson?max=12")
-        for e in (evs.get("data") or [])[:12]:
-            info(f"thermostat event: {e}")
+        evs = fetch(f"/device/eventsJson/{therm_id}")
+        for e in sorted(evs if isinstance(evs, list) else [], key=lambda e: e.get("date") or "", reverse=True)[:12]:
+            info(f"thermostat event: {e.get('date')} {e.get('name')}={e.get('value')} ({e.get('type') or e.get('source')})")
 
     # ── Two pause sources, group lifted first ─────────────────────────
     section("Two pause sources, group lifted first")
