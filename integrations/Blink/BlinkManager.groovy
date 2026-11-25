@@ -1267,7 +1267,8 @@ private static Map cameraSnapshot(Map c, String tier, String accountId) {
         String url = buildThumbnailUrl(c, thumb, tier, accountId)
         if (url) out["lastThumbnailUrl"] = url
     }
-    // Generic camera-config update time. NOT clip-recorded time.
+    // When Blink last changed the camera's record: it moves with a new reading or a setting,
+    // not on every check-in, and is not the clip time.
     Object updatedAt = c.get("updated_at")
     if (updatedAt) out["lastUpdated"] = updatedAt.toString()
     return out

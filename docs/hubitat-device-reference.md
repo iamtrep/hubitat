@@ -305,6 +305,8 @@ Write quirks of the cloud path, seen on an ASUG15LZTD with an AP-WF1E module *(p
 - **Sensed temperatures go stale without a wake.** Without one, `display_temperature` and `outdoor_temperature` refresh in the cloud about once a day. A `refresh` = 1 write every 15 minutes, independent of the poll rate, caused no jam; shorter cadences were not proven *(probed firmware not recorded, one ASUG15LZTD, vendor cloud API)*.
 - **A jammed unit presents as** `adjust_temperature` stuck and ignoring fresh writes while `display_temperature` keeps updating; the vendor app also cannot change the setpoint over the cloud, though it still works on the LAN, which bypasses the cloud; the IR remote always works. Stopping writes for a few minutes drains the queue without re-registering the unit *(probed firmware not recorded, one ASUG15LZTD, vendor cloud API)*.
 
+- **Each property carries `data_updated_at`, and the unit moves it when it re-posts an unchanged value.** `display_temperature` stayed at the same value across two wakes and its `data_updated_at` advanced at each; every properties GET between wakes returned the same value with the same time. On a wake `operation_mode` and `outdoor_temperature` are stamped a few seconds after `display_temperature`, so each property has its own time. So a new `data_updated_at` on a sensed property marks a fresh report from the unit, and an unchanged one a repeat *(probed 2.5.3.133, one ASUG15LZTD, vendor cloud API, 2026-11-24)*.
+
 Local LAN mode registration, on the same ASUG15LZTD with an AP-WF1E module, module firmware `E072V01P01L20-1`:
 
 - **The registered `uri` is limited to 24 characters.** `POST /local_reg.json?dsn=<DSN>` with `{"local_reg":{"uri":…,"notify":0,"ip":…,"port":…}}` answers `202` up to 24 characters and `400` from 25 on. `?`, `=` and `&` in the `uri` are accepted within that limit. So a client can't put a 36-character OAuth token in the callback URL. *(probed 2.5.3.124, C-8 Pro, throwaway app and driver)*
@@ -316,6 +318,8 @@ Local LAN mode registration, on the same ASUG15LZTD with an AP-WF1E module, modu
 - **A standard camera's battery voltage is only in its config.** `GET https://rest-{tier}.immedia-semi.com/network/{net}/camera/{id}/config` returns `{"camera": [{…, "battery_voltage": 169, "battery_state": "ok", …}]}`; the camera's entry in `GET /api/v3/accounts/{aid}/homescreen` has `battery` (`ok`/`low`) and `signals.battery` (1–3 bars) but no voltage *(probed 2.5.3.133, C-8 Pro, Blink Manager 1.1.10, 2026-11-21)*. blinkpy reads the config on every refresh for standard cameras and takes Minis and doorbells from the homescreen *(community: [blinkpy `sync_module.py`](https://github.com/fronzbot/blinkpy/blob/dev/blinkpy/sync_module.py))*.
 - **`battery_voltage` is hundredths of a volt per cell** (165 = 1.65 V) *(community: [blinkpy `camera.py`](https://github.com/fronzbot/blinkpy/blob/dev/blinkpy/camera.py))*. On one account's eight two-AA lithium cameras, fresh cells read 169–172 and Blink reported `low` at 126 while still calling 136 `ok` *(probed 2.5.3.133, C-8 Pro, Blink Manager 1.1.10, 2026-11-21)*, so the 1.4–1.8 V lithium datasheet range would put working cameras near 0 % *(spec: [Energizer L91 datasheet](https://data.energizer.com/pdfs/l91.pdf))*. Home Assistant shows only a low-battery binary sensor from `battery`; blinkpy exposes the voltage raw and computes no percentage *(community: [HA `blink/binary_sensor.py`](https://github.com/home-assistant/core/blob/dev/homeassistant/components/blink/binary_sensor.py))*.
 - **A working camera's `status` can be `done`, not `online`.** All online cameras on one account have reported `done` since 2026-07-31 *(probed 2.5.3.133, C-8 Pro, 2026-11-21)*; blinkpy maps `done` to online *(community: [blinkpy 5652b99](https://github.com/fronzbot/blinkpy/commit/5652b99))*.
+
+- **A camera's `updated_at` in the homescreen moves when Blink changes the camera's record, not on a schedule.** On five live cameras it advanced several times a day, mostly in steps that are multiples of 15 minutes, together with temperature changes, and stayed still for up to 9 hours overnight. On a camera with a dead battery it had not moved for four weeks. It shows that a camera reported something new; it does not show that a quiet camera is alive *(probed 2.5.3.133, C-7, five cameras, 2026-11-24)*. An offline camera's entry still carries its last `signals` values *(community: [BlinkMonitorProtocol homescreen](https://github.com/MattTW/BlinkMonitorProtocol/blob/master/system/homescreen.md))*.
 
 ## Philips Hue
 
@@ -619,6 +623,19 @@ it pairs. Leading zero bytes of each number are dropped before hashing *(spec: [
 - The web server is `debut/1.20`: HTTP/1.0 replies with `Connection: close`, and no TLS on 443 *(probed firmware not recorded, raw IPP client on a LAN host)*.
 - `/`, `/ipp` and `/ipp/port1` answer Get-Printer-Attributes. `/duerqxesz5090` and `/ipp/print` answer `404 Not Found`, although the printer advertises `rp=duerqxesz5090` on `_ipp._tcp` and lists `/duerqxesz5090` in `printer-uri-supported` *(probed firmware not recorded, raw IPP client on a LAN host)*.
 - `ipp-version-supported` is `1.0`, and replies carry version 1.0; an IPP/2.0 request gets status `0x0503` (version not supported). The attributes include no `marker-*` and no page counters. A reply takes about 1 s *(probed firmware not recorded, raw IPP client on a LAN host)*.
+
+## Ecobee (cloud API)
+
+- **`runtime.lastStatusModified` is the time the thermostat last posted its runtime data** *(spec: [Ecobee API, Runtime object](https://www.ecobee.com/home/developer/api/documentation/v1/objects/Runtime.shtml))*. Over 14 polls 5 minutes apart it advanced on 11, every 3 to 8 minutes, including when temperature and humidity were unchanged; on the polls where it had not moved, every value repeated the previous answer. `runtime.runtimeInterval` stepped every 15 minutes *(probed 2.5.3.133, C-8 Pro, one thermostat, 2026-11-24)*.
+- A remote sensor's capability has `id`, `type` and `value` and no time of its own *(spec: [Ecobee API, RemoteSensorCapability](https://www.ecobee.com/home/developer/api/documentation/v1/objects/RemoteSensorCapability.shtml))*.
+
+## Awair Element (local API)
+
+- **`GET /air-data/latest` carries `timestamp`, set by the device's clock.** Three reads 20 s apart returned three timestamps, each about 8 s before the read *(probed firmware not recorded, one Awair Element, LAN request, 2026-11-24)*. The device answers the request itself, so there is no cached answer for a device that is off *(inferred: the request goes to the device's own address)*.
+
+## Airthings (cloud API)
+
+- **The `time` of `latest-samples` is the sample time.** With a hub-connected sensor it stepped every 5 minutes while a driver polling every 2 minutes received the same sample in between *(probed 2.5.3.133, C-7, thebearmay Air Things driver 0.0.21 exposing it as `lastPoll`, 2026-11-24)*.
 
 ## Hubitat hubs
 

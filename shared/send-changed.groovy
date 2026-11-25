@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: MIT
 //
 // Shared block: send a polled value only when it differs from the attribute's current value,
-// and report health on change. For drivers fed by a poll of a cloud or LAN service; a driver
-// that relays device reports calls sendEvent on every report (ARCHITECTURE.md).
+// and report health on change. For drivers fed by a poll of a service that gives no time for
+// the device's own report; where it gives one, a new time is a device report and goes out with
+// sendEvent (ARCHITECTURE.md, Cloud and LAN polling).
 // See shared/README.md.
 // block-version: 1
 // requires: logWarn, logInfo
