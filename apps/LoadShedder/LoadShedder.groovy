@@ -124,21 +124,21 @@ void initialize() {
     List<String> errs = validateCfg(loadIds(), switchIds(shedWhenOn), switchIds(shedWhenOff), (shedModes ?: []) as List)
     if (errs) logWarn "settings incomplete: ${errs.join('; ')}"
     evaluateShed("settings saved")
-    verifyLoads(true)
+    verifyLoads()
 }
 
 void systemStartHandler(evt) {
     checkVersion()
     // One-shot timers that fell due while the hub was down are gone: verify and restore re-derive here.
     evaluateShed("hub restart", true)
-    verifyLoads(true)
+    verifyLoads()
 }
 
 void periodicCheck() {
     checkVersion()
     retryUnresponsive()
     evaluateShed("periodic check")
-    verifyLoads(true)
+    verifyLoads()
 }
 
 void restoreTimer() {
@@ -237,11 +237,13 @@ void sendLoad(String id, String cmd, int attempt) {
 
 void verifyLoadsTimer() {
     checkVersion()
-    verifyLoads(false)
+    verifyLoads()
 }
 
-// onlyDue: check only commands older than the confirm time (hub start, periodic check), so a lost timer can't strand one.
-void verifyLoads(boolean onlyDue) {
+// Judges only commands at least the confirm time old, from every caller. The hub start and the periodic check rely on
+// it so a lost timer can't strand a command; the timer needs it too: a timer that fell due while the periodic check
+// ran still runs after that check resent the command and rescheduled the timer, and would judge the resend at once.
+void verifyLoads() {
     Map att = (state.attempts ?: [:]) as Map
     if (!att) return
     long t = now()
@@ -250,7 +252,7 @@ void verifyLoads(boolean onlyDue) {
     new HashMap(att).each { k, v ->
         String id = k as String
         Map a = v as Map
-        if (onlyDue && t - (a.at as long) < verifyMs()) return
+        if (t - (a.at as long) < verifyMs()) return
         DeviceWrapper d = loadById(id)
         if (d == null) { att.remove(id); return }
         String cur = d.currentValue("switch") as String
