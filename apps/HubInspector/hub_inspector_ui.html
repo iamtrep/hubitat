@@ -1731,6 +1731,8 @@ function assembleForumData(r){
     zwaveVersion: (zw&&zw.version)||null,
     stats: perf.stats||null,
     radioStats: perf.radioStats||null,
+    // device id → driver name, so the device tables can say what kind of device an alias is
+    deviceTypeById: perf.deviceTypeById||{},
     uptimeMin: net.uptimeSeconds!=null ? net.uptimeSeconds/60 : null,
     // On unless the user turned it off; the dashboard toggle doesn't apply here.
     obfuscate: set.forumObfuscate!==false,
@@ -1777,6 +1779,8 @@ function forumMarkdownBody(d){
   const appStats=d.appStats||{};
   const stats=d.stats||null;
   const allRadioDevices=flattenRadioDevices(d.radioStats);
+  const devTypes=d.deviceTypeById||{};
+  const drvName=id=>{const t=id!=null?devTypes[String(id)]:null;return t&&t!=='Unknown'?String(t).replace(/\|/g,'/'):'—'};
   const uptimeMin=d.uptimeMin!=null?d.uptimeMin:0;
   const showNet=d.networkDetails===true;
   const ipText=t=>showNet?t:String(t).replace(IPV4_RE,m=>isPrivateIpv4(m,true)?'<IP>':m);
@@ -2055,11 +2059,11 @@ function forumMarkdownBody(d){
     const topDevTypes=[...devRtStats].sort((a,b)=>Number(b.pctTotal||0)-Number(a.pctTotal||0)).slice(0,5);
     if(topDevTypes.some(dt=>Number(dt.pctTotal||0)!==0)){
       L('');L('**Top Devices by CPU:**');
-      L('| Device | % Total | Exec Count | Avg (ms) |');
-      L('|---|---:|---:|---:|');
+      L('| Device | Driver | % Total | Exec Count | Avg (ms) |');
+      L('|---|---|---:|---:|---:|');
       topDevTypes.forEach(dt=>{
         const pct=Number(dt.pctTotal||0);
-        if(pct>0)L(`| ${Obf.nm(dt.name)} | ${pct.toFixed(3)}% | ${dt.count||0} | ${Number(dt.average||0).toFixed(1)} |`);
+        if(pct>0)L(`| ${Obf.nm(dt.name)} | ${drvName(dt.id)} | ${pct.toFixed(3)}% | ${dt.count||0} | ${Number(dt.average||0).toFixed(1)} |`);
       });
     }
   }
@@ -2082,12 +2086,12 @@ function forumMarkdownBody(d){
   if(allRadioDevices.length&&uptimeMin>0){
     const topTalkers=[...allRadioDevices].sort((a,b)=>b.msgCount-a.msgCount).slice(0,5);
     L('');L('**Top Talkers:**');
-    L('| Device | Integration | Msgs/min | Total Msgs |');
-    L('|---|---|---:|---:|');
+    L('| Device | Driver | Integration | Msgs/min | Total Msgs |');
+    L('|---|---|---|---:|---:|');
     topTalkers.forEach(t=>{
       const rate=Number(t.msgCount/uptimeMin).toFixed(1);
       const tName=Obf.nm(t.name);
-      L(`| ${tName} | ${t.integration} | ${rate} | ${t.msgCount} |`);
+      L(`| ${tName} | ${drvName(t.deviceId)} | ${t.integration} | ${rate} | ${t.msgCount} |`);
     });
     // Spammy alerts (>= chattyDeviceThreshold)
     const chattyT=TH.chattyDeviceThreshold||10;

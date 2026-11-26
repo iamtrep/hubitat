@@ -634,7 +634,7 @@ The export generates a concise Markdown summary of the hub to paste into a commu
 - Z-Wave: health, ghost nodes, problem nodes, S0 flag, mesh quality stats, and a node table (on a mesh of more than 10 nodes, the 10 with the highest PER). Node lists stop at 15 entries.
 - Zigbee: health, channel, LQI stats, weak/stale neighbors
 - Hub Mesh and Matter status
-- Performance: device and app runtime, top devices and apps by CPU, top talkers
+- Performance: device and app runtime, top devices and apps by CPU, top talkers. The device tables give each device's driver next to its name
 
 **Obfuscation:** The export replaces device, app and hub names with stable aliases unless "Obfuscate device/app names in the AI/forum export" is turned off. Enable "Obfuscate device/app names in the dashboard" in Settings to use the same aliases across the dashboard, for screenshots.
 
