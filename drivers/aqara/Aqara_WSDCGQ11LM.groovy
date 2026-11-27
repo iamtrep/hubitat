@@ -88,7 +88,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "2.15.8"
+@Field static final String CODE_VERSION = "2.15.9"
 
 // A pending version reconfigure older than this is treated as lost and re-armed.
 @Field static final long RECONFIGURE_RETRY_MS = 60000L
@@ -198,6 +198,9 @@ void configure() {
 void runVersionReconfigure() {
     // runInMillis target — lets parse() return immediately so the reconfigure
     // runs on a fresh dispatch instead of inside the inbound frame's handler.
+    // A second frame can queue this twice before the first run records the new
+    // version; the later run finds nothing to do.
+    if (getDeviceDataByName('driver') == CODE_VERSION) return
     logVer "Driver upgraded from ${getDeviceDataByName('driver')} to ${CODE_VERSION}, reconfiguring."
     initialize()
 }
@@ -478,6 +481,7 @@ private void parseCheckin(Map map) {
     }
 
     int strPosition = 2  // Skip the length-prefix byte.
+    BigDecimal frameTemperature = null  // temperature decoded from this frame, for absolute humidity
 
     while (strPosition < strLength) {
         int dataTag  = Integer.parseInt(hexString.substring(strPosition,     strPosition + 2), 16)
@@ -527,11 +531,11 @@ private void parseCheckin(Map map) {
                 break
             case 0x64:
                 logTrace("$tagDebug (temperature)")
-                parseTemperature(dataPayload)
+                frameTemperature = parseTemperature(dataPayload)
                 break
             case 0x65:
                 logTrace("$tagDebug (humidity)")
-                parseHumidity(dataPayload)
+                parseHumidity(dataPayload, frameTemperature)
                 break
             case 0x66:
                 logTrace("$tagDebug (pressure)")
@@ -683,7 +687,9 @@ private void logUnhandledMessage(Map map) {
 
 // ─── Sensor value processors ───────────────────────────────────────────────
 
-private void parseTemperature(String temperatureFlippedHex) {
+// Returns the temperature it sent (display scale, offset applied), or null when
+// the reading was rejected.
+private BigDecimal parseTemperature(String temperatureFlippedHex) {
     BigDecimal temperature = BigDecimal.valueOf(hexStrToSignedInt(temperatureFlippedHex)) / 100
 
     logTrace("temperature : ${temperature} from hex value ${temperatureFlippedHex}")
@@ -692,7 +698,7 @@ private void parseTemperature(String temperatureFlippedHex) {
     // marker 0x8000 (-327.68 °C).
     if (temperature < TEMPERATURE_MIN_C || temperature > TEMPERATURE_MAX_C) {
         logWarn("Temperature : Raw value of ${temperature}°C is out of range. Watch out for batteries failing on this device.")
-        return
+        return null
     }
 
     String temperatureScale = location.temperatureScale
@@ -707,9 +713,12 @@ private void parseTemperature(String temperatureFlippedHex) {
     BigDecimal rounded = temperature.setScale(1, RoundingMode.HALF_UP)
     logInfo("Temperature : ${rounded} °${temperatureScale}")
     sendEvent(name: "temperature", value: rounded, unit: "${temperatureScale}")
+    return rounded
 }
 
-private void parseHumidity(String humidityFlippedHex) {
+// freshTemperature is the temperature decoded in the same frame, if any: the
+// attribute read-back right after sendEvent can still return the old value.
+private void parseHumidity(String humidityFlippedHex, BigDecimal freshTemperature = null) {
     BigDecimal humidity = BigDecimal.valueOf(hexStrToSignedInt(humidityFlippedHex)) / 100
 
     logTrace("humidity : ${humidity} from hex value ${humidityFlippedHex}")
@@ -731,7 +740,8 @@ private void parseHumidity(String humidityFlippedHex) {
     logInfo("Humidity (Relative) : ${humidityRounded} %")
     sendEvent(name: "humidity", value: humidityRounded, unit: "%")
 
-    BigDecimal lastTemperature = device.currentState("temperature")?.value?.toBigDecimal()
+    // != null, not ?: — a 0.0 reading is falsy in Groovy.
+    BigDecimal lastTemperature = freshTemperature != null ? freshTemperature : device.currentValue("temperature")?.toBigDecimal()
     if (lastTemperature == null) {
         // First check-in or first humidity report before any temperature has
         // landed — skip absoluteHumidity rather than emit a 0°C-based value.
