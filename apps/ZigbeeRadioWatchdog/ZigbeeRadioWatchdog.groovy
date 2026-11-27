@@ -266,7 +266,9 @@ void radioOffline(String reason) {
 void serviceIncident(boolean online) {
     Map inc = state.incident
     if (online) {
-        String how = [radioReboot: "after a radio reboot", afterHubReboot: "after a hub reboot"][inc.step as String] ?: "on its own"
+        // hubReboot: the app's reboot request is out. Scheduled jobs resume about a minute before systemStart moves the
+        // step on, so this check can be the first to see the radio back after that reboot.
+        String how = [radioReboot: "after a radio reboot", hubReboot: "after a hub reboot", afterHubReboot: "after a hub reboot"][inc.step as String] ?: "on its own"
         closeIncident("radio recovered ${how}", false)
         return
     }
