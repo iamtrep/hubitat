@@ -31,6 +31,7 @@
  * v0.0.11 Re-arm poll chains on hub start; digital-command marker expires on its own
  * v0.0.12 Trace-log unhandled ZDO and ZHA global frames
  * v0.0.14 Zone status notifications in the short form no longer throw
+ * v0.0.15 An unchanged valve report carries no digital/physical type
  *
  */
 
@@ -39,7 +40,7 @@ import groovy.transform.CompileStatic
 import java.util.concurrent.ConcurrentHashMap
 import hubitat.zigbee.clusters.iaszone.ZoneStatus
 
-@Field static final String CODE_VERSION = "0.0.14"
+@Field static final String CODE_VERSION = "0.0.15"
 
 // device.id -> deadline (ms) until which a valve report counts as digital. Static rather than state:
 // a driver's state is written back at method exit, so parse() on another thread would not see it,
@@ -343,8 +344,11 @@ private void parseAttributeReport(Map descMap) {
             if (descMap.attrId == "0000") {
                 map.name = "valve"
                 map.value = constValveValues[descMap.value]
-                map.type = consumeDigital() ? "digital" : "physical"
-                map.descriptionText = "Valve is ${map.value} [${map.type}]"
+                // Only a change carries a type: an unchanged periodic report is not a physical action,
+                // and must not use up the mark the real change needs.
+                boolean changed = (device.currentValue("valve") != map.value)
+                if (changed) map.type = consumeDigital() ? "digital" : "physical"
+                map.descriptionText = changed ? "Valve was turned ${map.value} [${map.type}]" : "Valve is ${map.value}"
             }
             break
 
