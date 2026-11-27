@@ -42,7 +42,7 @@ definition(
 
 // --- Constants ---
 
-@Field static final String CODE_VERSION = "1.1.13"
+@Field static final String CODE_VERSION = "1.1.14"
 
 @Field static final String OAUTH_BASE_URL = "https://api.oauth.blink.com"
 // The REST API host of a region ("tier"); {tier} is replaced. One constant, so a test build can point it elsewhere.
@@ -111,6 +111,12 @@ preferences {
     page(name: "mainPage")
     page(name: "loginPage")
     page(name: "diagnosticsPage")
+    page(name: "confirmDisconnectPage")
+    page(name: "disconnectDonePage")
+    page(name: "confirmResetPage")
+    page(name: "resetDonePage")
+    page(name: "confirmRemoveOrphansPage")
+    page(name: "removeOrphansDonePage")
 }
 
 // --- Pages ---
@@ -134,7 +140,7 @@ Map mainPage() {
                     orphans.each { Map o ->
                         paragraph "<a href='/device/edit/${o.id}' target='_blank'>${o.label}</a> <small>(${o.dni})</small>"
                     }
-                    input "btnRemoveOrphans", "button", title: "Remove orphaned devices"
+                    href "confirmRemoveOrphansPage", title: "Remove orphaned devices", description: "Asks for confirmation first"
                 }
             }
             section("🛡️ Networks") {
@@ -212,8 +218,8 @@ Map diagnosticsPage() {
         }
         section("🚪 Disconnect / reset") {
             paragraph "<small>Use these only when something is wrong. <b>Disconnect</b> clears auth tokens but keeps tier/account info for one-click re-auth; <b>Reset</b> nukes everything and requires a full re-login.</small>"
-            input "btnDisconnect", "button", title: "Disconnect"
-            input "btnResetAuth", "button", title: "Reset auth state (full wipe)"
+            href "confirmDisconnectPage", title: "Disconnect", description: "Asks for confirmation first"
+            href "confirmResetPage", title: "Reset auth state (full wipe)", description: "Asks for confirmation first"
         }
     }
 }
@@ -377,6 +383,71 @@ void turnOffDebugLogging() {
     app.updateSetting("traceEnable", [value: "false", type: "bool"])
 }
 
+// --- Confirmation pages ---
+//
+// Each destructive action is an href to a "done" page that performs it when rendered
+// (idempotent: a re-render finds nothing left to do), reached from a confirm page that
+// says what will happen and offers Cancel.
+
+Map confirmDisconnectPage() {
+    dynamicPage(name: "confirmDisconnectPage", title: "Disconnect from Blink?", nextPage: "mainPage") {
+        section {
+            paragraph "This clears the Blink auth tokens but keeps the region and account info, so you can sign in again with one click."
+            href "disconnectDonePage", title: "Confirm: disconnect"
+            href "diagnosticsPage", title: "Cancel — go back"
+        }
+    }
+}
+
+Map disconnectDonePage() {
+    if (isAuthenticated()) logout()
+    dynamicPage(name: "disconnectDonePage", title: "Disconnected", nextPage: "mainPage") {
+        section {
+            paragraph "Blink Manager is disconnected from Blink."
+        }
+    }
+}
+
+Map confirmResetPage() {
+    dynamicPage(name: "confirmResetPage", title: "Reset auth state?", nextPage: "mainPage") {
+        section {
+            paragraph "This wipes all Blink auth, region and account state, and you will have to log in to Blink again from scratch."
+            href "resetDonePage", title: "Confirm: full wipe"
+            href "diagnosticsPage", title: "Cancel — go back"
+        }
+    }
+}
+
+Map resetDonePage() {
+    clearAuthState()
+    dynamicPage(name: "resetDonePage", title: "Auth state reset", nextPage: "mainPage") {
+        section {
+            paragraph "All Blink auth state has been cleared."
+        }
+    }
+}
+
+Map confirmRemoveOrphansPage() {
+    int n = ((atomicState.orphanedDevices ?: []) as List).size()
+    dynamicPage(name: "confirmRemoveOrphansPage", title: "Remove orphaned devices?", nextPage: "mainPage") {
+        section {
+            paragraph "This deletes ${n} Blink child device${n == 1 ? '' : 's'} that no longer belong to a selected network."
+            if (n > 0) href "removeOrphansDonePage", title: "Confirm: remove ${n} device${n == 1 ? '' : 's'}"
+            href "mainPage", title: "Cancel — go back"
+        }
+    }
+}
+
+Map removeOrphansDonePage() {
+    int n = ((atomicState.orphanedDevices ?: []) as List).size()
+    if (n > 0) removeOrphans()
+    dynamicPage(name: "removeOrphansDonePage", title: "Orphans removed", nextPage: "mainPage") {
+        section {
+            paragraph n > 0 ? "Removed ${n} orphaned device${n == 1 ? '' : 's'}." : "No orphaned devices left to remove."
+        }
+    }
+}
+
 // --- Button Handler ---
 
 void appButtonHandler(String btn) {
@@ -388,9 +459,6 @@ void appButtonHandler(String btn) {
         case "btnStartOver":      cleanupEphemeralState(); break
         case "btnRefreshNow":            pollHomescreenNow(); break
         case "btnFetchTier":             fetchTierInfo(); break
-        case "btnDisconnect":            logout(); break
-        case "btnRemoveOrphans":         removeOrphans(); break
-        case "btnResetAuth":             clearAuthState(); break
         case "btnRefreshNotifications":  fetchNotificationFlags(); break
     }
 }
