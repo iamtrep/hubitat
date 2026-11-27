@@ -19,6 +19,8 @@
  *            FF03 to genBasic (0x0000) attr 0xFF01. See mfgCode()/isGen3().
  *            Gen3 adds power rise/drop report thresholds (0x0040/0x0041) and metering-only
  *            mode (0x0050); firmware before 1.00.63 accepts writes to them and ignores them.
+ *
+ *  v0.0.13 A switch report is digital only when it is the value a command asked for
  */
 
 import groovy.transform.Field
@@ -27,8 +29,12 @@ import com.hubitat.app.DeviceWrapper
 import com.hubitat.hub.domain.Event
 import hubitat.zigbee.zcl.DataType
 import java.math.RoundingMode
+import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.0.12"
+@Field static final String CODE_VERSION = "0.0.13"
+
+// The values commands asked for, for the event type (shared block digital-type).
+@Field static final ConcurrentHashMap<String, Map> DIGITAL_EXPECTED = new ConcurrentHashMap<>()
 
 // Third Reality proprietary cluster (no Hubitat constant). The mfg code differs by
 // generation; resolve per-device via mfgCode() rather than a single constant.
@@ -281,9 +287,8 @@ void installed() {
 void updated() {
     logCfg "updated"
     unschedule()
-    // unschedule() also cancelled a pending clearIsDigital; re-arm it so a plug
-    // that misses configure's read-back can't label the next press digital.
-    if (state.isDigital) runInMillis(5000, "clearIsDigital")
+    clearDigital()
+    state.remove("isDigital")
 
     logDebug "settings: ${settings}"
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
@@ -417,7 +422,7 @@ List<String> on() {
         return []
     }
     logCmd "on"
-    markPendingDigital()
+    expectDigital("switch", "on")
     List<String> cmds = []
     cmds += zigbee.on()
     cmds += zigbee.readAttribute(zigbee.ON_OFF_CLUSTER, ATTR_ON_OFF)
@@ -430,7 +435,7 @@ List<String> off() {
         return []
     }
     logCmd "off"
-    markPendingDigital()
+    expectDigital("switch", "off")
     List<String> cmds = []
     cmds += zigbee.off()
     cmds += zigbee.readAttribute(zigbee.ON_OFF_CLUSTER, ATTR_ON_OFF)
@@ -443,20 +448,14 @@ List<String> toggle() {
         return []
     }
     logCmd "toggle"
-    markPendingDigital()
+    expectDigital("switch", device.currentValue("switch") == "on" ? "off" : "on")
     List<String> cmds = []
     cmds += zigbee.command(zigbee.ON_OFF_CLUSTER, 0x02)
     cmds += zigbee.readAttribute(zigbee.ON_OFF_CLUSTER, ATTR_ON_OFF)
     return cmds
 }
 
-// Safety-net clears state.isDigital if no state report follows
-// (e.g. command was a no-op because device was already in target state).
-private void markPendingDigital() {
-    state.isDigital = true
-    runInMillis(5000, "clearIsDigital")
-}
-
+// Remains for clearIsDigital jobs scheduled by versions before 0.0.13.
 void clearIsDigital() {
     state.remove("isDigital")
 }
@@ -654,14 +653,17 @@ private void handleOnOffCluster(Map descMap) {
     switch (descMap.attrId) {
         case "0000": // on/off state
             String newVal = descMap.value == "00" ? "off" : "on"
-            String type = state.isDigital ? "digital" : "physical"
-            state.remove("isDigital")
-            String curVal = device.currentValue("switch")
-            String desc = (curVal != newVal)
+            // reportType runs on every report, so the read-back of a command that changed
+            // nothing clears its record; only a change carries the type.
+            String type = reportType("switch", newVal)
+            boolean changed = (device.currentValue("switch") != newVal)
+            String desc = changed
                 ? "Switch was turned ${newVal} [${type}]"
                 : "Switch is ${newVal}"
-            if (txtEnable && curVal != newVal) logInfo desc
-            sendEvent(name: "switch", value: newVal, type: type, descriptionText: desc)
+            if (txtEnable && changed) logInfo desc
+            Map evt = [name: "switch", value: newVal, descriptionText: desc]
+            if (changed) evt.type = type
+            sendEvent(evt)
             return
 
         case "4003": // power restore
@@ -928,3 +930,34 @@ void logError(String m) { log.error logp('🛑') + m }
 void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
 void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
 void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }
+
+// Call before sending the command. `value` is what the attribute should become (null: any
+// value until the deadline). `ep` keeps endpoints of a multi-endpoint device apart.
+void expectDigital(String attr, Object value, long windowMs = 5000L, String ep = null) {
+    DIGITAL_EXPECTED.put(digitalKey(attr, ep), [value: value?.toString(), until: now() + windowMs])
+}
+
+// The type for a report of `attr` = `value`. Values compare as text.
+String reportType(String attr, Object value, String ep = null) {
+    String key = digitalKey(attr, ep)
+    Map e = DIGITAL_EXPECTED.get(key)
+    if (e == null) return "physical"
+    if (now() >= (e.until as long)) {
+        DIGITAL_EXPECTED.remove(key, e)
+        return "physical"
+    }
+    if (e.value == null) return "digital"
+    if (e.value != value?.toString()) return "physical"
+    DIGITAL_EXPECTED.remove(key, e)
+    return "digital"
+}
+
+// Drops this device's records, for installed() and updated().
+void clearDigital() {
+    String prefix = "${device.id}/"
+    DIGITAL_EXPECTED.keySet().findAll { String k -> k.startsWith(prefix) }.each { DIGITAL_EXPECTED.remove(it) }
+}
+
+String digitalKey(String attr, String ep) {
+    return ep ? "${device.id}/${ep}/${attr}" : "${device.id}/${attr}"
+}

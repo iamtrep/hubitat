@@ -31,7 +31,7 @@
  * v0.0.11 Re-arm poll chains on hub start; digital-command marker expires on its own
  * v0.0.12 Trace-log unhandled ZDO and ZHA global frames
  * v0.0.14 Zone status notifications in the short form no longer throw
- * v0.0.15 An unchanged valve report carries no digital/physical type
+ * v0.0.15 A valve report is digital only when it is the value a command asked for
  *
  */
 
@@ -42,11 +42,8 @@ import hubitat.zigbee.clusters.iaszone.ZoneStatus
 
 @Field static final String CODE_VERSION = "0.0.15"
 
-// device.id -> deadline (ms) until which a valve report counts as digital. Static rather than state:
-// a driver's state is written back at method exit, so parse() on another thread would not see it,
-// and a deadline expires on its own when no report follows the command.
-@Field static final ConcurrentHashMap<String, Long> digitalUntil = new ConcurrentHashMap<>()
-@Field static final long DIGITAL_WINDOW_MS = 5000L
+// The values commands asked for, for the event type (shared block digital-type).
+@Field static final ConcurrentHashMap<String, Map> DIGITAL_EXPECTED = new ConcurrentHashMap<>()
 
 
 metadata {
@@ -193,7 +190,7 @@ void initialize() {
     // hub startup wastes radio bandwidth.
     logTrace("initialize()")
 
-    digitalUntil.remove(device.id as String)
+    clearDigital()
     state.remove("lastVolumeRecorded")
     state.remove("lastVolumeRecordedTime")
     state.remove("volumeSinceLastEvent")
@@ -225,15 +222,15 @@ void refresh() {
 void open() {
     List<String> cmds = []
     cmds += zigbee.command(0x0006, 0x01)
+    expectDigital("valve", "open")
     sendZigbeeCommands(cmds)
-    markDigital()
 }
 
 void close() {
     List<String> cmds = []
     cmds += zigbee.command(0x0006, 0x00)
+    expectDigital("valve", "closed")
     sendZigbeeCommands(cmds)
-    markDigital()
 }
 
 // Device Event Parsing
@@ -344,10 +341,11 @@ private void parseAttributeReport(Map descMap) {
             if (descMap.attrId == "0000") {
                 map.name = "valve"
                 map.value = constValveValues[descMap.value]
-                // Only a change carries a type: an unchanged periodic report is not a physical action,
-                // and must not use up the mark the real change needs.
+                // reportType runs on every report, so the read-back of a command that changed
+                // nothing clears its record; only a change carries the type.
                 boolean changed = (device.currentValue("valve") != map.value)
-                if (changed) map.type = consumeDigital() ? "digital" : "physical"
+                String type = reportType("valve", map.value)
+                if (changed) map.type = type
                 map.descriptionText = changed ? "Valve was turned ${map.value} [${map.type}]" : "Valve is ${map.value}"
             }
             break
@@ -537,15 +535,6 @@ void requestBatteryAlarmReport() {
 
 // Private methods
 
-private void markDigital() {
-    digitalUntil.put(device.id as String, now() + DIGITAL_WINDOW_MS)
-}
-
-private boolean consumeDigital() {
-    Long until = digitalUntil.remove(device.id as String)
-    return until != null && now() < until
-}
-
 private void sendZigbeeCommands(List cmds) {
     hubitat.device.HubMultiAction hubAction = new hubitat.device.HubMultiAction(cmds, hubitat.device.Protocol.ZIGBEE)
     sendHubCommand(hubAction)
@@ -707,3 +696,34 @@ void logError(String m) { log.error logp('🛑') + m }
 void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
 void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
 void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }
+
+// Call before sending the command. `value` is what the attribute should become (null: any
+// value until the deadline). `ep` keeps endpoints of a multi-endpoint device apart.
+void expectDigital(String attr, Object value, long windowMs = 5000L, String ep = null) {
+    DIGITAL_EXPECTED.put(digitalKey(attr, ep), [value: value?.toString(), until: now() + windowMs])
+}
+
+// The type for a report of `attr` = `value`. Values compare as text.
+String reportType(String attr, Object value, String ep = null) {
+    String key = digitalKey(attr, ep)
+    Map e = DIGITAL_EXPECTED.get(key)
+    if (e == null) return "physical"
+    if (now() >= (e.until as long)) {
+        DIGITAL_EXPECTED.remove(key, e)
+        return "physical"
+    }
+    if (e.value == null) return "digital"
+    if (e.value != value?.toString()) return "physical"
+    DIGITAL_EXPECTED.remove(key, e)
+    return "digital"
+}
+
+// Drops this device's records, for installed() and updated().
+void clearDigital() {
+    String prefix = "${device.id}/"
+    DIGITAL_EXPECTED.keySet().findAll { String k -> k.startsWith(prefix) }.each { DIGITAL_EXPECTED.remove(it) }
+}
+
+String digitalKey(String attr, String ep) {
+    return ep ? "${device.id}/${ep}/${attr}" : "${device.id}/${attr}"
+}

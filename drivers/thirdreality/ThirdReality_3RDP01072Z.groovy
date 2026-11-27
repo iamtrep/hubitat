@@ -25,6 +25,8 @@
  *            Firmware 1.00.52 also has, per endpoint, power rise/drop report thresholds
  *            (0x0040/0x0041) and metering-only mode (0x0050). Before 1.00.52 a write to an
  *            attribute the plug lacks could restart it, so these are written only when set.
+ *
+ *  v0.0.7 A switch report is digital only when it is the value a command asked for
  */
 
 import groovy.transform.Field
@@ -32,8 +34,12 @@ import groovy.transform.CompileStatic
 import com.hubitat.app.DeviceWrapper
 import hubitat.zigbee.zcl.DataType
 import java.math.RoundingMode
+import java.util.concurrent.ConcurrentHashMap
 
-@Field static final String CODE_VERSION = "0.0.6"
+@Field static final String CODE_VERSION = "0.0.7"
+
+// The values commands asked for, for the event type (shared block digital-type).
+@Field static final ConcurrentHashMap<String, Map> DIGITAL_EXPECTED = new ConcurrentHashMap<>()
 
 // Both outlets. Kept as strings to match descMap.endpoint / child DNI suffixes.
 @Field static final List<String> ENDPOINTS = ["01", "02"]
@@ -226,9 +232,8 @@ void installed() {
 void updated() {
     logCfg "updated"
     unschedule()
-    // unschedule() also cancelled a pending clearIsDigital; re-arm it so a plug
-    // that misses configure's read-back can't label the next press digital.
-    if (state.pendingDigital) runInMillis(5000, "clearIsDigital")
+    clearDigital()
+    state.remove("pendingDigital")
     ensureChildren()
 
     logDebug "settings: ${settings}"
@@ -438,7 +443,7 @@ private void switchEndpoint(String ep, String target) {
         return
     }
     logCmd "EP${ep} ${target}"
-    markPendingDigital(ep)
+    expectDigital("switch", target, 5000L, ep)
     int e = epInt(ep)
     int cmd = (target == "on") ? 0x01 : 0x00
     List<String> cmds = []
@@ -447,21 +452,8 @@ private void switchEndpoint(String ep, String target) {
     sendZigbeeCommands(cmds)
 }
 
-private void markPendingDigital(String ep) {
-    Map pending = (state.pendingDigital ?: [:]) as Map
-    pending[ep] = true
-    state.pendingDigital = pending
-    runInMillis(5000, "clearIsDigital")
-}
-
+// Remains for clearIsDigital jobs scheduled by versions before 0.0.7.
 void clearIsDigital() { state.remove("pendingDigital") }
-
-private boolean consumePendingDigital(String ep) {
-    Map pending = (state.pendingDigital ?: [:]) as Map
-    boolean was = pending[ep] ? true : false
-    if (was) { pending.remove(ep); state.pendingDigital = pending }
-    return was
-}
 
 // Custom commands
 
@@ -616,12 +608,15 @@ private void handleOnOffCluster(String ep, Map descMap) {
     switch (descMap.attrId) {
         case "0000":
             String newVal = descMap.value == "00" ? "off" : "on"
-            String type = consumePendingDigital(ep) ? "digital" : "physical"
+            // reportType runs on every report, so the read-back of a command that changed
+            // nothing clears its record; only a change carries the type.
+            String type = reportType("switch", newVal, ep)
             DeviceWrapper cd = childForEndpoint(ep)
             if (cd == null) { logWarn "no child for endpoint ${ep}"; return }
-            String curVal = cd.currentValue("switch")
-            String desc = (curVal != newVal) ? "was turned ${newVal} [${type}]" : "is ${newVal}"
-            sendToChild(cd, [name: "switch", value: newVal, type: type, descriptionText: "${cd.displayName} ${desc}"])
+            boolean changed = (cd.currentValue("switch") != newVal)
+            Map evt = [name: "switch", value: newVal, descriptionText: "${cd.displayName} ${changed ? "was turned ${newVal} [${type}]" : "is ${newVal}"}"]
+            if (changed) evt.type = type
+            sendToChild(cd, evt)
             return
         case "4003":
             int raw = Integer.parseInt(descMap.value, 16)
@@ -864,3 +859,34 @@ void logError(String m) { log.error logp('🛑') + m }
 void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
 void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
 void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }
+
+// Call before sending the command. `value` is what the attribute should become (null: any
+// value until the deadline). `ep` keeps endpoints of a multi-endpoint device apart.
+void expectDigital(String attr, Object value, long windowMs = 5000L, String ep = null) {
+    DIGITAL_EXPECTED.put(digitalKey(attr, ep), [value: value?.toString(), until: now() + windowMs])
+}
+
+// The type for a report of `attr` = `value`. Values compare as text.
+String reportType(String attr, Object value, String ep = null) {
+    String key = digitalKey(attr, ep)
+    Map e = DIGITAL_EXPECTED.get(key)
+    if (e == null) return "physical"
+    if (now() >= (e.until as long)) {
+        DIGITAL_EXPECTED.remove(key, e)
+        return "physical"
+    }
+    if (e.value == null) return "digital"
+    if (e.value != value?.toString()) return "physical"
+    DIGITAL_EXPECTED.remove(key, e)
+    return "digital"
+}
+
+// Drops this device's records, for installed() and updated().
+void clearDigital() {
+    String prefix = "${device.id}/"
+    DIGITAL_EXPECTED.keySet().findAll { String k -> k.startsWith(prefix) }.each { DIGITAL_EXPECTED.remove(it) }
+}
+
+String digitalKey(String attr, String ep) {
+    return ep ? "${device.id}/${ep}/${attr}" : "${device.id}/${attr}"
+}

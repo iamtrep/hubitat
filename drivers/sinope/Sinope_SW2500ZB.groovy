@@ -15,13 +15,9 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.32"
-// device.id -> deadline (ms) until which a state report counts as digital. Static rather than
-// state: a driver's state is written back whole at method exit, so a command and a parse() on
-// another thread can undo each other's flag, and a deadline expires on its own when the device
-// was already in the target state and sends no report.
-@Field static final ConcurrentHashMap<String, Long> SWITCH_DIGITAL_UNTIL = new ConcurrentHashMap<>()
-@Field static final long DIGITAL_WINDOW_MS = 5000L
+@Field static final String CODE_VERSION = "0.0.33"
+// The values commands asked for, for the event type (shared block digital-type).
+@Field static final ConcurrentHashMap<String, Map> DIGITAL_EXPECTED = new ConcurrentHashMap<>()
 
 metadata {
     definition(
@@ -233,7 +229,7 @@ void initialize() {
     // startup wastes radio bandwidth (ARCHITECTURE.md "Driver lifecycle").
     logTrace("initialize()")
 
-    SWITCH_DIGITAL_UNTIL.remove(device.id as String)
+    clearDigital()
     sendEvent(name:"numberOfButtons", value: 2, isStateChange: true)
     // One-shot runIn chain: a run that fell due while the hub was down is dropped, ending the chain
     runIn(1800, "refreshEnergyReport")
@@ -277,8 +273,8 @@ void on() {
     List<String> cmds = []
     cmds += zigbee.on()
     cmds += zigbee.readAttribute(0x0006, 0x0000)
+    expectDigital("switch", "on")
     sendZigbeeCommands(cmds)
-    markPendingDigitalSwitchChange()
 }
 
 void off() {
@@ -287,23 +283,12 @@ void off() {
     cmds += zigbee.readAttribute(0x0006, 0x0000)
     // The device doesn't report its energy at once; read it after the off
     cmds += zigbee.readAttribute(0x0702, 0x0000)
+    expectDigital("switch", "off")
     sendZigbeeCommands(cmds)
-    markPendingDigitalSwitchChange()
-}
-
-// A digital command marks the next state report as digital for DIGITAL_WINDOW_MS. A command the
-// device ignores (already in the target state) sends no report, so the mark expires on its own.
-private void markPendingDigitalSwitchChange() {
-    SWITCH_DIGITAL_UNTIL.put(device.id as String, now() + DIGITAL_WINDOW_MS)
 }
 
 // Kept for clear jobs scheduled by 0.0.25 and earlier.
 private void clearSwitchTypeDigital() { }
-
-private boolean consumeSwitchDigital() {
-    Long until = SWITCH_DIGITAL_UNTIL.remove(device.id as String)
-    return until != null && now() < until
-}
 
 void push(Integer buttonNumber) {
     String buttonName = buttonNumber == 1 ? "Up" : "Down"
@@ -480,9 +465,10 @@ private void parseAttributeReport(Map descMap) {
                 boolean changed = (curVal != newVal)
                 map.name = "switch"
                 map.value = newVal
-                // Only a change carries a type: a confirming read with the same value is not a
-                // physical action, and must not use up the mark the real change needs.
-                if (changed) map.type = consumeSwitchDigital() ? "digital" : "physical"
+                // reportType runs on every report, so the read-back of a command that changed
+                // nothing clears its record; only a change carries the type.
+                String type = reportType("switch", newVal)
+                if (changed) map.type = type
                 // "was turned" only when this report represents a real state change vs the
                 // platform's current value; otherwise it's a status/scheduled report and the
                 // digital-vs-physical label doesn't apply (no source action triggered it).
@@ -703,3 +689,34 @@ void logError(String m) { log.error logp('🛑') + m }
 void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
 void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
 void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }
+
+// Call before sending the command. `value` is what the attribute should become (null: any
+// value until the deadline). `ep` keeps endpoints of a multi-endpoint device apart.
+void expectDigital(String attr, Object value, long windowMs = 5000L, String ep = null) {
+    DIGITAL_EXPECTED.put(digitalKey(attr, ep), [value: value?.toString(), until: now() + windowMs])
+}
+
+// The type for a report of `attr` = `value`. Values compare as text.
+String reportType(String attr, Object value, String ep = null) {
+    String key = digitalKey(attr, ep)
+    Map e = DIGITAL_EXPECTED.get(key)
+    if (e == null) return "physical"
+    if (now() >= (e.until as long)) {
+        DIGITAL_EXPECTED.remove(key, e)
+        return "physical"
+    }
+    if (e.value == null) return "digital"
+    if (e.value != value?.toString()) return "physical"
+    DIGITAL_EXPECTED.remove(key, e)
+    return "digital"
+}
+
+// Drops this device's records, for installed() and updated().
+void clearDigital() {
+    String prefix = "${device.id}/"
+    DIGITAL_EXPECTED.keySet().findAll { String k -> k.startsWith(prefix) }.each { DIGITAL_EXPECTED.remove(it) }
+}
+
+String digitalKey(String attr, String ep) {
+    return ep ? "${device.id}/${ep}/${attr}" : "${device.id}/${attr}"
+}

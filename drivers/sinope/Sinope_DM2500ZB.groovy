@@ -15,14 +15,11 @@ import com.hubitat.app.ChildDeviceWrapper
 import com.hubitat.hub.domain.Event
 import java.math.RoundingMode
 
-@Field static final String CODE_VERSION = "0.0.34"
-// device.id -> deadline (ms) until which a state report counts as digital. Static rather than
-// state: a driver's state is written back whole at method exit, so a command and a parse() on
-// another thread can undo each other's flag, and a deadline expires on its own when the device
-// was already in the target state and sends no report.
-@Field static final ConcurrentHashMap<String, Long> SWITCH_DIGITAL_UNTIL = new ConcurrentHashMap<>()
-@Field static final ConcurrentHashMap<String, Long> LEVEL_DIGITAL_UNTIL = new ConcurrentHashMap<>()
-@Field static final long DIGITAL_WINDOW_MS = 5000L
+@Field static final String CODE_VERSION = "0.0.35"
+// The values commands asked for, for the event type (shared block digital-type).
+@Field static final ConcurrentHashMap<String, Map> DIGITAL_EXPECTED = new ConcurrentHashMap<>()
+// How long level reports after a command count as digital: the device fades in steps.
+@Field static final long LEVEL_FADE_WINDOW_MS = 10000L
 // device.id -> deadline (ms) of an off fade. Turning off, by command or a short Down press, makes the
 // device report falling levels and then its stored level (or 0) about 5 s later; none of these is a
 // level change, so level reports are ignored until the deadline.
@@ -243,8 +240,7 @@ void initialize() {
     // startup wastes radio bandwidth (ARCHITECTURE.md "Driver lifecycle").
     logTrace("initialize()")
 
-    SWITCH_DIGITAL_UNTIL.remove(device.id as String)
-    LEVEL_DIGITAL_UNTIL.remove(device.id as String)
+    clearDigital()
     OFF_FADE_UNTIL.remove(device.id as String)
     sendEvent(name:"numberOfButtons", value: 2, isStateChange: true)
     // One-shot runIn chain: a run that fell due while the hub was down is dropped, ending the chain
@@ -283,11 +279,12 @@ void refreshEnergyReport() {
 
 // on/off/setLevel each affect BOTH the on/off (0006) and level (0008) state on a
 // dimmer — turning on restores the level, and setLevel from off turns the load on —
-// so on and setLevel arm the digital flag for both attributes. Each chains a directed
+// so on and setLevel record what they expect of both attributes. Each chains a directed
 // readAttribute of 0006, which also satisfies the platform's command-retry watchdog (a
 // no-op command emits only a Default Response, no on-change report, and the watchdog
-// gives up after 5 retries). off arms only the switch flag and starts an off fade: its
-// level reports are fade values, not changes, so it reads no level either.
+// gives up after 5 retries); the read-back also clears the record of a no-op command.
+// off records only the switch and starts an off fade: its level reports are fade values,
+// not changes, so it reads no level either.
 // A read that reflects an unchanged value is filtered by the changed-gate in
 // parseAttributeReport, so the confirming reads add no spurious events.
 void on() {
@@ -296,9 +293,11 @@ void on() {
     cmds += zigbee.on()
     cmds += zigbee.readAttribute(0x0006, 0x0000)
     cmds += zigbee.readAttribute(0x0008, 0x0000)
+    expectDigital("switch", "on")
+    // The device fades up to a level this command did not name, in steps over about 6 s:
+    // any level report in the window is digital.
+    expectDigital("level", null, LEVEL_FADE_WINDOW_MS)
     sendZigbeeCommands(cmds)
-    markPendingDigitalSwitchChange()
-    markPendingDigitalLevelChange()
 }
 
 void off() {
@@ -308,8 +307,8 @@ void off() {
     // The device doesn't report its energy at once; read it after the off
     cmds += zigbee.readAttribute(0x0702, 0x0000)
     markOffFade()
+    expectDigital("switch", "off")
     sendZigbeeCommands(cmds)
-    markPendingDigitalSwitchChange()
 }
 
 void setLevel(String level, String duration = '0') {
@@ -317,10 +316,13 @@ void setLevel(String level, String duration = '0') {
 }
 
 void setLevel(BigDecimal level, BigDecimal duration = 0) {
-    markPendingDigitalSwitchChange()
+    expectDigital("switch", level > 0 ? "on" : "off")
     if (level > 0) {
         OFF_FADE_UNTIL.remove(device.id as String)
-        markPendingDigitalLevelChange()
+        // The device reports levels on the way, even with no duration (a turn-on fade took
+        // about 6 s), so every level report in the window belongs to this command.
+        BigDecimal seconds = duration ?: 0
+        expectDigital("level", null, Math.max(LEVEL_FADE_WINDOW_MS, (seconds * 1000 + 3000) as long))
     } else {
         markOffFade()
     }
@@ -338,30 +340,10 @@ private static int fadeToRate(BigDecimal seconds) {
     return seconds == null ? 0 : Math.round(seconds.floatValue() * 10f)
 }
 
-// A digital command marks the next state report as digital for DIGITAL_WINDOW_MS. A command the
-// device ignores (already in the target state) sends no report, so the mark expires on its own.
-private void markPendingDigitalSwitchChange() {
-    SWITCH_DIGITAL_UNTIL.put(device.id as String, now() + DIGITAL_WINDOW_MS)
-}
-
-private void markPendingDigitalLevelChange() {
-    LEVEL_DIGITAL_UNTIL.put(device.id as String, now() + DIGITAL_WINDOW_MS)
-}
-
 // Kept for clear jobs scheduled by 0.0.25 and earlier.
 private void clearSwitchTypeDigital() { }
 
-private boolean consumeSwitchDigital() {
-    Long until = SWITCH_DIGITAL_UNTIL.remove(device.id as String)
-    return until != null && now() < until
-}
-
 private void clearLevelTypeDigital() { }
-
-private boolean levelDigitalPending() {
-    Long until = LEVEL_DIGITAL_UNTIL.get(device.id as String)
-    return until != null && now() < until
-}
 
 private void markOffFade() {
     OFF_FADE_UNTIL.put(device.id as String, now() + OFF_FADE_WINDOW_MS)
@@ -552,9 +534,10 @@ private void parseAttributeReport(Map descMap) {
                 boolean changed = (curVal != newVal)
                 map.name = "switch"
                 map.value = newVal
-                // Only a change carries a type: a confirming read with the same value is not a
-                // physical action, and must not use up the mark the real change needs.
-                if (changed) map.type = consumeSwitchDigital() ? "digital" : "physical"
+                // reportType runs on every report, so the read-back of a command that changed
+                // nothing clears its record; only a change carries the type.
+                String type = reportType("switch", newVal)
+                if (changed) map.type = type
                 // "was turned" only when this report represents a real state change vs the
                 // platform's current value; otherwise it's a status/scheduled report and the
                 // digital-vs-physical label doesn't apply (no source action triggered it).
@@ -584,9 +567,10 @@ private void parseAttributeReport(Map descMap) {
                     map.name = "level"
                     map.value = dimmerLevel
                     map.unit = "%"
-                    // The mark stays for its whole window: a ramp sends several level reports and
-                    // all of them belong to the command.
-                    if (changed) map.type = levelDigitalPending() ? "digital" : "physical"
+                    // reportType runs on every report (a fade's record covers all its steps);
+                    // only a change carries the type.
+                    String type = reportType("level", dimmerLevel)
+                    if (changed) map.type = type
                     map.descriptionText = changed
                         ? "Dimmer level was set to ${dimmerLevel}% [${map.type}]"
                         : "Dimmer level is ${dimmerLevel}%"
@@ -817,3 +801,34 @@ void logError(String m) { log.error logp('🛑') + m }
 void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
 void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
 void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }
+
+// Call before sending the command. `value` is what the attribute should become (null: any
+// value until the deadline). `ep` keeps endpoints of a multi-endpoint device apart.
+void expectDigital(String attr, Object value, long windowMs = 5000L, String ep = null) {
+    DIGITAL_EXPECTED.put(digitalKey(attr, ep), [value: value?.toString(), until: now() + windowMs])
+}
+
+// The type for a report of `attr` = `value`. Values compare as text.
+String reportType(String attr, Object value, String ep = null) {
+    String key = digitalKey(attr, ep)
+    Map e = DIGITAL_EXPECTED.get(key)
+    if (e == null) return "physical"
+    if (now() >= (e.until as long)) {
+        DIGITAL_EXPECTED.remove(key, e)
+        return "physical"
+    }
+    if (e.value == null) return "digital"
+    if (e.value != value?.toString()) return "physical"
+    DIGITAL_EXPECTED.remove(key, e)
+    return "digital"
+}
+
+// Drops this device's records, for installed() and updated().
+void clearDigital() {
+    String prefix = "${device.id}/"
+    DIGITAL_EXPECTED.keySet().findAll { String k -> k.startsWith(prefix) }.each { DIGITAL_EXPECTED.remove(it) }
+}
+
+String digitalKey(String attr, String ep) {
+    return ep ? "${device.id}/${ep}/${attr}" : "${device.id}/${attr}"
+}

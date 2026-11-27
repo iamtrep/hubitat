@@ -1785,6 +1785,15 @@
             "items": [
                 "logsOff"
             ]
+        },
+        "digital-type": {
+            "version": 1,
+            "items": [
+                "expectDigital",
+                "reportType",
+                "clearDigital",
+                "digitalKey"
+            ]
         }
     },
     "drivers/sinope/Sinope_DM2500ZB.groovy": {
@@ -1810,6 +1819,15 @@
             "version": 1,
             "items": [
                 "logsOff"
+            ]
+        },
+        "digital-type": {
+            "version": 1,
+            "items": [
+                "expectDigital",
+                "reportType",
+                "clearDigital",
+                "digitalKey"
             ]
         }
     },
@@ -1837,6 +1855,15 @@
             "items": [
                 "logsOff"
             ]
+        },
+        "digital-type": {
+            "version": 1,
+            "items": [
+                "expectDigital",
+                "reportType",
+                "clearDigital",
+                "digitalKey"
+            ]
         }
     },
     "drivers/sinope/Sinope_RM3500ZB.groovy": {
@@ -1862,6 +1889,15 @@
             "version": 1,
             "items": [
                 "logsOff"
+            ]
+        },
+        "digital-type": {
+            "version": 1,
+            "items": [
+                "expectDigital",
+                "reportType",
+                "clearDigital",
+                "digitalKey"
             ]
         }
     },
@@ -1889,6 +1925,15 @@
             "items": [
                 "logsOff"
             ]
+        },
+        "digital-type": {
+            "version": 1,
+            "items": [
+                "expectDigital",
+                "reportType",
+                "clearDigital",
+                "digitalKey"
+            ]
         }
     },
     "drivers/sinope/Sinope_SW2500ZB.groovy": {
@@ -1914,6 +1959,15 @@
             "version": 1,
             "items": [
                 "logsOff"
+            ]
+        },
+        "digital-type": {
+            "version": 1,
+            "items": [
+                "expectDigital",
+                "reportType",
+                "clearDigital",
+                "digitalKey"
             ]
         }
     },
@@ -2019,6 +2073,15 @@
             "items": [
                 "logsOff"
             ]
+        },
+        "digital-type": {
+            "version": 1,
+            "items": [
+                "expectDigital",
+                "reportType",
+                "clearDigital",
+                "digitalKey"
+            ]
         }
     },
     "drivers/thirdreality/ThirdReality_3RDP01072Z.groovy": {
@@ -2044,6 +2107,15 @@
             "version": 1,
             "items": [
                 "logsOff"
+            ]
+        },
+        "digital-type": {
+            "version": 1,
+            "items": [
+                "expectDigital",
+                "reportType",
+                "clearDigital",
+                "digitalKey"
             ]
         }
     },
@@ -2096,6 +2168,15 @@
             "version": 1,
             "items": [
                 "logsOff"
+            ]
+        },
+        "digital-type": {
+            "version": 1,
+            "items": [
+                "expectDigital",
+                "reportType",
+                "clearDigital",
+                "digitalKey"
             ]
         }
     },

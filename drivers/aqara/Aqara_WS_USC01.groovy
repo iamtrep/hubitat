@@ -20,10 +20,13 @@
  *  The need for the event-mode write and the decoupled-mode semantics are
  *  community knowledge (Z2M, ZHA, kkossev's Hubitat work). All code here is
  *  original to this repository.
+ *
+ *  v1.5.6 A switch report is digital only when it is the value a command asked for
  */
 
 import groovy.transform.CompileStatic
 import groovy.transform.Field
+import java.util.concurrent.ConcurrentHashMap
 
 metadata {
     definition (
@@ -68,7 +71,10 @@ metadata {
     }
 }
 
-@Field static final String CODE_VERSION = "1.5.5"
+@Field static final String CODE_VERSION = "1.5.6"
+
+// The values commands asked for, for the event type (shared block digital-type).
+@Field static final ConcurrentHashMap<String, Map> DIGITAL_EXPECTED = new ConcurrentHashMap<>()
 
 // A pending version reconfigure older than this is treated as lost and re-armed.
 @Field static final long RECONFIGURE_RETRY_MS = 60000L
@@ -106,9 +112,6 @@ void updated() {
     logCfg "Preferences updated"
     unschedule()
     if (debugEnable || traceEnable) runIn(1800, "logsOff")
-    // unschedule() also cancelled a pending clearSwitchTypeDigital; re-arm it so a
-    // device that misses configure's read-back can't label the next press digital.
-    if (state.switchTypeDigital) runInMillis(5000, "clearSwitchTypeDigital")
     configure()
 }
 
@@ -126,6 +129,8 @@ void configure() {
     logCfg "Configuring (operationMode=${desiredMode}, version ${CODE_VERSION})"
     sendEvent(name: "numberOfButtons", value: 1, isStateChange: false)
     state.version = CODE_VERSION
+    clearDigital()
+    state.remove("switchTypeDigital")
 
     int opMode  = (desiredMode == "decoupled") ? 0x00 : 0x01
     int outage  = powerOutageMemory == false ? 0x00 : 0x01
@@ -171,29 +176,19 @@ void on() {
     // Send the command, then read 0x0006 back: zigbee.on() emits only the cluster
     // command, so the explicit read forces a state report that satisfies the hub's
     // command-retry watchdog (no spurious "failed after N retries").
+    expectDigital("switch", "on")
     sendZigbeeCommands(zigbee.on() + zigbee.readAttribute(CLUSTER_ON_OFF, ATTR_ON_OFF))
-    markPendingDigitalSwitchChange()
 }
 
 void off() {
     logDebug "off()"
+    expectDigital("switch", "off")
     sendZigbeeCommands(zigbee.off() + zigbee.readAttribute(CLUSTER_ON_OFF, ATTR_ON_OFF))
-    markPendingDigitalSwitchChange()
 }
 
-// Flag the next on/off state report as digital (hub/automation-driven) so it can
-// be distinguished from a physical rocker press. The flag is normally consumed by
-// reportSwitch on the read-back report; the 5s safety-net clear covers a no-op
-// command (device already in the target state) whose deduped report would
-// otherwise leave the flag set and mislabel the next physical change as digital.
-// The clear is idempotent, so the fast path (report arrives first) is unaffected.
-private void markPendingDigitalSwitchChange() {
-    state.switchTypeDigital = true
-    runInMillis(5000, "clearSwitchTypeDigital")
-}
-
+// Remains for clearSwitchTypeDigital jobs scheduled by versions before 1.5.6.
 void clearSwitchTypeDigital() {
-    state.switchTypeDigital = false
+    state.remove("switchTypeDigital")
 }
 
 void push(Integer buttonId = 1) {
@@ -324,23 +319,26 @@ private void parseBasic(Integer attrInt, String value, String encoding) {
 private void reportSwitch(String value) {
     if (value == null) return
     String sw = (value == "01") ? "on" : "off"
-    // type: a state report following on()/off() is digital; an unsolicited one
-    // (physical rocker in control_relay mode, or a power-restore/group command) is
-    // physical. Consume the flag set by the command here. The Aqara relay exposes
-    // no hardware action-source attribute, so this is necessarily a software
-    // inference — the same set/consume scheme kkossev and Sinopé converge on.
-    String src = state.switchTypeDigital ? "digital" : "physical"
-    state.switchTypeDigital = false
+    // type: a report of the value on()/off() asked for, within the window, is
+    // digital; any other report (physical rocker in control_relay mode, or a
+    // power-restore/group command) is physical. The Aqara relay exposes no
+    // hardware action-source attribute, so this is necessarily a software
+    // inference. reportType runs on every report, so the read-back of a no-op
+    // command clears its record; only a change carries the type.
+    String src = reportType("switch", sw)
     // The on()/off() read-back and a change report can both surface the same
     // value (the read-back makes no-op commands safe for the retry watchdog).
     // sendEvent dedups the duplicate; log at info only on a real change so the
     // confirmation read doesn't double the log line.
-    if (device.currentValue("switch") != sw) {
+    boolean changed = (device.currentValue("switch") != sw)
+    if (changed) {
         logInfo "Switch: ${sw} [${src}]"
     } else {
         logRx "Switch: ${sw} (confirmation)"
     }
-    sendEvent(name: "switch", value: sw, type: src, descriptionText: "${device.displayName} was turned ${sw} [${src}]")
+    Map evt = [name: "switch", value: sw, descriptionText: changed ? "${device.displayName} was turned ${sw} [${src}]" : "${device.displayName} is ${sw}"]
+    if (changed) evt.type = src
+    sendEvent(evt)
 }
 
 private void reportDeviceTemperature(String value) {
@@ -543,3 +541,34 @@ void logError(String m) { log.error logp('🛑') + m }
 void logTrace(String m) { if (traceEnable) log.trace logp('🔬') + m }
 void logInfo (String m) { if (txtEnable != false) log.info  "${device.displayName}: ${m}" }
 void logDebug(String m) { if (debugEnable) log.debug "${device.displayName}: ${m}" }
+
+// Call before sending the command. `value` is what the attribute should become (null: any
+// value until the deadline). `ep` keeps endpoints of a multi-endpoint device apart.
+void expectDigital(String attr, Object value, long windowMs = 5000L, String ep = null) {
+    DIGITAL_EXPECTED.put(digitalKey(attr, ep), [value: value?.toString(), until: now() + windowMs])
+}
+
+// The type for a report of `attr` = `value`. Values compare as text.
+String reportType(String attr, Object value, String ep = null) {
+    String key = digitalKey(attr, ep)
+    Map e = DIGITAL_EXPECTED.get(key)
+    if (e == null) return "physical"
+    if (now() >= (e.until as long)) {
+        DIGITAL_EXPECTED.remove(key, e)
+        return "physical"
+    }
+    if (e.value == null) return "digital"
+    if (e.value != value?.toString()) return "physical"
+    DIGITAL_EXPECTED.remove(key, e)
+    return "digital"
+}
+
+// Drops this device's records, for installed() and updated().
+void clearDigital() {
+    String prefix = "${device.id}/"
+    DIGITAL_EXPECTED.keySet().findAll { String k -> k.startsWith(prefix) }.each { DIGITAL_EXPECTED.remove(it) }
+}
+
+String digitalKey(String attr, String ep) {
+    return ep ? "${device.id}/${ep}/${attr}" : "${device.id}/${attr}"
+}
