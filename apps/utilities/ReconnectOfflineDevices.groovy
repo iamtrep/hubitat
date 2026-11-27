@@ -331,24 +331,27 @@ void checkOffline() {
         Long due = dueAt(e)
         if (due == null || due > t) return
         String cmd = reviveCommand()
-        e.attempts = (e.attempts ?: 0) + 1
+        String held = "${watchAttr()} ${watchValue()} for ${formatDuration(t - (e.since as long))}"
         e.lastTry = t
-        String msg = "${dev.displayName} ${watchAttr()} ${watchValue()} for ${formatDuration(t - (e.since as long))}: ${cmd}() #${e.attempts}"
+        if (!supportsCommand(dev, cmd)) {
+            // Not sent, so not an attempt and no notification. Reported once per occurrence; checked again each interval.
+            if (!e.noCommand) {
+                e.noCommand = true
+                logWarn "${dev.displayName} has no ${cmd}() command without parameters; not sent"
+                fileLog(["${devRef(dev)} | ${cmd}() not sent | ${held}, no such command"])
+            } else {
+                logDebug "${dev.displayName}: ${cmd}() still not available; not sent"
+            }
+            return
+        }
+        e.attempts = (e.attempts ?: 0) + 1
+        String msg = "${dev.displayName} ${held}: ${cmd}() #${e.attempts}"
         logCmd msg
         notify(msg)
-        String outcome = "sent"
-        if (!supportsCommand(dev, cmd)) {
-            logWarn "${dev.displayName} has no ${cmd}() command without parameters"
-            outcome = "not sent: no such command"
-        } else {
-            try {
-                dev."${cmd}"()
-            } catch (Exception ex) {
-                logError "${cmd}() on ${dev.displayName} failed: ${ex.message}"
-                outcome = "failed: ${ex.message}"
-            }
-        }
-        fileLog(["${devRef(dev)} | ${cmd}() #${e.attempts} | ${watchAttr()} ${watchValue()} for ${formatDuration(t - (e.since as long))}, ${outcome}"])
+        // A driver's exception stays in the driver: the hub logs it on the device and this call returns,
+        // so whether the command did anything shows only in the device's next events.
+        dev."${cmd}"()
+        fileLog(["${devRef(dev)} | ${cmd}() #${e.attempts} | ${held}, sent"])
     }
     // Drop entries for devices no longer selected.
     Set<String> selected = (settings.devices?.collect { it.id as String } ?: []) as Set

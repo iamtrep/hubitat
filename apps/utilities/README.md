@@ -82,7 +82,7 @@ Matter drivers report `networkStatus`. When a Matter node drops, the hub usually
 
 - **Devices:** any number. One without the watched attribute is listed on the app page and ignored.
 - **Attribute and value:** any attribute the selected devices all have. For an attribute with a fixed list of values the value is picked from that list; otherwise it is typed and must match exactly. Any other value ends the occurrence.
-- **Command:** chosen from the commands without parameters that all the selected devices have; `initialize` when they all have it. For devices that need different settings, add one instance per setting.
+- **Command:** chosen from the commands without parameters that all the selected devices have; `initialize` when they all have it. For devices that need different settings, add one instance per setting. A device that lacks the command is skipped: no notification, one warning and one log-file line per occurrence.
 - **Retry:** on, the command is sent again at the same interval until the value changes; off, once per occurrence.
 
 The page shows each device's value, how long it has held the watched one and how many times the command was sent. An optional notification device gets a message each time the command is sent and when a device recovers after one.
