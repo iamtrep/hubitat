@@ -125,6 +125,7 @@ void eventHandler(Event evt) {
     checkVersion()
     logEvt "System event detected: ${evt.name}"
     servicePendingClose()
+    if (evt.name == "systemStart") state.remove("openedBootAt")
 
     // Unset lists fall back to the defaults: an instance whose settings were never saved
     // (or were lost) would otherwise ignore every event.
@@ -190,10 +191,17 @@ private void notifyUnplannedRestart(Event evt) {
     notifyDevices?.each { it.deviceNotification(message) }
 }
 
+// systemStart was missed only when the contact was opened during an earlier boot and no systemStart came since.
+// Open events in the same boot (the hub sends manualReboot twice before a reboot) or a close still waiting out the
+// startup delay are not a missed systemStart. The boot time is derived from uptime in whole seconds, hence the margin;
+// two boots are always further apart than that, since apps get events only after a minute or more of uptime.
 void openContact(String message) {
-    if (contactSensor?.currentValue('contact') == 'open') {
+    long bootAt = now() - (location.hub.uptime as long) * 1000L
+    Long openedBootAt = state.openedBootAt as Long
+    if (contactSensor?.currentValue('contact') == 'open' && openedBootAt != null && Math.abs(bootAt - openedBootAt) > 10000L) {
         logWarn("${message} - ${contactSensor?.getDisplayName()} already open - missed systemStart event?")
     }
+    state.openedBootAt = bootAt
 
     logCmd "${message} - Opening contact"
     contactSensor?.open()
