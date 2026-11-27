@@ -398,7 +398,7 @@ void initialize() {
     evaluateGroups("Preferences saved")
 }
 
-private void checkVersion(boolean reinit = true) {
+void checkVersion(boolean reinit = true) {
     if (state.version == CODE_VERSION) return
     logVer "New version: ${CODE_VERSION} (was: ${state.version})"
     state.version = CODE_VERSION

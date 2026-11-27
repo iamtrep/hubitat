@@ -907,6 +907,14 @@
             ]
         }
     },
+    "apps/SwitchMonitor.groovy": {
+        "version-check-app": {
+            "version": 1,
+            "items": [
+                "checkVersion"
+            ]
+        }
+    },
     "apps/SwitchedHeaterThermostat/SwitchedHeaterThermostat.groovy": {
         "logging-app": {
             "version": 1,
