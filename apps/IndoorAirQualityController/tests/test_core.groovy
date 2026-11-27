@@ -212,6 +212,24 @@ check('safety: resumed stage not released at once', relA.actions, [])
 Map relB = core.stepStages(relA.stages, 500G, 6 * M, cfg(), false)
 check('safety: resumed stages released after the dwell', relB.actions, [[stage: 2, cmd: 'off'], [stage: 0, cmd: 'off']])
 
+// ── Air device status ──
+// Every CO2 sensor drops out: the stale reading is not republished and healthStatus goes offline.
+BigDecimal dropped = core.combineReadings([[v: 900, t: 0L], [v: 700, t: 0L]], 'highest', 7300000L, 7200000L)
+Map sOff = core.airStatus(true, dropped, null, [[s: 'engaged'], [s: 'off']], false, false, true)
+check('all sensors dropped: no CO2 sent', sOff.attrs.containsKey('carbonDioxide'), false)
+check('all sensors dropped: no humidity sent', sOff.attrs.containsKey('humidity'), false)
+check('all sensors dropped: offline', sOff.attrs.healthStatus, 'offline')
+check('all sensors dropped: reason', sOff.reasons.healthStatus, 'no CO2 reading in the last 2 hours')
+check('all sensors dropped: stage still shown', sOff.attrs.ventilationStage, 1)
+Map sOn = core.airStatus(true, 812.6G, 41.5G, [[s: 'off']], true, false, true)
+check('reading: CO2 rounded', sOn.attrs.carbonDioxide, 813)
+check('reading: humidity', sOn.attrs.humidity, 41.5)
+check('reading: online', sOn.attrs.healthStatus, 'online')
+check('reading: no reason', sOn.reasons, [:])
+check('reading: advisories and switch', [sOn.attrs.switch, sOn.attrs.windowAdvisory, sOn.attrs.lowHumidityAdvisory],
+      ['on', 'active', 'inactive'])
+check('settings incomplete: health left out', core.airStatus(false, null, null, [], false, false, false).attrs.containsKey('healthStatus'), false)
+
 // ══ later tasks append cases above this line ══
 println "${passed} passed, ${failed} failed"
 System.exit(failed ? 1 : 0)

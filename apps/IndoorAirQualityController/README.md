@@ -9,7 +9,7 @@ Runs ventilation in stages from indoor CO2 and warns when a window should be ope
 
 ## What it does
 
-The app combines the readings of one or more CO2 sensors into one value (the highest reading by default, or the average). It has 1 to 4 stages, each a group of switches with an on threshold, an off threshold and a dwell time in minutes. Stage N turns on when CO2 has stayed above its on threshold for its dwell and stage N-1 is running. It turns off when CO2 has stayed below its off threshold for its dwell and stage N+1 is off, so stages start from the bottom up and stop from the top down. A sensor silent for 2 hours drops out of the combined value. With no sensor left, the app keeps the stages as they are and stops escalating until a sensor reports.
+The app combines the readings of one or more CO2 sensors into one value (the highest reading by default, or the average). It has 1 to 4 stages, each a group of switches with an on threshold, an off threshold and a dwell time in minutes. Stage N turns on when CO2 has stayed above its on threshold for its dwell and stage N-1 is running. It turns off when CO2 has stayed below its off threshold for its dwell and stage N+1 is off, so stages start from the bottom up and stop from the top down. A sensor silent for 2 hours drops out of the combined value. With no sensor left, the app keeps the stages as they are and stops escalating until a sensor reports, and the Air device's `healthStatus` goes `offline`.
 
 Two advisories run beside the stages. The open-window advisory is raised when CO2 has stayed above its threshold for its duration while every stage is running or held, or while the app is paused. It repeats at the chosen interval and clears when CO2 falls below the top stage's off threshold. The low-humidity advisory is raised when the lowest humidity reading has stayed below its threshold for its duration, and only in winter when an HVAC Season Manager device is selected. It clears when the reading has stayed 3 %RH above the threshold for 1 hour, or when the season leaves winter. It raises one notification per episode. Both advisories are published on the Air device and sent to the notification devices.
 
@@ -96,6 +96,9 @@ The device is named **Indoor Air** and labelled "Indoor Air", or "<app name> Air
 | `windowAdvisory` | `active`, `inactive` |
 | `lowHumidityAdvisory` | `active`, `inactive` |
 | `switch` | `on`, `off`: the enable switch of the app |
+| `healthStatus` | `online`, `offline`: `offline` while no CO2 sensor has reported for 2 hours, with the reason in the event description |
+
+When no CO2 sensor is left, `carbonDioxide` keeps its last value, so check `healthStatus` before acting on it. `humidity` likewise keeps its last value when every humidity sensor is silent.
 
 `on()` and `off()` enable and disable the app. The switch starts off, so a new instance does nothing until it is turned on. Turning it off stops the app as described under Stopping.
 

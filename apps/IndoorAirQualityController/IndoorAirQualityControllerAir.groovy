@@ -10,7 +10,7 @@
 
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.3"
+@Field static final String CODE_VERSION = "0.1.4"
 @Field static final Map UNITS = [carbonDioxide: "ppm", humidity: "%"]
 
 metadata {
@@ -24,6 +24,7 @@ metadata {
         attribute "ventilationStage", "number"
         attribute "windowAdvisory", "enum", ["active", "inactive"]
         attribute "lowHumidityAdvisory", "enum", ["active", "inactive"]
+        attribute "healthStatus", "enum", ["online", "offline"]
     }
     preferences {
         input name: "txtEnable", type: "bool", title: "Enable info logging", defaultValue: true
@@ -56,12 +57,18 @@ private void forward(String cmd) {
     else logCmd cmd
 }
 
-void updateStatus(Map attrs) {
+// reasons: why healthStatus has its value, put in the event description.
+void updateStatus(Map attrs, Map reasons = null) {
     if (state.version != CODE_VERSION) {
         logVer "version ${CODE_VERSION} (was ${state.version})"
         state.version = CODE_VERSION
     }
-    attrs.each { String k, v -> if (v != null) sendEvent(name: k, value: v, unit: UNITS[k]) }
+    attrs.each { String k, v ->
+        if (v == null) return
+        Map e = [name: k, value: v, unit: UNITS[k]]
+        if (k == "healthStatus") e.descriptionText = "${device.displayName} is ${v}${reasons?.get(k) ? ': ' + reasons[k] : ''}"
+        sendEvent(e)
+    }
 }
 
 // ── Logging ───────────────────────────────────────────────────────────

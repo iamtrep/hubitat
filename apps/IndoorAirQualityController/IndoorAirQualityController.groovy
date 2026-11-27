@@ -14,7 +14,7 @@ import com.hubitat.hub.domain.State
 import groovy.transform.CompileStatic
 import groovy.transform.Field
 
-@Field static final String CODE_VERSION = "0.1.4"
+@Field static final String CODE_VERSION = "0.1.5"
 
 definition(
     name: "Indoor Air Quality Controller",
@@ -164,7 +164,7 @@ void initialize() {
         logWarn "settings incomplete, nothing is managed: ${errs.join('; ')}"
         releaseAll()
         state.stages = resized([], (cfg.stages as List).size())
-        publish(null, null, state.stages as List<Map>)
+        publish(null, null, state.stages as List<Map>, false)
         return
     }
     subscribe(co2Sensors, "carbonDioxide", "inputHandler")
@@ -328,6 +328,7 @@ void evaluateAir(String why) {
             st = resized([], n)
         } else {
             if (co2 == null && state.co2Missing != true) logWarn "no CO2 reading in the last 2 hours: stages held"
+            if (co2 != null && state.co2Missing == true) logInfo "CO2 reading back at ${fmtInt(co2)} ppm"
             state.co2Missing = co2 == null
             Map r = stepStages(st, co2, t, cfg, offOn)
             st = r.stages as List<Map>
@@ -469,13 +470,11 @@ Map airCommand(Map req) {
     return [ok: true]
 }
 
-void publish(BigDecimal co2, BigDecimal rh, List<Map> st) {
-    Map a = ["switch": state.enabled == true ? "on" : "off", ventilationStage: stageLevel(st),
-             windowAdvisory: (state.window as Map)?.active ? "active" : "inactive",
-             lowHumidityAdvisory: (state.rh as Map)?.active ? "active" : "inactive"]
-    if (co2 != null) a.carbonDioxide = co2.setScale(0, BigDecimal.ROUND_HALF_UP)
-    if (rh != null) a.humidity = rh
-    airDevice().updateStatus(a)
+// managed: false while the settings are incomplete, when no sensor is read and health is unknown.
+void publish(BigDecimal co2, BigDecimal rh, List<Map> st, boolean managed = true) {
+    Map s = airStatus(state.enabled == true, co2, rh, st, (state.window as Map)?.active == true,
+                      (state.rh as Map)?.active == true, managed)
+    airDevice().updateStatus(s.attrs as Map, s.reasons as Map)
 }
 
 void sendNote(String msg) {
@@ -658,6 +657,27 @@ int stageLevel(List<Map> st) {
     int level = 0
     for (int i = 0; i < (st ?: []).size(); i++) if (st[i]?.s != null && st[i].s != 'off') level = i + 1
     return level
+}
+
+// What the Air device shows. With no CO2 or humidity reading the attribute is left out and keeps its
+// last value, and healthStatus goes offline with the reason, so a rule can tell a held value from a
+// current one. managed: false leaves healthStatus out. Returns [attrs: Map, reasons: Map by attribute].
+@CompileStatic
+Map airStatus(boolean enabled, BigDecimal co2, BigDecimal rh, List<Map> st, boolean windowActive, boolean rhActive,
+              boolean managed) {
+    Map<String, Object> a = [:]
+    a.switch = enabled ? 'on' : 'off'
+    a.ventilationStage = stageLevel(st)
+    a.windowAdvisory = windowActive ? 'active' : 'inactive'
+    a.lowHumidityAdvisory = rhActive ? 'active' : 'inactive'
+    Map<String, Object> reasons = [:]
+    if (managed) {
+        a.healthStatus = co2 == null ? 'offline' : 'online'
+        if (co2 == null) reasons.healthStatus = 'no CO2 reading in the last 2 hours'
+    }
+    if (co2 != null) a.carbonDioxide = co2.setScale(0, BigDecimal.ROUND_HALF_UP)
+    if (rh != null) a.humidity = rh
+    return [attrs: a, reasons: reasons]
 }
 
 @CompileStatic
