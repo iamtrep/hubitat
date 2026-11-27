@@ -46,7 +46,7 @@ Also computes and logs standard deviation across included sensors.
 | Acceleration Sensor | `acceleration` | inactive / active | Virtual Acceleration Sensor |
 | Contact Sensor | `contact` | closed / open | Virtual Contact Sensor |
 | Motion Sensor | `motion` | inactive / active | Virtual Motion Sensor |
-| Presence Sensor | `presence` | not present / present | Virtual Presence Sensor |
+| Presence Sensor | `presence` | not present / present | Virtual Presence |
 | Shock Sensor | `shock` | clear / detected | Virtual Shock Sensor |
 | Water Sensor | `water` | dry / wet | Virtual Moisture Sensor |
 

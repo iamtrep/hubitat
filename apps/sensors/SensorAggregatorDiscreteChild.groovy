@@ -38,7 +38,7 @@ import com.hubitat.hub.domain.Event
     "capability.accelerationSensor"  : [ attribute: "acceleration", values: ["inactive", "active"], driver: "Virtual Acceleration Sensor" ],
     "capability.contactSensor"       : [ attribute: "contact", values: ["closed", "open"], driver: "Virtual Contact Sensor" ],
     "capability.motionSensor"        : [ attribute: "motion", values: ["inactive","active"], driver: "Virtual Motion Sensor" ],
-    "capability.presenceSensor"      : [ attribute: "presence", values: ["not present","present"], driver: "Virtual Presence Sensor" ],
+    "capability.presenceSensor"      : [ attribute: "presence", values: ["not present","present"], driver: "Virtual Presence" ],
     "capability.shockSensor"         : [ attribute: "shock", values: ["clear", "detected"], driver: "Virtual Shock Sensor" ],
     "capability.waterSensor"         : [ attribute: "water", values: ["dry", "wet"], driver: "Virtual Moisture Sensor" ]
 ]
