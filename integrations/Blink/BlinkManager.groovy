@@ -42,7 +42,7 @@ definition(
 
 // --- Constants ---
 
-@Field static final String CODE_VERSION = "1.1.12"
+@Field static final String CODE_VERSION = "1.1.13"
 
 @Field static final String OAUTH_BASE_URL = "https://api.oauth.blink.com"
 // The REST API host of a region ("tier"); {tier} is replaced. One constant, so a test build can point it elsewhere.
@@ -194,7 +194,7 @@ Map diagnosticsPage() {
             String at = hasToken("accessToken") ? "set (encrypted)" : "<i>null</i>"
             String rt = hasToken("refreshToken") ? "set (encrypted)" : "<i>null</i>"
             String exp = state.tokenExpiry ? new Date((long) state.tokenExpiry).format('HH:mm:ss', location.timeZone) : "<i>null</i>"
-            paragraph """
+            paragraph rawHtml: true, """
                 <b>isAuthenticated:</b> ${isAuthenticated()}<br>
                 <b>accessToken:</b> ${at}<br>
                 <b>refreshToken:</b> ${rt}<br>
