@@ -54,7 +54,7 @@ import groovy.transform.CompileStatic
 import groovy.transform.Field
 
 @Field static final String APP_NAME = "Switch Monitor"
-@Field static final String CODE_VERSION = "3.0.7"
+@Field static final String CODE_VERSION = "3.0.8"
 
 @Field static final Integer DEFAULT_GRACE_MINUTES = 5
 @Field static final Integer DEFAULT_GRACE_SECONDS = 0
@@ -85,25 +85,13 @@ preferences {
     page(name: "mainPage")
     page(name: "groupPage")
     page(name: "removeGroupPage")
+    page(name: "groupDeletedPage")
     page(name: "checkNowPage")
 }
 
 // ── Pages ────────────────────────────────────────────────────────────────────
 
 Map mainPage() {
-    // Process pending group deletion
-    if (state.removeSettingsForGroupNumber) {
-        Integer groupNum = state.removeSettingsForGroupNumber as Integer
-        state.remove("removeSettingsForGroupNumber")
-        removeSettingsForGroup(groupNum)
-        List<Integer> groups = (List<Integer>)(state.groups ?: [])
-        groups.removeAll { it == groupNum }   // remove(Integer) would remove by index
-        state.groups = groups
-        Map allGroupState = (Map)(state.groupState ?: [:])
-        allGroupState.remove(groupNum.toString())
-        state.groupState = allGroupState
-    }
-
     dynamicPage(name: "mainPage", title: "", install: true, uninstall: true) {
         section("Current Status") {
             paragraph getStatusText()
@@ -249,8 +237,31 @@ Map removeGroupPage(params) {
     dynamicPage(name: "removeGroupPage", title: "Delete ${groupLabel}?", nextPage: "mainPage") {
         section {
             paragraph "Are you sure you want to delete <b>${groupLabel}</b> and all its settings?"
-            input "btnConfirmDelete_${groupNum}", "button", title: "Yes, delete this group"
+            href "groupDeletedPage", title: "Yes, delete this group", params: [groupNum: groupNum]
             href "groupPage", title: "Cancel — go back", params: [groupNum: groupNum]
+        }
+    }
+}
+
+// The group is named by number, so a re-render of this page finds nothing left to delete.
+Map groupDeletedPage(params) {
+    Integer groupNum = params?.groupNum != null ? params.groupNum as Integer : null
+    List<Integer> groups = (List<Integer>)(state.groups ?: [])
+    String label = null
+    if (groupNum != null && groups.contains(groupNum)) {
+        label = getGroupLabel(groupNum)
+        removeSettingsForGroup(groupNum)
+        groups.removeAll { it == groupNum }   // remove(Integer) would remove by index
+        state.groups = groups
+        Map allGroupState = (Map)(state.groupState ?: [:])
+        allGroupState.remove(groupNum.toString())
+        state.groupState = allGroupState
+    }
+    state.remove("currGroupNum")
+
+    dynamicPage(name: "groupDeletedPage", title: "Group Deleted", install: false, uninstall: false, nextPage: "mainPage") {
+        section {
+            paragraph label ? "<b>${label}</b> has been deleted." : "This group was already deleted."
         }
     }
 }
@@ -262,9 +273,6 @@ void appButtonHandler(String btn) {
         Integer newNum = groups ? (groups.max() + 1) : 1
         groups << newNum
         state.groups = groups
-    } else if (btn.startsWith("btnConfirmDelete_")) {
-        int groupNum = (btn - "btnConfirmDelete_") as int
-        state.removeSettingsForGroupNumber = groupNum
     } else if (btn.startsWith("btnFix_")) {
         List parts = (btn - "btnFix_").split("_") as List
         String deviceId = parts[0]
