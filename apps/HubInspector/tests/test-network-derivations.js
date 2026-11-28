@@ -30,9 +30,9 @@ function extractFn(name) {
 const consts = (src.match(/const ZWAVE_PER_CRIT=[^;]+;/) || [])[0];
 assert(consts, 'threshold consts not found in HTML');
 const harness = consts + '\n' +
-  ['zwProblemNodes', 'zbWeakNeighbors', 'zbStaleNeighbors', 'lqiBandColor', 'zwMeshStats', 'zbMeshDetails',
+  ['zwPerRate', 'zwPerTxt', 'zwProblemNodes', 'zbWeakNeighbors', 'zbStaleNeighbors', 'lqiBandColor', 'zwMeshStats', 'zbMeshDetails',
    'hexBytesReversed', 'isOwnPan', 'neighborPans', 'neighborPanCount', 'chRanges'].map(extractFn).join('\n') +
-  '\nmodule.exports = { zwProblemNodes, zbWeakNeighbors, zbStaleNeighbors, lqiBandColor, zwMeshStats, zbMeshDetails, isOwnPan, neighborPans, neighborPanCount, chRanges };';
+  '\nmodule.exports = { zwPerRate, zwPerTxt, zwProblemNodes, zbWeakNeighbors, zbStaleNeighbors, lqiBandColor, zwMeshStats, zbMeshDetails, isOwnPan, neighborPans, neighborPanCount, chRanges };';
 const tmp = path.join(os.tmpdir(), 'hd_net_' + process.pid + '.js');
 fs.writeFileSync(tmp, harness);
 const N = require(tmp);
@@ -45,22 +45,31 @@ function t(n, fn) { try { fn(); pass++; console.log('  ok   ' + n); }
 console.log('network-mesh derivations');
 
 // ---- zwProblemNodes (Z-Wave) ----
+// per counts undelivered messages, msgCount delivered ones: the rate is per / (msgCount + per).
 const nodes = [
-  { name: 'OK Node',   deviceId: 1, nodeId: 2, state: 'OK',      per: 0 },
-  { name: 'Bad State', deviceId: 3, nodeId: 4, state: 'FAILED',  per: 0 },
-  { name: 'High PER',  deviceId: 5, nodeId: 6, state: 'OK',      per: 5 },
-  { name: 'Both',      deviceId: 7, nodeId: 8, state: 'PENDING', per: 3 }
+  { name: 'OK Node',   deviceId: 1, nodeId: 2, state: 'OK',      per: 2,  msgCount: 10000 },  // 0.02%
+  { name: 'Bad State', deviceId: 3, nodeId: 4, state: 'FAILED',  per: 0,  msgCount: 0 },
+  { name: 'High PER',  deviceId: 5, nodeId: 6, state: 'OK',      per: 10, msgCount: 122 },    // 7.6%
+  { name: 'Both',      deviceId: 7, nodeId: 8, state: 'PENDING', per: 3,  msgCount: 97 },     // 3.0%
+  { name: 'JS node',   deviceId: 9, nodeId: 10, state: 'OK',     per: 50, msgCount: 10, perRate: null }
 ];
-t('flags non-OK state and PER>crit; healthy node excluded', () => {
+t('flags non-OK state and failure rate>crit; low rate and Z-Wave JS count excluded', () => {
   const p = N.zwProblemNodes(nodes);
   assert.deepStrictEqual(p.map(x => x.name).sort(), ['Bad State', 'Both', 'High PER']);
-  assert(!p.some(x => x.name === 'OK Node'), 'healthy node should be excluded');
 });
-t('assembles issue strings (State / PER, both)', () => {
+t('assembles issue strings (State / failed messages with rate, both)', () => {
   const by = Object.fromEntries(N.zwProblemNodes(nodes).map(x => [x.name, x.issues]));
   assert.strictEqual(by['Bad State'], 'State: FAILED');
-  assert.strictEqual(by['High PER'], 'PER: 5%');
-  assert.strictEqual(by['Both'], 'State: PENDING, PER: 3%');
+  assert.strictEqual(by['High PER'], 'Failed 10 of 132 (7.6%)');
+  assert.strictEqual(by['Both'], 'State: PENDING, Failed 3 of 100 (3.0%)');
+});
+t('zwPerRate / zwPerTxt: rate from counts, hub value wins, null on Z-Wave JS', () => {
+  assert.strictEqual(N.zwPerRate({ per: 0, msgCount: 0 }), 0);
+  assert.strictEqual(N.zwPerRate({ per: 2, msgCount: 10000 }), 0);
+  assert.strictEqual(N.zwPerRate({ per: 10, msgCount: 122 }), 7.6);
+  assert.strictEqual(N.zwPerRate({ per: 10, msgCount: 122, perRate: 7.6 }), 7.6);
+  assert.strictEqual(N.zwPerTxt({ per: 50, perRate: null }), '50');
+  assert.strictEqual(N.zwPerTxt({ per: 10, msgCount: 122 }), '10 of 132 (7.6%)');
 });
 t('carries deviceId/nodeId; null/empty -> []', () => {
   assert.strictEqual(N.zwProblemNodes(nodes).find(x => x.name === 'Both').nodeId, 8);
@@ -104,23 +113,33 @@ t('lqiBandColor: band boundaries (strict <)', () => {
 // ---- zwMeshStats (Z-Wave rollups + S0 flag from the raw node list) ----
 t('zwMeshStats: rollups; null routeChanges/rssi excluded; S0 flag skips locks', () => {
   const zw = { mesh: { nodes: [
-    { per: 0, routeChanges: 3,    rssi: -60, security: 'S0',   zwaveType: 'BINARY_SWITCH' },
-    { per: 2, routeChanges: null, rssi: -71, security: 'S0',   zwaveType: 'DOOR_LOCK' },
-    { per: 0, routeChanges: 0,    rssi: null, security: 'None', zwaveType: '' }
+    { per: 0, msgCount: 100, routeChanges: 3,    rssi: -60, security: 'S0',   zwaveType: 'BINARY_SWITCH' },
+    { per: 2, msgCount: 48,  routeChanges: null, rssi: -71, security: 'S0',   zwaveType: 'DOOR_LOCK' },
+    { per: 0, msgCount: 50,  routeChanges: 0,    rssi: null, security: 'None', zwaveType: '' }
   ] } };
   N.zwMeshStats(zw);
   const m = zw.mesh;
   assert.strictEqual(m.nodeCount, 3);
   assert.strictEqual(m.totalRouteChanges, 3);
   assert.strictEqual(m.nodesWithErrors, 1);
-  assert.ok(Math.abs(m.avgPer - 2 / 3) < 1e-9);
+  assert.ok(Math.abs(m.failRate - 1) < 1e-9, 'failRate = all PER / all messages = 2 / 200');
+  assert.strictEqual(m.totalPer, 2);
+  assert.deepStrictEqual(m.nodes.map(n => n.perRate), [0, 4, 0]);
   assert.strictEqual(m.avgRssi, -65);
   assert.deepStrictEqual(m.nodes.map(n => n.s0Flag), [true, false, false]);
 });
-t('zwMeshStats: payload that already carries rollups is left as is', () => {
-  const zw = { mesh: { avgPer: 0.5, totalRouteChanges: 9, nodes: [{ per: 0, s0Flag: true }] } };
+t('zwMeshStats: Z-Wave JS has no rate, only the total count', () => {
+  const zw = { zwaveJS: true, mesh: { nodes: [{ state: 'OK', per: 50, msgCount: 10 }, { state: 'OK', per: 1, msgCount: 0 }] } };
   N.zwMeshStats(zw);
-  assert.strictEqual(zw.mesh.avgPer, 0.5);
+  assert.strictEqual(zw.mesh.failRate, null);
+  assert.strictEqual(zw.mesh.totalPer, 51);
+  assert.deepStrictEqual(zw.mesh.nodes.map(n => n.perRate), [null, null]);
+  assert.deepStrictEqual(N.zwProblemNodes(zw.mesh.nodes), []);
+});
+t('zwMeshStats: payload that already carries rollups is left as is', () => {
+  const zw = { mesh: { failRate: 0.5, totalRouteChanges: 9, nodes: [{ per: 0, s0Flag: true }] } };
+  N.zwMeshStats(zw);
+  assert.strictEqual(zw.mesh.failRate, 0.5);
   assert.strictEqual(zw.mesh.totalRouteChanges, 9);
   assert.strictEqual(zw.mesh.nodes[0].s0Flag, true);
   N.zwMeshStats(null); N.zwMeshStats({ mesh: {} });

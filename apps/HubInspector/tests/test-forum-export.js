@@ -29,7 +29,7 @@ function extractFn(name) {
   return src.slice(start, i);
 }
 const tmp = path.join(os.tmpdir(), 'hd_forum_' + process.pid + '.js');
-fs.writeFileSync(tmp, ['zbMeshDetails', 'zwMeshStats', 'assembleForumData'].map(extractFn).join('\n') + '\nmodule.exports = { assembleForumData };');
+fs.writeFileSync(tmp, ['zbMeshDetails', 'zwPerRate', 'zwMeshStats', 'assembleForumData'].map(extractFn).join('\n') + '\nmodule.exports = { assembleForumData };');
 const { assembleForumData } = require(tmp);
 process.on('exit', () => { try { fs.unlinkSync(tmp); } catch (e) {} });
 
@@ -63,7 +63,7 @@ const r = {
     uptimeSeconds: 90000,
     network: { hasEthernet: true, hasWiFi: false, lanAddr: '192.0.2.5' },
     zwave: { enabled: true, healthy: true, region: 'US', zwaveJS: false, nodeCount: 20, version: '7.18',
-             mesh: { avgPer: 0.5, totalRouteChanges: 4, nodes: [{ nodeId: 2, name: 'N2', state: 'OK', per: 0 }] },
+             mesh: { failRate: 0.5, totalRouteChanges: 4, nodes: [{ nodeId: 2, name: 'N2', state: 'OK', per: 0 }] },
              ghostNodes: [{ id: 9, name: 'Ghost', kind: 'ghost' }] },
     zigbee: { enabled: true, healthy: true, networkState: 'ONLINE', channel: 20, powerLevel: 8, deviceCount: 25,
               mesh: { neighbors: 10, avgLqi: 200, minLqi: 150, maxLqi: 255,
@@ -118,7 +118,7 @@ t('networkData carries raw config + zwave/zigbee with counts for the builder twe
   assert.strictEqual(d.networkData.zwave.region, 'US');
 });
 t('zwaveMesh / ghostNodes / zwaveVersion lifted from network.zwave', () => {
-  assert.strictEqual(d.zwaveMesh.avgPer, 0.5);
+  assert.strictEqual(d.zwaveMesh.failRate, 0.5);
   assert.strictEqual(d.zwaveMesh.nodes[0].nodeId, 2);
   assert.strictEqual(d.ghostNodes[0].kind, 'ghost');
   assert.strictEqual(d.zwaveVersion, '7.18');

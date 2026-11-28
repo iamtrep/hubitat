@@ -121,7 +121,7 @@ function t(n, fn) { queue.push([n, fn]); }
 // ---- B1-6 forum export table
 {
   const HELPERS = ['makeObf', 'assembleForumData', 'buildForumMarkdown', 'forumMarkdownBody', 'composeAlerts', 'flattenRadioDevices',
-    'fmem', 'ftemp', 'tScale', 'tSym', 'c2u', 'splitGhostNodes', 'zbWeakNeighbors', 'zbStaleNeighbors', 'zbMeshDetails', 'zwMeshStats', 'noTags', 'isNewer', 'relSummary', 'relLabel', 'radioStates', 'isPrivateIpv4'];
+    'fmem', 'ftemp', 'tScale', 'tSym', 'c2u', 'splitGhostNodes', 'zbWeakNeighbors', 'zbStaleNeighbors', 'zbMeshDetails', 'zwPerRate', 'zwPerTxt', 'zwProblemNodes', 'zwMeshStats', 'noTags', 'isNewer', 'relSummary', 'relLabel', 'radioStates', 'isPrivateIpv4'];
   const CD = (src.match(/const CD=\{[^;]*\};/) || [])[0];
   const THRESHOLDS = (src.match(/const ZWAVE_PER_CRIT=[^;]+;/) || [])[0];
   const REL_T = (src.match(/const REL_T=\{[^;]*\};/) || [])[0];

@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
 <!-- AUTO:hubinspector-version -->
-**Current version:** 6.4.1
+**Current version:** 6.4.2
 <!-- /AUTO -->
 
 ---
@@ -120,7 +120,7 @@ Hub Inspector has run on a handful of hubs, so many setups have never been teste
 
 * **Z-Wave Long Range.** No test hub has LR devices. Version 6.1.1 fixes LR devices being listed as ghost nodes, reported by a user.
 * **Z-Wave JS.** The Z-Wave JS cards on the Network tab and the Z-Wave JS section of the device audit have only run on a hub with no Z-Wave devices. On the Radio Capture tab, Z-Wave JS capture has only seen a mesh with no devices. It shows each message's direction and type, and the message text as-is.
-* **Larger Z-Wave meshes.** Ghost-node detection and the problem-node list (failed nodes, and nodes with a packet error rate above 1%) have only run on small meshes. The 1% threshold has not been compared against real meshes.
+* **Larger Z-Wave meshes.** Ghost-node detection and the problem-node list (failed nodes, and nodes with a failure rate above 1%) have only run on small meshes. The 1% threshold has not been compared against real meshes.
 * **Hub Mesh** with more than two hubs.
 * **C-5 and C-8 hubs**, older firmware, and hubs set to °F.
 
@@ -380,9 +380,9 @@ Only networks on the hub's own channel share its airtime, so only those bars are
 
 **Ghost Nodes** — Z-Wave radio nodes with no associated Hubitat device ID (the device was deleted without Z-Wave exclusion). These are safe to force-remove from the radio. **Failed Nodes** — nodes that have a Hubitat device but are in FAILED state, or have no route and an unknown name. Try a battery swap or moving the device closer to the hub before excluding. Each node shows the signals that flagged it: `no device`, `FAILED`, `no route`, `unknown name`.
 
-**Problem Nodes** — Nodes with state ≠ OK or packet error rate > 1%.
+**Problem Nodes** — Nodes with state ≠ OK, or, on Z/IP, a failure rate above 1%. **Failed messages** is the number in the PER column of Settings → Z-Wave Details: messages to the node that were never delivered. Msgs counts delivered ones, so the failure rate is failed ÷ (Msgs + failed), shown as e.g. "Failed 10 of 132 (7.6%)". The hub updates the count only when **Refresh Z-Wave statistics** is pressed on that page, and resets it at every reboot. On Z-Wave JS what the count means is unverified, so only the state counts there.
 
-**Mesh Quality table** columns: Device, Node, Security (S0/S2/None — S0 on non-lock devices is flagged), RTT (ms), RSSI (dBm), PER %, Neighbors, Route, Route Changes, Msgs, Msgs/Min, Driver (Built-in/User), State. Route Changes shows `—` when the hub reports no route-change count — expected for Z-Wave Long Range nodes (star topology, no mesh routing) and for nodes with no accumulated traffic yet; such nodes are excluded from the mesh-wide route-change total rather than counted as zero.
+**Mesh Quality table** columns: Device, Node, Security (S0/S2/None — S0 on non-lock devices is flagged), RTT (ms), RSSI (dBm), Failed messages (count, with the failure rate on Z/IP), Neighbors, Route, Route Changes, Msgs, Msgs/Min, Driver (Built-in/User), State. Route Changes shows `—` when the hub reports no route-change count — expected for Z-Wave Long Range nodes (star topology, no mesh routing) and for nodes with no accumulated traffic yet; such nodes are excluded from the mesh-wide route-change total rather than counted as zero.
 
 **Message Counts table** — Devices ranked by message volume, with messages/minute color-coded against the chatty device threshold.
 
@@ -401,7 +401,7 @@ After a switch from legacy Z-Wave, a hub can return no controller state (the end
 
 #### Z-Wave Topology
 
-Which nodes hear each other directly, from the Z-Wave controller's neighbour tables (`/hub/zwaveTopology`). Each row is that node's own neighbour list. A square is solid when both nodes list each other, outlined when only one does, and grey when neither does. A dot marks a relay link: a link of a current route that goes through at least one repeater. A direct route's link gets no dot. A route's link can join two nodes that neither neighbour list names, since the hub reports routes and neighbour lists separately; the hover card says so when it happens. Hover or tap a square for the pair and the row node's route to the hub: each hop, the route's speed, LWR RSSI (dB on the legacy stack, dBm on Z-Wave JS), PER, RTT, neighbour count, how many nodes repeat through it, and warnings (2+ repeaters, the 9.6 kbps fallback rate, packet errors, few neighbours). The route's squares are outlined on the matrix while the card is open.
+Which nodes hear each other directly, from the Z-Wave controller's neighbour tables (`/hub/zwaveTopology`). Each row is that node's own neighbour list. A square is solid when both nodes list each other, outlined when only one does, and grey when neither does. A dot marks a relay link: a link of a current route that goes through at least one repeater. A direct route's link gets no dot. A route's link can join two nodes that neither neighbour list names, since the hub reports routes and neighbour lists separately; the hover card says so when it happens. Hover or tap a square for the pair and the row node's route to the hub: each hop, the route's speed, LWR RSSI (dB on the legacy stack, dBm on Z-Wave JS), failed messages, RTT, neighbour count, how many nodes repeat through it, and warnings (2+ repeaters, the 9.6 kbps fallback rate, failed messages, few neighbours). The route's squares are outlined on the matrix while the card is open.
 
 Tiles above the matrix count the nodes that reach the hub directly, the longest route, the nodes at 9.6 kbps and the busiest repeater. **Routes**, collapsed under the matrix, lists every node's route, worst first. Large meshes get smaller squares and scroll, with names pinned. The card is hidden when no Z-Wave nodes are paired.
 
@@ -542,7 +542,7 @@ Generates a one-time, per-device cross-reference report covering:
 - **Manually-tuned devices** — devices with non-default `spammyThreshold`, `maxStates`, or `maxEvents` values. The audit detects the fleet's mode value for each setting and highlights divergent devices in bold.
 - **Critical devices** — top 20 by combined apps + dashboards reference count.
 - **Devices by Room** — devices grouped by their assigned room, child devices included. Surfaces empty rooms (cleanup targets) and high-density rooms (split candidates). Devices not assigned anywhere are listed under "Unassigned".
-- **Z-Wave JS Mesh Health** (Z-Wave JS hubs only) — per-Z-Wave-device row from `/hub/zwave2/getNodeState?node=N`: state, status, interview stage, RTT, RSSI, PER %, TX/RX command counts, last-seen timestamp.
+- **Z-Wave JS Mesh Health** (Z-Wave JS hubs only) — per-Z-Wave-device row from `/hub/zwave2/getNodeState?node=N`: state, status, interview stage, RTT, RSSI, failed messages, TX/RX command counts, last-seen timestamp.
 - **Hub Mesh Linked Devices** — for each device this hub consumes from another hub via Hub Mesh, source hub + source device ID + status from `/hubMesh/localLinkedDevice/<id>`.
 - **Apps → devices** and **Dashboards → devices reverse indices** — disabled app subscribers are rendered with strikethrough so "ghost references" stand out.
 - **Device hardware and firmware** — every device's hardware identity: protocol, manufacturer, model, and firmware revision, parsed from each device's pairing-time data values (no extra hub calls — it rides on the scan the audit already runs). Sortable and filterable, with **Download CSV** / **Copy CSV** export for documentation or firmware tracking. Z-Wave manufacturer/model appear as hex IDs (shown verbatim); virtual and cloud devices have blank cells.
@@ -631,7 +631,7 @@ The export generates a concise Markdown summary of the hub to paste into a commu
 - Active alerts (all severities)
 - Device inventory: counts by status, connection type, and integration; low battery and inactive devices
 - App inventory: counts by source; installed user app types; built-in apps as one count; user code (app types, drivers, bundles, libraries, hub variables)
-- Z-Wave: health, ghost nodes, problem nodes, S0 flag, mesh quality stats, and a node table (on a mesh of more than 10 nodes, the 10 with the highest PER). Node lists stop at 15 entries.
+- Z-Wave: health, ghost nodes, problem nodes, S0 flag, mesh quality stats, and a node table (on a mesh of more than 10 nodes, the 10 with the highest failure rate, or the most failed messages on Z-Wave JS). Node lists stop at 15 entries.
 - Zigbee: health, channel, LQI stats, weak/stale neighbors
 - Hub Mesh and Matter status
 - Performance: device and app runtime, top devices and apps by CPU, top talkers. The device tables give each device's driver next to its name
@@ -646,7 +646,7 @@ The export generates a concise Markdown summary of the hub to paste into a commu
 
 Severity levels: **Critical** (red), **Warning** (orange), **Info** (blue), **OK** (green).
 
-The Dashboard *Platform Alerts* and Health *Alerts* lists share one roll-up: System Resource Alerts, Platform Alerts, Hub Messages, Ethernet + WiFi, mDNS/Bonjour periodic restart, cloud calls to a deleted app, the Z-Wave ghost / failed / problem-node counts, Z-Wave radio-firmware-update, hub-firmware-update, and app-update status. The remaining entries below — Matter reboot, the per-mesh quality metrics (Avg PER / RSSI, S0 overhead, Zigbee LQI), and the device-inventory alerts (low battery, stale devices, chatty devices) — are surfaced on their own tabs and do **not** affect the *Alerts* count. The Performance tab's chatty-device banner is a separate, browser-computed metric (per-device messages/min vs the chatty-device threshold) and is distinct from the hub's *Spammy Devices Detected* flag; only the hub flag feeds the roll-up.
+The Dashboard *Platform Alerts* and Health *Alerts* lists share one roll-up: System Resource Alerts, Platform Alerts, Hub Messages, Ethernet + WiFi, mDNS/Bonjour periodic restart, cloud calls to a deleted app, the Z-Wave ghost / failed / problem-node counts, Z-Wave radio-firmware-update, hub-firmware-update, and app-update status. The remaining entries below — Matter reboot, the per-mesh quality metrics (mesh failure rate, Avg RSSI, S0 overhead, Zigbee LQI), and the device-inventory alerts (low battery, stale devices, chatty devices) — are surfaced on their own tabs and do **not** affect the *Alerts* count. The Performance tab's chatty-device banner is a separate, browser-computed metric (per-device messages/min vs the chatty-device threshold) and is distinct from the hub's *Spammy Devices Detected* flag; only the hub flag feeds the roll-up.
 
 ### Hub Messages
 | Alert | Source | Severity |
@@ -703,9 +703,9 @@ The Dashboard *Platform Alerts* and Health *Alerts* lists share one roll-up: Sys
 |---|---|---|---|
 | Ghost Nodes | No associated Hubitat device ID (orphaned in the radio) | — | Critical |
 | Failed Nodes | Has a Hubitat device but the radio reports it FAILED, or it has no route and an unknown name | — | Warning |
-| Problem Nodes | State ≠ OK, or PER > 1% | 1% PER | Warning |
-| Avg PER Critical | Mesh average PER > 1% | 1% | Critical |
-| Avg PER Warning | Mesh average PER > 0% | 0% | Warning |
+| Problem Nodes | State ≠ OK, or (Z/IP) failure rate = failed ÷ (Msgs + failed) > 1% | 1% of messages | Warning |
+| Mesh failure rate Critical | (Z/IP) total failed ÷ (total Msgs + total failed) > 1% | 1% | Critical |
+| Mesh failure rate Warning | (Z/IP) total failed ÷ (total Msgs + total failed) > 0% | 0% | Warning |
 | Avg RSSI Critical | Mesh average RSSI < −80 dBm | −80 dBm | Critical |
 | Avg RSSI Warning | Mesh average RSSI < −60 dBm | −60 dBm | Warning |
 | S0 Security Overhead | S0 on non-lock/non-garage device | device type | Warning |

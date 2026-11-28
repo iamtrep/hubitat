@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 
-@Field static final String CODE_VERSION = "6.4.1"
+@Field static final String CODE_VERSION = "6.4.2"
 
 // API endpoint paths (all relative to HUB_BASE)
 @Field static final String HUB_BASE = "http://127.0.0.1:8080"
@@ -161,6 +161,9 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final double DEFAULT_CRIT_CPU_LOAD = 8.0
 @Field static final int    DEFAULT_WARN_TEMP_C   = 65
 @Field static final int    DEFAULT_CRIT_TEMP_C   = 80
+// Z/IP node failure rate (percent of messages never delivered) above which it is a problem node.
+// Same value as ZWAVE_PER_CRIT in hub_inspector_ui.html.
+@Field static final BigDecimal ZWAVE_PER_RATE_CRIT = 1.0G
 
 // In-memory API response time tracking (reset on hub reboot). Concurrent endpoints read and
 // write it, so the reference is final and every access, including the clear in updated(), holds
@@ -1659,7 +1662,7 @@ Map getAlertSignals(Map shared = [:]) {
 // payload — the same fetch getAlertSignals already makes for ghost-node counting:
 //   ghostCount   — orphaned nodes (no Hubitat device), safe to force-remove from radio
 //   failedCount  — nodes with a Hubitat device that the radio reports down
-//   problemCount — mesh nodes not in "OK" state or with packet-error-rate > 1%
+//   problemCount — mesh nodes not in "OK" state, or (Z/IP only) with perRate above ZWAVE_PER_RATE_CRIT
 //   radioUpdate  — Z-Wave radio firmware update available
 Map computeZwaveSignals(Map zwRaw) {
     if (!zwRaw) return [ghostCount: 0, failedCount: 0, problemCount: 0, radioUpdate: false]
@@ -1667,7 +1670,7 @@ Map computeZwaveSignals(Map zwRaw) {
     int ghostCount   = ghostNodes.count { it.kind == "ghost" } as int
     int failedCount  = ghostNodes.count { it.kind == "failed" } as int
     List meshNodes   = (extractZwaveMeshQuality(zwRaw).nodes ?: []) as List
-    int problemCount = meshNodes.count { Map n -> n.state != "OK" || ((n.per ?: 0) as int) > 1 } as int
+    int problemCount = meshNodes.count { Map n -> n.state != "OK" || (n.perRate != null && (n.perRate as BigDecimal) > ZWAVE_PER_RATE_CRIT) } as int
     return [
         ghostCount:   ghostCount,
         failedCount:  failedCount,
@@ -2759,12 +2762,22 @@ String parseZWaveVersion(String raw) {
     return raw
 }
 
+// Z/IP failure rate in percent, one decimal. `per` counts messages to the node never delivered
+// and `msgCount` delivered ones, so the share that failed is per / (msgCount + per).
+BigDecimal zwavePerRate(int per, int msgCount) {
+    int total = per + msgCount
+    return total > 0 ? (per * 100.0G / total).setScale(1, BigDecimal.ROUND_HALF_UP) : 0.0G
+}
+
 Map extractZwaveMeshQuality(Map zwaveData) {
     if (!zwaveData || !zwaveData.nodes) return [:]
 
+    // On Z-Wave JS the hub derives `per` itself and msgCount is not radio traffic, so no rate.
+    boolean js = zwaveData.zwaveJS == true
     List nodes = []
     zwaveData.nodes.each { Map node ->
         int per = (node.per ?: 0) as int
+        int msgCount = (node.msgCount ?: 0) as int
         int neighborCount = (node.neighbors ?: 0) as int
         // null (not a sentinel int) when the hub reports no route-change count:
         // Z-Wave Long Range nodes (star topology, no mesh routing) and nodes with
@@ -2792,11 +2805,12 @@ Map extractZwaveMeshQuality(Map zwaveData) {
             nodeId: node.nodeId,
             deviceId: node.deviceId,
             name: node.deviceName ?: "Node ${node.nodeId}",
-            msgCount: (node.msgCount ?: 0) as int,
+            msgCount: msgCount,
             rssi: rssiVal,
             rssiStr: rssiStr,
             rtt: rtt,
             per: per,
+            perRate: js ? null : zwavePerRate(per, msgCount),
             neighbors: neighborCount,
             route: node.route ?: "",
             routeChanges: routeChanges,

@@ -39,7 +39,7 @@ The phase descriptions below were written on 2026-05-08 and are kept as written,
    - `t_stuck`: Device, Handler, Overdue, **Last run** (`prevRunTime` — added in v5.8.10), Status
    - `t_tuned`: Device, Spammy Threshold, Max States, Max Events
    - `t_rooms` (v5.11.0): Room, Devices, Members
-   - `t_zwjs` (v5.11.0, JS hubs only): Device, Node, State, Status, Interview, RTT, RSSI, PER %, TX, RX, Last Seen
+   - `t_zwjs` (v5.11.0, JS hubs only): Device, Node, State, Status, Interview, RTT, RSSI, Failed messages, TX, RX, Last Seen
    - `t_hubmesh` (v5.11.0, populated only on consumer hubs): Device, Source Hub, Source Device ID, Status, Raw
 
 3. **Driver-edit links** — assert that Type cells in the per-device table contain `/driver/editor/<id>` links for at least every device whose driver namespace ≠ `hubitat` (community drivers). Count should match the `userType=true` device count from `/api/devices`.

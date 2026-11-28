@@ -22,7 +22,7 @@ function extractFn(name) {
   return src.slice(s, i);
 }
 const HELPERS = ['makeObf', 'assembleForumData', 'buildForumMarkdown', 'forumMarkdownBody', 'composeAlerts', 'flattenRadioDevices',
-  'fmem', 'ftemp', 'tScale', 'tSym', 'c2u', 'splitGhostNodes', 'zbWeakNeighbors', 'zbStaleNeighbors', 'zbMeshDetails', 'zwMeshStats', 'noTags', 'isNewer', 'relSummary', 'relLabel', 'radioStates', 'isPrivateIpv4'];
+  'fmem', 'ftemp', 'tScale', 'tSym', 'c2u', 'splitGhostNodes', 'zbWeakNeighbors', 'zbStaleNeighbors', 'zbMeshDetails', 'zwPerRate', 'zwPerTxt', 'zwProblemNodes', 'zwMeshStats', 'noTags', 'isNewer', 'relSummary', 'relLabel', 'radioStates', 'isPrivateIpv4'];
 const CD = (src.match(/const CD=\{[^;]*\};/) || [])[0];
 assert(CD, 'CD const not found');
 const THRESHOLDS = (src.match(/const ZWAVE_PER_CRIT=[^;]+;/) || [])[0];
@@ -64,7 +64,7 @@ const r = {
     zwave: {
       enabled: true, healthy: true, region: 'US', zwaveJS: false, nodeCount: 5, version: '7.15 (Protocol 7.18)',
       mesh: {
-        avgPer: 0.0, avgRssi: 12, totalRouteChanges: 0,
+        failRate: 0.0, avgRssi: 12, totalRouteChanges: 0,
         nodes: [
           { nodeId: 17, name: 'Serrure Avant', security: 'S2 Access Control', rtt: null, per: 0, rssiStr: '12dB', route: '01 -> 11 40kbps', msgCount: 0, driverType: 'sys', state: 'OK', neighbors: 3 },
           { nodeId: 19, name: 'Switch Ventilateur Elliot', security: 'None', per: 0, rssiStr: '15dB', route: '01 -> 13 100kbps', msgCount: 0, driverType: 'usr', state: 'OK', neighbors: 2 },
@@ -137,7 +137,7 @@ has('| 17 | Serrure Avant | S2 Access Control |', 'z-wave node row');
 has('01 -> 11 40kbps', 'node route');
 has('| Built-in |', 'driverType sys -> Built-in');
 has('| User |', 'driverType usr -> User');
-has('| 1ms | 0% | — |', 'node RTT present (1ms) + null RSSI fallback (—)');
+has('| 1ms | 0 of 0 (0.0%) | — |', 'node RTT present (1ms) + null RSSI fallback (—)');
 has('01 -> 10 -> 0F 40kbps', 'multi-hop route');
 // Zigbee
 has('### Zigbee');
@@ -175,7 +175,7 @@ const r2 = {
     uptimeSeconds: 1238828,
     network: { hasEthernet: true, hasWiFi: false, lanAddr: '198.51.100.12' },
     zwave: { enabled: true, healthy: true, region: 'US', nodeCount: 3, version: '7.18 (Protocol 7.18)',
-             mesh: { avgPer: 0, avgRssi: 28, nodes: [] }, ghostNodes: [] },
+             mesh: { failRate: 0, avgRssi: 28, nodes: [] }, ghostNodes: [] },
     zigbee: { enabled: true, healthy: true, networkState: 'ONLINE', channel: 15, powerLevel: 8, deviceCount: 22,
               mesh: { neighbors: 4, avgLqi: 245, minLqi: 176, maxLqi: 254,
                       neighborDetails: [{ shortId: '39E4', lqi: 200, age: 10 }, { shortId: 'B44B', lqi: 180, age: 12 },
@@ -246,7 +246,7 @@ has2('### Matter', 'Matter still renders');
       allApps: [{ id: 12, name: 'LEAK_ruleLabel', type: 'Rule-5.1' }], builtInInstances: { 'Rule-5.1': 1 } },
     network: { uptimeSeconds: 6000, network: { hasEthernet: true, lanAddr: '192.0.2.1' },
       zwave: { enabled: true, healthy: true, nodeCount: 1,
-        mesh: { nodes: [{ nodeId: 5, name: 'LEAK_zwNode', security: 'S0', zwaveType: 'SWITCH', per: 5, state: 'OK', neighbors: 0, msgCount: 9000, route: '01 -> 05 100kbps' }] },
+        mesh: { nodes: [{ nodeId: 5, name: 'LEAK_zwNode', security: 'S0', zwaveType: 'SWITCH', per: 500, state: 'OK', neighbors: 0, msgCount: 9000, route: '01 -> 05 100kbps' }] },
         ghostNodes: [{ id: 9, name: 'LEAK_ghost', kind: 'ghost' }] },
       zigbee: { enabled: true, healthy: true, channel: 20, deviceCount: 1,
         mesh: { neighborList: [{ shortId: 'AB12', name: 'LEAK_zbNeighbor', lqi: 50, age: 9 }], routeList: [] }, devicesSlim: [] },
@@ -296,7 +296,7 @@ has2('### Matter', 'Matter still renders');
   console.log('  ok   reliability forum line (absent/null/unavailable/empty add nothing; payload adds one line after Alerts)');
 }
 
-// --- size caps: lists stop at 15 with a remainder line; a big mesh shows the 10 worst nodes by PER ---
+// --- size caps: lists stop at 15 with a remainder line; a big mesh shows the 10 worst nodes by failure rate ---
 {
   const big = JSON.parse(JSON.stringify(r));
   big.network.zwave.mesh.nodes = Array.from({ length: 20 }, (_, i) => ({ nodeId: 30 + i, name: 'N' + i, security: 'None', per: i, rssiStr: '10dB',
@@ -305,7 +305,7 @@ has2('### Matter', 'Matter still renders');
   const out = buildForumMarkdown(assembleForumData(big));
   const check = (cond, label) => { if (cond) { pass++; console.log('  ok   ' + label); } else { fail++; console.log('  FAIL ' + label); } };
   check(out.includes('**Ghost Nodes (20, no Hubitat device):**') && out.includes('- Node 114: G14') && !out.includes('- Node 115: G15') && out.includes('- … and 5 more'), 'ghost list capped at 15 with the full count in the heading');
-  check(out.includes('**10 nodes with the highest PER (of 20):**') && out.includes('| 49 | N19 |') && !out.includes('| 30 | N0 |'), 'node table: the 10 worst by PER');
+  check(out.includes('**10 nodes with the highest failure rate (of 20):**') && out.includes('| 49 | N19 |') && !out.includes('| 30 | N0 |'), 'node table: the 10 worst by PER');
   check((out.match(/^\| \d+ \| N\d+ \|/gm) || []).length === 10, 'node table has 10 rows');
 }
 

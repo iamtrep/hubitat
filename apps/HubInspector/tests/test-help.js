@@ -105,8 +105,8 @@ t('helpBtn: unknown or empty key gives nothing', () => {
 });
 
 t('helpBtn escapes the title in its label', () => {
-  const out = helpBtn('zw.per');
-  assert(/^<button type="button" class="hlp" data-help="zw\.per" aria-label="[^"<>]*">/.test(out), out);
+  const out = helpBtn('zw.failMsgs');
+  assert(/^<button type="button" class="hlp" data-help="zw\.failMsgs" aria-label="[^"<>]*">/.test(out), out);
   HELP['x.test'] = { t: 'a "quoted" <b>', d: 'definition text here' };
   assert(!/<b>/.test(helpBtn('x.test')));
   assert(!/<b>/.test(helpHtml('x.test')));
@@ -134,10 +134,12 @@ t('configurable thresholds show the current setting', () => {
 
 t('threshold text matches the constants the colouring uses', () => {
   assert(/const ZWAVE_PER_CRIT=1\.0, ZIGBEE_LQI_CRIT=150;/.test(src));
-  assert(/above 1%/.test(HELP['zw.per'].th) && /above 1%/.test(HELP['zw.problem'].th));
+  const groovySrc = fs.readFileSync(path.join(__dirname, '..', 'HubInspector.groovy'), 'utf8');
+  assert(/ZWAVE_PER_RATE_CRIT = 1\.0G/.test(groovySrc), 'Groovy problem-node threshold differs from ZWAVE_PER_CRIT');
+  assert(/above 1%/.test(HELP['zw.failMsgs'].th) && /above 1%/.test(HELP['zw.problem'].th));
   assert(/Below 150/.test(HELP['zb.lqi'].th) && /LQI below 150/.test(HELP['zb.weak'].th));
   assert(/n\.age!=null&&n\.age>6/.test(src) && /Above 6/.test(HELP['zb.age'].d));
-  assert(readme.includes('| Problem Nodes | State ≠ OK, or PER > 1% | 1% PER | Warning |'));
+  assert(readme.includes('| Problem Nodes | State ≠ OK, or (Z/IP) failure rate = failed ÷ (Msgs + failed) > 1% | 1% of messages | Warning |'));
   assert(readme.includes('| Weak Neighbors | Any neighbor LQI < 150 | 150 | Critical |'));
 });
 

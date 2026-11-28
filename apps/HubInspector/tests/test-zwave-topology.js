@@ -79,8 +79,8 @@ t('listed hop not counted',  zwTopoModel({ ids: [1, 21], rows: ['-1', '1-'] }, [
 
 console.log('\nzwTopoFlags (route warnings)');
 const deep = { path: [1, 2, 3, 4], rate: 9.6, per: 2, nb: 1 };
-t('big mesh: all four',      zwTopoFlags(deep, 20), ['2 repeaters', '9.6 kbps fallback', 'packet errors', 'few neighbours']);
-t('small mesh: no nb flag',  zwTopoFlags(deep, 4), ['2 repeaters', '9.6 kbps fallback', 'packet errors']);
+t('big mesh: all four',      zwTopoFlags(deep, 20), ['2 repeaters', '9.6 kbps fallback', 'failed messages', 'few neighbours']);
+t('small mesh: no nb flag',  zwTopoFlags(deep, 4), ['2 repeaters', '9.6 kbps fallback', 'failed messages']);
 t('clean direct route',      zwTopoFlags({ path: [1, 2], rate: 40, per: 0, nb: 5 }, 20), []);
 t('no route, no flags',      zwTopoFlags({ path: null }, 20), []);
 
