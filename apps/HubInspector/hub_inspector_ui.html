@@ -221,7 +221,7 @@ table[data-sortable] th[data-dir] .arr{opacity:1}
 </div>
 <script>
 // ===== VERSION =====
-const CODE_VERSION = "6.4.2";
+const CODE_VERSION = "6.4.3";
 
 // ===== CONFIG & MOCKS =====
 const WORKBENCH = false; // Set to true for local development without a hub
@@ -2298,7 +2298,7 @@ function cloudCallsByHour(d){
 }
 // Stacked hourly chart, one color per app. Colors follow the app (ranked by calls over all
 // recorded hours), so switching the range never repaints a series; past 8 apps fold into Other.
-const CC_COLORS=['#2a78d6','#eb6834','#1baf7a','#eda100','#e87ba4','#008300','#4a3aa7','#e34948'],CC_OTHER='#9e9e9e';
+const CC_COLORS=['#2a78d6','#eb6834','#1baf7a','#eda100','#e87ba4','#008300','#4a3aa7','#e34948','#0e9aa7','#9c6b3e'],CC_OTHER='#9e9e9e';
 const CC_RANGES=[[24,'24 Hours'],[168,'7 Days'],[720,'30 Days']];
 let CC=null;
 function cloudCallsCard(d,pts){
@@ -2372,15 +2372,21 @@ window.addEventListener('resize',()=>{if(CC&&document.getElementById('ccChart'))
 
 // ===== SHARE BARS =====
 // One stacked bar per measure, top 5 + Other: what share of the total each contributor takes.
+// Legend label: a page link (href), a filter of a runtime table on this page (flt: table id), or plain text.
+function shareLabel(it){
+  if(it.href)return'<a href="'+it.href+'" target="_blank">'+h(it.label)+'</a>';
+  if(it.flt)return'<a href="#" title="Show these in the table below" onclick="shareFilter(\''+it.flt+'\','+h(JSON.stringify(it.label))+');return false">'+h(it.label)+'</a>';
+  return h(it.label)}
+function shareFilter(cid,v){const fi=document.getElementById('flt_'+cid);if(!fi)return;const dt=fi.closest('details');if(dt)dt.open=true;relFill(fi,v);fi.scrollIntoView({block:'center'})}
 function shareBar(title,items,fmt){
   items=items.filter(i=>i.value>0).sort((a,b)=>b.value-a.value);
   const total=items.reduce((t,i)=>t+i.value,0);if(!total)return'';
-  const top=items.filter(i=>!/^Other \(/.test(i.label)).slice(0,5),rest=total-top.reduce((t,i)=>t+i.value,0);
+  const top=items.filter(i=>!/^Other \(/.test(i.label)).slice(0,CC_COLORS.length),rest=total-top.reduce((t,i)=>t+i.value,0);
   const seg=top.map((it,k)=>({...it,c:CC_COLORS[k]}));if(rest>0)seg.push({label:'Other',value:rest,c:CC_OTHER});
   const tip=it=>h(it.label+': '+fmt(it.value)+' ('+(it.value/total*100).toFixed(1)+'%)');
   return'<div class="share"><div class="share-h"><b>'+h(title)+'</b><span>'+h(fmt(total))+'</span></div><div class="share-bar">'
     +seg.map(it=>'<div data-tip="'+tip(it)+'" style="flex:'+it.value+' 1 0;background:'+it.c+'"></div>').join('')+'</div><div class="share-lg">'
-    +seg.map(it=>'<span data-tip="'+tip(it)+'"><i style="background:'+it.c+'"></i>'+h(it.label)+' <em>'+(it.value/total<.01?'&lt;1':Math.round(it.value/total*100))+'%</em></span>').join('')+'</div></div>';
+    +seg.map(it=>'<span data-tip="'+tip(it)+'"><i style="background:'+it.c+'"></i>'+shareLabel(it)+' <em>'+(it.value/total<.01?'&lt;1':Math.round(it.value/total*100))+'%</em></span>').join('')+'</div></div>';
 }
 document.addEventListener('mousemove',e=>{
   const t=e.target.closest&&e.target.closest('[data-tip]');let tip=document.getElementById('shareTip');
@@ -3691,6 +3697,7 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
       o+='<option value="'+cp.key+'" '+sel+'>#'+(i+1)+': '+h(cp.timestamp)+'</option>';
     });
     o+='</select><button class="btn btn-p" id="btnCompare" style="margin-left:8px">Compare</button></div>';
+    // Holds the last saved comparison until a new Compare runs (errors from Compare land here too).
     o+='<div id="compResult"></div></div></div></div>';
     o+='<div class="card"><details><summary class="card-h" style="display:block;cursor:pointer">Perf Checkpoints ('+d.checkpointCount+' / '+d.maxCheckpoints+')</summary><div class="card-b"><div id="cpTbl"></div></div></details></div>';
   } else {
@@ -3712,11 +3719,15 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
   {
     const num=u=>v=>Math.round(v).toLocaleString()+' '+u,rsb=(activePerfComp?s?.radioStats:d.radioStats)||{};
     let b='';
-    if(s?.appStats)b+=shareBar('App CPU, by app type',aggregateByType(s.appStats,d.appParentTypeById||{},'id','total'),v=>fmsDuration(v));
-    if(s?.deviceStats)b+=shareBar('Device CPU, by device type',aggregateByType(s.deviceStats,d.deviceTypeById||{},'id','total'),v=>fmsDuration(v));
-    b+=shareBar('Radio messages, by device',[...(rsb.zigbee||[]),...(rsb.zwave||[])].map(r=>({label:Obf.nm(r.name),value:r.msgCount||0})),num('messages'));
+    // Runtime stats still loading: hold the place of the two CPU bars so they don't appear from nowhere.
+    const pendBar=t=>'<div class="share"><div class="share-h"><b>'+h(t)+'</b><span>loading\u2026<i class="tab-pend"></i></span></div><div class="share-bar" style="background:var(--border);opacity:.5"></div></div>';
+    if(!s&&statsPending&&!activePerfComp)b+=pendBar('App CPU, by app type')+pendBar('Device CPU, by device type');
+    if(s?.appStats)b+=shareBar('App CPU, by app type',aggregateByType(s.appStats,d.appParentTypeById||{},'id','total').map(i=>({...i,flt:'appStatsTbl'})),v=>fmsDuration(v));
+    if(s?.deviceStats)b+=shareBar('Device CPU, by device type',aggregateByType(s.deviceStats,d.deviceTypeById||{},'id','total').map(i=>({...i,flt:'devStatsTbl'})),v=>fmsDuration(v));
+    b+=shareBar('Radio messages, by device',flattenRadioDevices(rsb).map(r=>({label:Obf.nm(r.name),value:r.msgCount||0,href:r.deviceId?'/device/edit/'+r.deviceId:null})),num('messages'));
     // The 2.5.2.129 endpoint adds calls to deleted apps; older firmware has only the runtime-stats counts.
-    const cloudItems=d.cloudCalls?(d.cloudCalls.apps||[]).map(a=>({label:Obf.nm(a.name),value:a.total||0})):(s?.appStats||[]).map(a=>({label:Obf.nm(a.name),value:a.cloudCallCount||0}));
+    const appHref=id=>id!=null?'/installedapp/configure/'+String(id).replace(/^APP-/,''):null;
+    const cloudItems=d.cloudCalls?(d.cloudCalls.apps||[]).map(a=>({label:Obf.nm(a.name),value:a.total||0,href:a.installed===false?null:appHref(a.id)})):(s?.appStats||[]).map(a=>({label:Obf.nm(a.name),value:a.cloudCallCount||0,href:appHref(a.id)}));
     b+=shareBar('Cloud calls, by app'+(activePerfComp&&d.cloudCalls?' (since startup)':''),cloudItems,num('calls'));
     if(b)o+='<div class="card"><div class="card-h">Load Breakdown'+(activePerfComp?' (Interval)':'')+'</div><div class="card-b">'+b+'</div></div>';
   }
@@ -3732,22 +3743,8 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
     }
     o+='</div></div></div>'}
 
-  // Top Talkers — derived client-side from raw radioStats (comparison interval, else current).
-  const talkers=topRadioTalkers(activePerfComp ? s?.radioStats : d.radioStats);
-  if(talkers&&talkers.length){
-    o+='<div class="card"><div class="card-h">Top Talkers'+(activePerfComp?' (Interval)':'')+'</div><div class="card-b">';
-    talkers.forEach((t,i)=>{
-      o+='<div style="padding:4px 0">'+(i+1)+'. '+(t.deviceId?dlink(t.deviceId,t.name):h(Obf.nm(t.name)))+' <span style="color:var(--muted)">('+h(t.integration||'')+')</span> &mdash; <b>'+t.msgCount+'</b> msgs</div>'});
-    o+='</div></div>'}
-
-  // Saved comparison
-  if(!activePerfComp && (d.savedComparison||d.savedComparisonHtml)){o+='<div class="card"><div class="card-h">Last Comparison</div><div class="card-b"><div id="savedComp"></div></div></div>'}
   
   // Runtime detail tables
-  if(s&&s.appStats&&s.appStats.length){
-    o+='<div class="card"><div class="card-h">CPU by App Type</div><div class="card-b"><div id="perfAppCpuChart"></div></div></div>'}
-  if(s&&s.deviceStats&&s.deviceStats.length){
-    o+='<div class="card"><div class="card-h">CPU by Device Type</div><div class="card-b"><div id="perfDevCpuChart"></div></div></div>'}
   if(s&&s.deviceStats&&s.deviceStats.length){
     o+='<div class="card"><div class="card-h">Device Runtime Detail</div><div class="card-b"><div id="devStatsTbl"></div></div></div>'}
   if(s&&s.appStats&&s.appStats.length){
@@ -3802,13 +3799,8 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
       {l:'',f:'_idx',r:r=>'<button class="btn btn-d btn-s" title="Delete" onclick="delCp('+r._key+')">\u{1F5D1}</button>'}
     ],cpRows,{sc:0,sd:'asc'})}
 
-  // CPU by device type chart — v5.20.0 (R-7 B2): id→type map now ships in /api/performance
-  if(s&&s.deviceStats&&s.deviceStats.length){
-    const typeById=d.deviceTypeById||{};
-    renderBarChart(aggregateByType(s.deviceStats,typeById,'id','total'),'perfDevCpuChart',{format:v=>v.toFixed(0)+' ms'});
-  }
   // Device Runtime table
-  // Type = the grouping the CPU-by-type charts use, so the tables can be filtered to one bar.
+  // Type = the grouping the Load Breakdown uses, so the tables can be filtered to one segment.
   if(s&&s.deviceStats)
     tbl('devStatsTbl',[
       {l:'Name',f:'name',r:r=>r.id?dlink(r.id,r.name):h(Obf.nm(r.name))},{l:'Type',f:'type'},{l:'Total (ms)',k:'pf.total',f:'total',t:'n'},
@@ -3817,11 +3809,6 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
       {l:'Count',k:'pf.count',f:'count',t:'n'},{l:'Avg (ms)',k:'pf.avg',f:'average',t:'n',r:r=>Number(r.average||0).toFixed(1)},
       {l:'State Size',k:'pf.state',f:'stateSize',t:'n'},{l:'Hub Actions',k:'pf.hubActions',f:'hubActionCount',t:'n'}
     ],s.deviceStats.map(r=>({...r,type:(d.deviceTypeById||{})[r.id]||''})),{sc:2,sd:'desc',filter:true,collapse:10,collapseLabel:'Show all'});
-  // CPU by app type chart — v5.20.0 (R-7 B2): id→parent-label map now ships in /api/performance
-  if(s&&s.appStats&&s.appStats.length){
-    const ptm=d.appParentTypeById||{};
-    renderBarChart(aggregateByType(s.appStats,ptm,'id','total'),'perfAppCpuChart',{format:v=>v.toFixed(0)+' ms'});
-  }
   // App Runtime table
   if(s&&s.appStats){
     tbl('appStatsTbl',[
@@ -3851,7 +3838,8 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
     const sc=d.savedComparison||{};
     // Persisted startup comparisons store baselineStats:null + baselineMode:"startup"; rebuild the zero baseline.
     const scBase=sc.baselineStats||(sc.baselineMode==='startup'?zeroBaseline(sc.checkpointStats):sc.baselineStats);
-    renderComparison({comparisonHtml:d.savedComparisonHtml,...sc,baselineStats:scBase},'savedComp');
+    renderComparison({comparisonHtml:d.savedComparisonHtml,...sc,baselineStats:scBase},'compResult');
+    const cr=document.getElementById('compResult');if(cr&&cr.innerHTML)cr.insertAdjacentHTML('afterbegin','<div style="margin:4px 0 6px;font-weight:600;color:var(--muted)">Last comparison</div>');
   }
 
   // Button bindings

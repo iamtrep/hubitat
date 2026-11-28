@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
 A comprehensive diagnostic dashboard for Hubitat Elevation hubs. Provides real-time and historical visibility into devices, apps, network health, performance, and configuration — all in a single web UI served directly from your hub.
 
 <!-- AUTO:hubinspector-version -->
-**Current version:** 6.4.2
+**Current version:** 6.4.3
 <!-- /AUTO -->
 
 ---
@@ -455,11 +455,9 @@ When no comparison is active, these cards show current values:
 
 **Resources (Delta)** — Shown only while a comparison is active: the change in free OS memory, CPU load, temperature and database size over the compared interval. Live readings are on the Dashboard and Health tabs.
 
-**Load Breakdown** — One stacked bar each for app CPU by app type, device CPU by device type, radio messages by device (Zigbee and Z-Wave together) and cloud calls by app. Each shows the top 5 contributors and Other, with each one's share of the total; hover a segment for its value. Before firmware 2.5.2.129 the cloud-call bar uses the runtime stats' per-app counts, which leave out calls to deleted apps. In a comparison the bars cover the interval, except cloud calls on 2.5.2.129+, which count since startup.
+**Load Breakdown** — One stacked bar each for app CPU by app type, device CPU by device type, radio messages by device (Zigbee and Z-Wave together) and cloud calls by app. Each shows the top 10 contributors and Other, with each one's share of the total; hover a segment for its value. In the legend, a device or app opens its page, and an app type or device type filters the runtime table below to it. While the runtime stats are still loading, the two CPU bars show as loading and fill in when they arrive. Before firmware 2.5.2.129 the cloud-call bar uses the runtime stats' per-app counts, which leave out calls to deleted apps. In a comparison the bars cover the interval, except cloud calls on 2.5.2.129+, which count since startup.
 
-**Top Talkers** — The 3 most message-active Z-Wave and Zigbee devices by total message count since last restart.
-
-**App Runtime Detail** — Sortable table of every app with: type (the top-level parent app, as grouped in CPU by App Type), source badge (Platform/Community/Built-in), total execution time (ms), % busy, execution count, average time per call, state size, hub actions and cloud calls. Type the parent app's name in the filter to list only its apps.
+**App Runtime Detail** — Sortable table of every app with: type (the top-level parent app, as grouped in the Load Breakdown), source badge (Platform/Community/Built-in), total execution time (ms), % busy, execution count, average time per call, state size, hub actions and cloud calls. Type the parent app's name in the filter to list only its apps.
 
 **Device Runtime Detail** — The same for devices, with the driver as the type and no cloud calls column, since devices don't receive cloud calls.
 
