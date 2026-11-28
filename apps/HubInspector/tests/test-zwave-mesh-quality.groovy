@@ -80,7 +80,8 @@ check('msg-count: LR absent field -> null',       mById['LR (no field)'].routeCh
 check('msg-count: non-numeric -> null',           mById['Non-numeric'].routeChanges == null)
 
 // Problem nodes: state != OK, or on Z/IP a failure rate per / (msgCount + per) above 1%.
-// per counts undelivered messages, msgCount delivered ones. On Z-Wave JS per never flags.
+// per counts undelivered messages, msgCount delivered ones. On Z-Wave JS per is not a failure
+// count: it is dropped (null) and never flags.
 println '\ncomputeZwaveSignals (problem-node rule)'
 Map zip = [zwaveJS: false, nodes: [
     [nodeId: 2, deviceName: 'Quiet errors', nodeState: 'OK', per: 2,  msgCount: 10000],   // 0.02%
@@ -100,7 +101,7 @@ Map js = [zwaveJS: true, nodes: [
     [nodeId: 5, deviceName: 'JS node',   nodeState: 'OK',   per: 50, msgCount: 10],
     [nodeId: 6, deviceName: 'JS failed', nodeState: 'FAILED', per: 0, msgCount: 0],
 ]]
-check('Z-Wave JS: perRate is null',                 harness.mesh(js).nodes.every { it.perRate == null })
+check('Z-Wave JS: per and perRate are null',       harness.mesh(js).nodes.every { it.per == null && it.perRate == null })
 check('Z-Wave JS: per=50 not flagged, state still flags', harness.signals(js).problemCount == 1)
 
 println "\n=== ${pass}/${pass + fail} passed ==="

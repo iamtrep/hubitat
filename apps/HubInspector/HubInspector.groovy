@@ -2464,7 +2464,7 @@ Map fetchZwaveNodeState(Integer nodeId) {
     return [
         nodeState: resp.nodeState, status: resp.status,
         interviewStage: resp.interviewStage, ready: resp.ready == true,
-        rssi: resp.rssi, rtt: resp.rtt, per: resp.per,
+        rssi: resp.rssi, rtt: resp.rtt,   // per left out: on Z-Wave JS it is not a failure count
         route: resp.route, lastSeenLocal: resp.lastSeenLocal,
         keepAwake: resp.keepAwake == true, securityClass: resp.securityClass,
         // false, or the wake-up interval ("250ms"/"1000ms") for a FLiRS node
@@ -2834,7 +2834,8 @@ BigDecimal zwavePerRate(int per, int msgCount) {
 Map extractZwaveMeshQuality(Map zwaveData) {
     if (!zwaveData || !zwaveData.nodes) return [:]
 
-    // On Z-Wave JS the hub derives `per` itself and msgCount is not radio traffic, so no rate.
+    // On Z-Wave JS `per` is not a failure count (a node with one dropped message showed TX + RX),
+    // so per and perRate are null there and no signal or total uses them.
     boolean js = zwaveData.zwaveJS == true
     List nodes = []
     zwaveData.nodes.each { Map node ->
@@ -2871,7 +2872,7 @@ Map extractZwaveMeshQuality(Map zwaveData) {
             rssi: rssiVal,
             rssiStr: rssiStr,
             rtt: rtt,
-            per: per,
+            per: js ? null : per,
             perRate: js ? null : zwavePerRate(per, msgCount),
             neighbors: neighborCount,
             route: node.route ?: "",

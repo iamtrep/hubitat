@@ -63,12 +63,13 @@ t('assembles issue strings (State / failed messages with rate, both)', () => {
   assert.strictEqual(by['High PER'], 'Failed 10 of 132 (7.6%)');
   assert.strictEqual(by['Both'], 'State: PENDING, Failed 3 of 100 (3.0%)');
 });
-t('zwPerRate / zwPerTxt: rate from counts, hub value wins, null on Z-Wave JS', () => {
+t('zwPerRate / zwPerTxt: rate from counts, hub value wins, "—" on Z-Wave JS', () => {
   assert.strictEqual(N.zwPerRate({ per: 0, msgCount: 0 }), 0);
   assert.strictEqual(N.zwPerRate({ per: 2, msgCount: 10000 }), 0);
   assert.strictEqual(N.zwPerRate({ per: 10, msgCount: 122 }), 7.6);
   assert.strictEqual(N.zwPerRate({ per: 10, msgCount: 122, perRate: 7.6 }), 7.6);
-  assert.strictEqual(N.zwPerTxt({ per: 50, perRate: null }), '50');
+  assert.strictEqual(N.zwPerTxt({ per: 50, perRate: null }), '—');
+  assert.strictEqual(N.zwPerTxt({ per: null, perRate: null }), '—');
   assert.strictEqual(N.zwPerTxt({ per: 10, msgCount: 122 }), '10 of 132 (7.6%)');
 });
 t('carries deviceId/nodeId; null/empty -> []', () => {
@@ -128,12 +129,14 @@ t('zwMeshStats: rollups; null routeChanges/rssi excluded; S0 flag skips locks', 
   assert.strictEqual(m.avgRssi, -65);
   assert.deepStrictEqual(m.nodes.map(n => n.s0Flag), [true, false, false]);
 });
-t('zwMeshStats: Z-Wave JS has no rate, only the total count', () => {
+t('zwMeshStats: Z-Wave JS shows no per-derived figure at all', () => {
   const zw = { zwaveJS: true, mesh: { nodes: [{ state: 'OK', per: 50, msgCount: 10 }, { state: 'OK', per: 1, msgCount: 0 }] } };
   N.zwMeshStats(zw);
   assert.strictEqual(zw.mesh.failRate, null);
-  assert.strictEqual(zw.mesh.totalPer, 51);
-  assert.deepStrictEqual(zw.mesh.nodes.map(n => n.perRate), [null, null]);
+  assert.strictEqual(zw.mesh.totalPer, null);
+  assert.strictEqual(zw.mesh.nodesWithErrors, null);
+  assert.deepStrictEqual(zw.mesh.nodes.map(n => [n.per, n.perRate]), [[null, null], [null, null]]);
+  assert.deepStrictEqual(zw.mesh.nodes.map(N.zwPerTxt), ['—', '—']);
   assert.deepStrictEqual(N.zwProblemNodes(zw.mesh.nodes), []);
 });
 t('zwMeshStats: payload that already carries rollups is left as is', () => {

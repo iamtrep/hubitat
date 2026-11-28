@@ -325,8 +325,9 @@ const ZWAVE_PER_CRIT=1.0, ZIGBEE_LQI_CRIT=150;
 // msgCount delivered ones. The hub ships it as perRate, null on Z-Wave JS (no rate there); it is
 // computed here only for a node that lacks the field.
 function zwPerRate(n){if(n.perRate!==undefined)return n.perRate;const p=n.per||0,t=p+(n.msgCount||0);return t?Math.round(p*1000/t)/10:0;}
-// Failed messages: "10 of 132 (7.6%)" on Z/IP, where 132 = msgCount + per; the bare count on Z-Wave JS.
-function zwPerTxt(n){const p=n.per||0,r=zwPerRate(n);return r!=null?p+' of '+(p+(n.msgCount||0))+' ('+Number(r).toFixed(1)+'%)':String(p);}
+// Failed messages: "10 of 132 (7.6%)" on Z/IP, where 132 = msgCount + per; "—" on Z-Wave JS, whose
+// per is not a failure count (the hub ships per and perRate as null there).
+function zwPerTxt(n){if(n.per==null||n.perRate===null)return '—';const p=n.per,r=zwPerRate(n);return p+' of '+(p+(n.msgCount||0))+' ('+Number(r).toFixed(1)+'%)';}
 function lqiBandColor(lqi){
   if(lqi==null) return 'var(--muted)';
   if(lqi<30)  return 'var(--lqi-poor)';
@@ -546,15 +547,16 @@ function zbMeshDetails(zb){
 // Z-Wave mesh rollups and the per-node S0 flag (S0 on anything but a lock or garage/barrier is
 // avoidable overhead), from the raw node list. Skipped when the payload already carries them.
 // totalPer is the sum of per over the nodes (failed messages). failRate is the mesh failure rate on
-// Z/IP, sum per / (sum msgCount + sum per) x 100; null on Z-Wave JS, where only the total is shown.
+// Z/IP, sum per / (sum msgCount + sum per) x 100. On Z-Wave JS per is not a failure count, so per,
+// perRate, totalPer, failRate and nodesWithErrors are all null there.
 function zwMeshStats(zw){
   const m=zw&&zw.mesh;if(!m||!m.nodes)return;
   const js=!!zw.zwaveJS;
-  m.nodes.forEach(n=>{if(n.perRate===undefined)n.perRate=js?null:zwPerRate(n)});
+  m.nodes.forEach(n=>{if(js){n.per=null;n.perRate=null}else if(n.perRate===undefined)n.perRate=zwPerRate(n)});
   if(m.failRate!==undefined||m.nodeCount!=null)return;
   const ns=m.nodes,rs=ns.map(n=>n.rssi).filter(v=>v!=null),sum=(a,f)=>a.reduce((s,x)=>s+(f(x)||0),0);
-  const totalPer=sum(ns,n=>n.per),totalMsgs=sum(ns,n=>n.msgCount);
-  Object.assign(m,{nodeCount:ns.length,totalPer,failRate:js?null:(totalPer+totalMsgs?totalPer*100/(totalPer+totalMsgs):0),nodesWithErrors:ns.filter(n=>(n.per||0)>0).length,
+  const totalPer=js?null:sum(ns,n=>n.per),totalMsgs=sum(ns,n=>n.msgCount);
+  Object.assign(m,{nodeCount:ns.length,totalPer,failRate:js?null:(totalPer+totalMsgs?totalPer*100/(totalPer+totalMsgs):0),nodesWithErrors:js?null:ns.filter(n=>(n.per||0)>0).length,
     totalRouteChanges:sum(ns,n=>n.routeChanges),avgRssi:rs.length?Math.trunc(sum(rs,v=>v)/rs.length):null});
   ns.forEach(n=>{if(n.s0Flag==null)n.s0Flag=/s0/i.test(n.security||'')&&!/DOOR_LOCK|GARAGE|BARRIER/i.test(n.zwaveType||'')});
 }
@@ -1412,12 +1414,12 @@ const HELP={
   'zw.ghost':{t:'Ghost nodes',d:'Nodes the Z-Wave radio still lists that have no Hubitat device, usually because the device was deleted without excluding it. They are safe to force-remove from the radio.',doc:'z-wave'},
   'zw.failed':{t:'Failed nodes',d:'Nodes that have a Hubitat device, but the radio reports them FAILED, or they have no route and an unknown name. The device may only be out of range or out of battery: try a battery swap or moving it closer to the hub before excluding it.',doc:'z-wave'},
   'zw.unlisted':{t:'Not in radio list',d:'Hubitat Z-Wave devices that the radio does not report. Check that they still respond.',doc:'z-wave'},
-  'zw.problem':{t:'Problem nodes',d:'Nodes whose state is not OK, or, on Z/IP, whose failure rate is above 1%: more than 1% of their messages were never delivered. Each line says which. A device can still work with some failed messages, but each was lost after its retries.',th:'State not OK, or failure rate above 1% (Z/IP only).',js:'Only the state counts: what the hub\'s failed-message count means on Z-Wave JS is unverified.',doc:'z-wave'},
+  'zw.problem':{t:'Problem nodes',d:'Nodes whose state is not OK, or, on Z/IP, whose failure rate is above 1%: more than 1% of their messages were never delivered. Each line says which. A device can still work with some failed messages, but each was lost after its retries.',th:'State not OK, or failure rate above 1% (Z/IP only).',js:'Only the state counts. On Z-Wave JS the hub\'s PER is not a count of failed messages: a node with one dropped message showed its total traffic (commands sent plus received), so Hub Inspector does not show it.',doc:'z-wave'},
   'zw.state':{t:'State (Z-Wave node)',d:'The node state the hub reports, the same as on Settings → Z-Wave Details. Anything other than OK puts the node on Problem Nodes.',doc:'z-wave'},
-  'zw.failMsgs':{t:'Failed messages',d:'The number shown in the PER column of Settings → Z-Wave Details. Disabling a device does not remove its node from the radio, so a disabled device can still show failed messages.',zip:'Messages to this node that were never delivered, each counted once after its retries. The hub updates the count only when you press Refresh Z-Wave statistics on Settings → Z-Wave Details, and resets it to 0 at every reboot. Msgs counts delivered messages only, so "Failed 10 of 132" means 10 failed out of 122 delivered + 10 failed, and the failure rate in brackets is failed ÷ (Msgs + failed).',js:'The hub works this count out itself, and what it means is unverified. Hub Inspector shows the count only and never flags a node on it.',th:'Z/IP failure rate: 0% green, above 0% orange, above 1% red and listed under Problem Nodes.',doc:'z-wave'},
-  'zw.failTotal':{t:'Failed messages (total)',d:'The failed messages of all nodes added up.',zip:'Messages to any node that were never delivered, since the last reboot, as of the last press of Refresh Z-Wave statistics on Settings → Z-Wave Details.',js:'What the count means on Z-Wave JS is unverified, so this total is not colour-coded.',doc:'z-wave'},
+  'zw.failMsgs':{t:'Failed messages',d:'The number shown in the PER column of Settings → Z-Wave Details. Disabling a device does not remove its node from the radio, so a disabled device can still show failed messages.',zip:'Messages to this node that were never delivered, each counted once after its retries. The hub updates the count only when you press Refresh Z-Wave statistics on Settings → Z-Wave Details, and resets it to 0 at every reboot. Msgs counts delivered messages only, so "Failed 10 of 132" means 10 failed out of 122 delivered + 10 failed, and the failure rate in brackets is failed ÷ (Msgs + failed).',js:'On Z-Wave JS the hub\'s PER is not a count of failed messages: a node with one dropped message showed its total traffic (commands sent plus received), so Hub Inspector does not show it.',th:'Z/IP failure rate: 0% green, above 0% orange, above 1% red and listed under Problem Nodes.',doc:'z-wave'},
+  'zw.failTotal':{t:'Failed messages (total)',d:'The failed messages of all nodes added up.',zip:'Messages to any node that were never delivered, since the last reboot, as of the last press of Refresh Z-Wave statistics on Settings → Z-Wave Details.',js:'On Z-Wave JS the hub\'s PER is not a count of failed messages: a node with one dropped message showed its total traffic (commands sent plus received), so Hub Inspector does not show it.',doc:'z-wave'},
   'zw.failRate':{t:'Mesh failure rate',d:'The share of all messages to all nodes that were never delivered: total failed messages ÷ (total Msgs + total failed messages). Busy nodes weigh more. Z/IP only: on Z-Wave JS the hub\'s counts do not support a rate.',th:'Above 1% red, above 0% orange.',doc:'z-wave'},
-  'zw.nodesErr':{t:'Nodes w/ Errors',d:'How many nodes have at least one failed message.',th:'Z/IP: above 0 orange. Not colour-coded on Z-Wave JS.',doc:'z-wave'},
+  'zw.nodesErr':{t:'Nodes w/ Errors',d:'How many nodes have at least one failed message.',th:'Z/IP: above 0 orange. Not shown on Z-Wave JS.',doc:'z-wave'},
   'zw.routeChanges':{t:'Route Changes',d:'How many times the hub has changed this node\'s route, as the hub counts it. Shown as — when the hub reports no count: Z-Wave Long Range nodes, which talk to the hub directly, and nodes with no traffic yet. Those are left out of the total.',doc:'z-wave'},
   'zw.rssi':{t:'RSSI',d:'The signal strength of the node\'s last working route (LWR), as the hub reports it.',js:'Z-Wave JS reports dBm: negative, and closer to 0 is stronger. Below −60 is orange, below −80 red.',zip:'Z/IP reports a positive value in dB, not dBm, so it cannot be compared with Z-Wave JS figures and is not colour-coded.',doc:'z-wave'},
   'zw.avgRssi':{t:'Avg RSSI',d:'The average RSSI over the nodes that report one.',js:'In dBm. Below −60 is orange, below −80 red.',zip:'Z/IP reports RSSI in dB, not dBm, so the average is not colour-coded.',doc:'z-wave'},
@@ -1932,8 +1934,10 @@ function forumMarkdownBody(d){
     if(zwaveRaw.zwaveJS!=null)L(`- **Z-Wave JS:** ${zwaveRaw.zwaveJS?'Yes':'No'}${zwaveRaw.zwaveJSVersion?` (v${zwaveRaw.zwaveJSVersion})`:''}`);
     L(`- **Nodes:** ${zwaveRaw.nodeCount!=null?zwaveRaw.nodeCount:Object.keys(zwaveRaw.zwDevices||{}).length}`);
     if(zwaveMesh){
-      let meshLine=`- **Failed messages (total):** ${zwaveMesh.totalPer||0}`;
-      if(zwaveMesh.failRate!=null)meshLine+=`, **Mesh failure rate:** ${Number(zwaveMesh.failRate).toFixed(1)}%`;
+      const meshParts=[];
+      if(zwaveMesh.totalPer!=null)meshParts.push(`**Failed messages (total):** ${zwaveMesh.totalPer}`);
+      if(zwaveMesh.failRate!=null)meshParts.push(`**Mesh failure rate:** ${Number(zwaveMesh.failRate).toFixed(1)}%`);
+      let meshLine='- '+meshParts.join(', ');
       if(zwaveMesh.avgRssi!=null)meshLine+=`, **Avg RSSI:** ${zwaveMesh.avgRssi} dBm`;
       meshLine+=`, **Route Changes:** ${zwaveMesh.totalRouteChanges||0}`;
       L(meshLine);
@@ -1987,10 +1991,10 @@ function forumMarkdownBody(d){
     }
     // Node table: every node on a small mesh, else the FORUM_NODE_ROWS worst by failure rate (Z/IP) or failed messages (JS).
     if(zwNodes.length){
-      const worst=zwNodes.length>FORUM_NODE_ROWS;
-      const perKey=n=>{const r=zwPerRate(n);return r!=null?r:(n.per||0)};
-      const rows=worst?[...zwNodes].sort((a,b)=>perKey(b)-perKey(a)||(b.per||0)-(a.per||0)||a.nodeId-b.nodeId).slice(0,FORUM_NODE_ROWS):[...zwNodes].sort((a,b)=>a.nodeId-b.nodeId);
-      L('');if(worst){L(`**${FORUM_NODE_ROWS} nodes with the ${zwaveMesh.failRate!=null?'highest failure rate':'most failed messages'} (of ${zwNodes.length}):**`);L('');}
+      const ranked=zwaveMesh.failRate!=null,worst=zwNodes.length>FORUM_NODE_ROWS;
+      const perKey=n=>zwPerRate(n)||0;
+      const rows=worst&&ranked?[...zwNodes].sort((a,b)=>perKey(b)-perKey(a)||(b.per||0)-(a.per||0)||a.nodeId-b.nodeId).slice(0,FORUM_NODE_ROWS):[...zwNodes].sort((a,b)=>a.nodeId-b.nodeId).slice(0,worst?FORUM_NODE_ROWS:undefined);
+      L('');if(worst){L(ranked?`**${FORUM_NODE_ROWS} nodes with the highest failure rate (of ${zwNodes.length}):**`:`**First ${FORUM_NODE_ROWS} nodes (of ${zwNodes.length}):**`);L('');}
       L('| Node | Name | Security | RTT | Failed messages | RSSI | Route | Msgs/min | Driver |');
       L('|---:|---|---|---:|---:|---|---|---:|---|');
       rows.forEach(n=>{
@@ -3314,9 +3318,9 @@ async function rNetwork(){const P='p-network';loading(P);try{
     if(z.mesh&&z.mesh.nodes&&z.mesh.nodes.length){const m=z.mesh;
       o+='<div style="margin-top:10px"><div class="ng">';
       o+=ni('Nodes',m.nodeCount);
-      o+=ni('Failed messages (total)',m.totalPer!=null?String(m.totalPer):'N/A',null,false,'zw.failTotal');
+      if(m.totalPer!=null)o+=ni('Failed messages (total)',String(m.totalPer),null,false,'zw.failTotal');
       if(m.failRate!=null)o+=ni('Mesh failure rate',m.failRate.toFixed(1)+'%',m.failRate>ZWAVE_PER_CRIT?'var(--crit)':m.failRate>0?'var(--warn)':'var(--ok)',false,'zw.failRate');
-      o+=ni('Nodes w/ Errors',m.nodesWithErrors,m.failRate==null?null:m.nodesWithErrors>0?'var(--warn)':'var(--ok)',false,'zw.nodesErr');
+      if(m.nodesWithErrors!=null)o+=ni('Nodes w/ Errors',m.nodesWithErrors,m.nodesWithErrors>0?'var(--warn)':'var(--ok)',false,'zw.nodesErr');
       o+=ni('Route Changes',m.totalRouteChanges,null,false,'zw.routeChanges');
       if(m.avgRssi!=null)o+=ni('Avg RSSI',m.avgRssi<0?m.avgRssi+' dBm':m.avgRssi+' dB',m.avgRssi>=0?'':m.avgRssi<-80?'var(--crit)':m.avgRssi<-60?'var(--warn)':'var(--ok)',false,'zw.avgRssi');
       o+='</div><div id="zwMeshTbl" style="margin-top:8px"></div></div>'}
@@ -3531,7 +3535,7 @@ async function rNetwork(){const P='p-network';loading(P);try{
       {l:'Security',k:'zw.security',f:'security',r:r=>{const s=r.security||'None';const flag=r.s0Flag?'<span title="S0 on non-security device" style="color:var(--warn)"> \u26A0</span>':'';return h(s)+flag}},
       {l:'RTT',k:'zw.rtt',f:'rtt',t:'n',r:r=>r.rtt!=null?r.rtt+'ms':'\u2014'},
       {l:'RSSI',k:'zw.rssi',f:'rssi',t:'n',r:r=>r.rssi==null?'N/A':r.rssi>=0?r.rssi+' dB':'<span style="color:'+(r.rssi<-80?'var(--crit)':r.rssi<-60?'var(--warn)':'var(--ok)')+'">'+r.rssi+' dBm</span>'},
-      {l:'Failed messages',k:'zw.failMsgs',f:d.zwave.zwaveJS?'per':'perRate',t:'n',r:r=>{const pr=zwPerRate(r);return pr==null?String(r.per||0):'<span style="color:'+(pr>ZWAVE_PER_CRIT?'var(--crit)':pr>0?'var(--warn)':'var(--ok)')+'">'+h(zwPerTxt(r))+'</span>'}},
+      {l:'Failed messages',k:'zw.failMsgs',f:'perRate',t:'n',r:r=>{const pr=zwPerRate(r);return pr==null?'—':'<span style="color:'+(pr>ZWAVE_PER_CRIT?'var(--crit)':pr>0?'var(--warn)':'var(--ok)')+'">'+h(zwPerTxt(r))+'</span>'}},
       {l:'Neighbors',k:'zw.neighbors',f:'neighbors',t:'n'},{l:'Route',k:'zw.route',f:'route'},{l:'Route Changes',k:'zw.routeChanges',f:'routeChanges',t:'n',r:routeChangesCell},
       {l:'Msgs',k:'zw.msgs',f:'msgCount',t:'n'},{l:'Msgs/Min',k:'zw.msgsMin',f:'msgPerMin',t:'n',r:rateCell},
       {l:'Driver',k:'zw.driver',f:'driverType',r:r=>r.driverType==='usr'?'<span style="color:var(--link)">User</span>':r.driverType==='sys'?'Built-in':'\u2014'},
@@ -6672,9 +6676,9 @@ function buildAuditHtml(data) {
   // Z-Wave JS mesh health
   if (zwNodeRows.length > 0) {
     o += openCard('zwjs', `📶 Z-Wave JS mesh health (${zwNodeRows.length})`);
-    o += '<div class="muted" style="margin-bottom:6px">Per-node controller statistics from Z-Wave JS. RSSI lower (more negative) is quieter; RTT lower is faster; Failed messages is the hub\u2019s PER count.</div>';
-    o += '<div class="tbl-wrap"><table data-sortable id="t_zwjs"><thead><tr><th>Device</th><th data-t="n">Node</th><th>State</th><th>Status</th><th>Interview'+helpBtn('zj.interview')+'</th><th data-t="n">RTT'+helpBtn('zw.rtt')+'</th><th>RSSI'+helpBtn('zw.rssi')+'</th><th data-t="n" data-sd="desc">Failed messages'+helpBtn('zw.failMsgs')+'</th><th data-t="n">TX</th><th data-t="n">RX</th><th>Last Seen</th></tr></thead><tbody>';
-    const sortedZw = zwNodeRows.slice().sort((a, b) => ((b.zwaveNode && b.zwaveNode.per) || 0) - ((a.zwaveNode && a.zwaveNode.per) || 0));
+    o += '<div class="muted" style="margin-bottom:6px">Per-node controller statistics from Z-Wave JS. RSSI lower (more negative) is quieter; RTT lower is faster.</div>';
+    o += '<div class="tbl-wrap"><table data-sortable id="t_zwjs"><thead><tr><th>Device</th><th data-t="n">Node</th><th>State</th><th>Status</th><th>Interview'+helpBtn('zj.interview')+'</th><th data-t="n">RTT'+helpBtn('zw.rtt')+'</th><th>RSSI'+helpBtn('zw.rssi')+'</th><th>Failed messages'+helpBtn('zw.failMsgs')+'</th><th data-t="n">TX</th><th data-t="n">RX</th><th>Last Seen</th></tr></thead><tbody>';
+    const sortedZw = zwNodeRows.slice().sort((a, b) => ((a.zwaveNode && a.zwaveNode.nodeId) || 0) - ((b.zwaveNode && b.zwaveNode.nodeId) || 0));
     sortedZw.forEach(d => {
       const z = d.zwaveNode || {};
       const stats = z.statistics || {};
@@ -6686,7 +6690,7 @@ function buildAuditHtml(data) {
       o += `<td>${h(z.interviewStage || '')}</td>`;
       o += `<td>${z.rtt || '<span class="muted">—</span>'}</td>`;
       o += `<td>${z.rssi || '<span class="muted">—</span>'}</td>`;
-      o += `<td data-sv="${z.per || 0}">${z.per || 0}</td>`;
+      o += '<td class="muted">—</td>';   // Z-Wave JS per is not a failure count
       o += `<td>${stats.commandsTX || 0}</td>`;
       o += `<td>${stats.commandsRX || 0}</td>`;
       o += `<td>${h((z.lastSeenLocal || ''))}</td></tr>`;

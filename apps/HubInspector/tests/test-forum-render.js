@@ -309,6 +309,21 @@ has2('### Matter', 'Matter still renders');
   check((out.match(/^\| \d+ \| N\d+ \|/gm) || []).length === 10, 'node table has 10 rows');
 }
 
+// --- Z-Wave JS: per is not a failure count, so the export shows no per-derived figure ---
+{
+  const js = JSON.parse(JSON.stringify(r));
+  js.network.zwave.zwaveJS = true;
+  js.network.zwave.mesh = {};   // the hub ships the raw node list only; the SPA derives the rollups
+  js.network.zwave.mesh.nodes = Array.from({ length: 12 }, (_, i) => ({ nodeId: 30 + i, name: 'J' + i, security: 'None', per: 100 + i, rssiStr: '-60dBm',
+    route: '01 -> ' + (30 + i), msgCount: 5, driverType: 'sys', state: 'OK', neighbors: 2 }));
+  const out = buildForumMarkdown(assembleForumData(js));
+  const check = (cond, label) => { if (cond) { pass++; console.log('  ok   ' + label); } else { fail++; console.log('  FAIL ' + label); } };
+  check(!out.includes('Failed messages (total)') && !out.includes('Mesh failure rate'), 'Z-Wave JS: no mesh-wide failed-message figures');
+  check(out.includes('**First 10 nodes (of 12):**') && out.includes('| 30 | J0 |') && !out.includes('| 40 | J10 |'), 'Z-Wave JS: node table by node id, not ranked by per');
+  check(/^\| 30 \| J0 \| None \| [^|]+ \| — \|/m.test(out) && !/\| 10\d \|/.test(out), 'Z-Wave JS: failed messages shown as —');
+  check(!out.includes('Problem Nodes'), 'Z-Wave JS: per never makes a problem node');
+}
+
 // --- network details: hidden by default, shown when the user opts in; access settings as counts ---
 {
   const base = JSON.parse(JSON.stringify(r));
