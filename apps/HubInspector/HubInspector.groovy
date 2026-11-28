@@ -198,9 +198,16 @@ import java.util.concurrent.atomic.AtomicInteger
 @Field static final long       HUB_DATA_CACHE_TTL_MS = 30_000L
 @Field static final long       MDNS_NAME_CACHE_TTL_MS = 600_000L
 @Field static final long       SYSTEM_RESOURCES_CACHE_TTL_MS = 10_000L
-// /logs/json is the most expensive read the app makes. Tab loads (Network, Apps, Performance)
-// share one build per window; checkpoints and Compare -> Now read it fresh and refresh the slot.
+// /logs/json is the most expensive read the app makes. Apps tab loads share one build per window
+// (the Performance tab takes the slot at any age, see RUNTIME_WARMUP_GUARD_MS);
+// checkpoints and Compare -> Now read it fresh and refresh the slot.
 @Field static final long       RUNTIME_STATS_CACHE_TTL_MS = 30_000L
+// The Performance tab never waits on /logs/json: it shows the slot at any age and starts one background
+// read when the slot is empty or older than the TTL. The start time guards against a second read while
+// one is out; the guard lapses after this long so a lost callback cannot block the warm-up for good.
+@Field static final long       RUNTIME_WARMUP_GUARD_MS = 90_000L
+// Key 'startedMs' → start time of the read in flight (absent when none). A map because AtomicLong is sandbox-blocked.
+@Field static final ConcurrentHashMap<String, Long> RUNTIME_WARMUP = new ConcurrentHashMap<>()
 // The scheduled config snapshot only needs the list of running apps from /logs/json, so it takes
 // the copy the 00:03 scheduled checkpoint left in the slot instead of a second read 20 minutes later.
 @Field static final long       SNAPSHOT_STATS_MAX_AGE_MS  = 1_800_000L
@@ -1396,12 +1403,21 @@ Map getAppsData() {
     ]
 }
 
+// Hub.getUptime(): whole seconds since boot, the same clock as /logs/json `uptime`, without that
+// read (/logs/json can take over 20 s on a hub with hundreds of apps). null when unavailable.
+private Integer hubUptimeSeconds() {
+    try {
+        Object up = location?.hub?.uptime
+        return up != null ? ((up as long) as Integer) : null
+    } catch (Exception e) {
+        logNet "Hub uptime unavailable: ${e.message}"
+        return null
+    }
+}
+
 Map getNetworkData(Map shared = [:]) {
     Map networkData = analyzeNetwork()
-    Map statsWrap = fetchRuntimeStats()
-    Map statsRaw = statsWrap.ok ? statsWrap.data : null
-    Map stats = statsRaw
-    Integer uptimeSeconds = stats ? parseUptime(stats.uptime as String) : null
+    Integer uptimeSeconds = hubUptimeSeconds()
     Map zigbeeMesh = fetchZigbeeMeshInfo()
     String zwaveVersion = fetchZwaveVersion()
     Map zwaveMesh = extractZwaveMeshQuality(networkData.zwave ?: [:])
@@ -1515,8 +1531,10 @@ Map getHealthData(Map shared = [:]) {
 }
 
 Map getPerformanceData(Map shared = [:]) {
-    Map statsWrap = fetchRuntimeStats()
-    Map stats = statsWrap.ok ? statsWrap.data : null
+    // Cached copy only (any age); null until the background read lands. statsAgeMs lets the SPA say "as of".
+    Map statsHit = peekRuntimeStatsOrWarm()
+    Map stats = statsHit ? (Map) statsHit.data : null
+    Integer uptimeSeconds = hubUptimeSeconds()
 
     Map resources = (shared.resources as Map) ?: fetchSystemResources()
 
@@ -1548,7 +1566,7 @@ Map getPerformanceData(Map shared = [:]) {
 
     if (stats) {
         stats.radioStats = radioStats
-        stats.uptimeSeconds = parseUptime(stats.uptime as String)
+        stats.uptimeSeconds = uptimeSeconds
         stats.temperature = (shared.temperature as Float) ?: fetchTemperature()
         stats.databaseSize = (shared.databaseSize as Integer) ?: fetchDatabaseSize()
         if (stats.appStats) {
@@ -1570,6 +1588,8 @@ Map getPerformanceData(Map shared = [:]) {
     List indexEntries = loadCheckpointIndex()
     return [
         stats: stats, resources: resources,
+        statsAgeMs: statsHit ? statsHit.ageMs : null, statsAtMs: statsHit ? statsHit.atMs : null,
+        uptimeSeconds: uptimeSeconds,
         radioStats: radioStats,
         deviceTypeById: deviceTypeById,        // B2: id → driver type for CPU-by-device-type chart
         appParentTypeById: appParentTypeById,  // B2: id → parent label for CPU-by-app-type chart
@@ -1728,6 +1748,48 @@ private Map fetchRuntimeStats(boolean fresh = false, long maxAgeMs = RUNTIME_STA
     Map wrap = hubMapRequest(RUNTIME_STATS_PATH, "runtime stats")
     if (wrap.ok && wrap.data) cachePut('runtimeStats', new LinkedHashMap((Map) wrap.data))
     return wrap
+}
+
+// The runtimeStats slot at any age, or null when it is empty; never reads /logs/json on this thread.
+// Starts the background read when the slot is empty or past RUNTIME_STATS_CACHE_TTL_MS.
+private Map peekRuntimeStatsOrWarm() {
+    Map slot = TTL_CACHE['runtimeStats']
+    Long ageMs = slot != null ? (now() - (slot.at as long)) : null
+    if (slot == null || ageMs >= RUNTIME_STATS_CACHE_TTL_MS) startRuntimeStatsWarmup()
+    if (slot == null) return null
+    return [data: new LinkedHashMap((Map) slot.data), ageMs: ageMs, atMs: slot.at as long]
+}
+
+private void startRuntimeStatsWarmup() {
+    long t = now()
+    Long prev = RUNTIME_WARMUP['startedMs']
+    if (prev != null && (t - prev) < RUNTIME_WARMUP_GUARD_MS) return
+    boolean won = prev == null ? RUNTIME_WARMUP.putIfAbsent('startedMs', t) == null
+                               : RUNTIME_WARMUP.replace('startedMs', prev, t)
+    if (!won) return
+    try {
+        asynchttpGet('onRuntimeStatsWarm', [uri: HUB_BASE, path: RUNTIME_STATS_PATH,
+                                            contentType: "application/json", timeout: RUNTIME_STATS_TIMEOUT_S], [startedMs: t])
+    } catch (Exception e) {
+        RUNTIME_WARMUP.remove('startedMs', t)
+        logWarn "Could not start the runtime stats read: ${e.message}"
+    }
+}
+
+void onRuntimeStatsWarm(resp, data) {
+    try {
+        if (resp?.hasError() || resp?.status != 200) {
+            logNet "Runtime stats read failed: ${resp?.hasError() ? resp.getErrorMessage() : "HTTP ${resp?.status}"}"
+            return
+        }
+        Object body = resp.json
+        if (body instanceof Map && body) cachePut('runtimeStats', new LinkedHashMap((Map) body))
+    } catch (Exception e) {
+        logNet "Runtime stats read: ${e.message}"
+    } finally {
+        // Only this read's own mark: after a lapsed guard a newer read may hold the slot.
+        if (data?.startedMs != null) RUNTIME_WARMUP.remove('startedMs', data.startedMs as Long)
+    }
 }
 
 private Map hubMapRequest(String path, String name, int timeout = 30, boolean allowRetry = true) {

@@ -129,6 +129,8 @@ tr:nth-child(even){background:var(--alt)} tr:hover{background:var(--hover)}
 .loading{text-align:center;padding:50px 20px;color:var(--muted)}
 .spinner{display:inline-block;width:28px;height:28px;border:3px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .8s linear infinite;margin-bottom:8px}
 @keyframes spin{to{transform:rotate(360deg)}}
+.tab-pend{display:inline-block;width:9px;height:9px;margin-left:6px;border:2px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .8s linear infinite;vertical-align:-1px;pointer-events:none}
+.tab-pend.fail{animation:none;border-color:var(--warn)}
 .err{text-align:center;padding:30px;color:var(--crit)}
 .err button{margin-top:10px;padding:7px 18px;background:var(--primary);color:var(--on-primary);border:none;border-radius:4px;cursor:pointer;font-size:13px}
 
@@ -2487,6 +2489,21 @@ function tbl(cid,cols,rows,opts={}){
 // isn't rendered (e.g. Matter pill when no Matter card is present) — safe to call on any pill.
 function scrollToCard(id){const el=document.getElementById(id);if(!el)return;el.scrollIntoView({behavior:'smooth',block:'start'});el.classList.remove('flash');void el.offsetWidth;el.classList.add('flash');setTimeout(()=>el.classList.remove('flash'),1400)}
 function loading(id){document.getElementById(id).innerHTML='<div class="loading"><div class="spinner"></div><div>Loading...</div></div>'}
+// A tab rendered without everything it will show. state 'loading' | 'failed' | null (clears).
+// Marks the tab title, and fills the panel note the render placed with partialNote(tab).
+// o: {text, failText, onRetry}
+function partialNote(tab){return '<div id="pn-'+tab+'"></div>'}
+function setPartial(tab,state,o){o=o||{};
+  const t=document.querySelector('#tabs .tab[data-tab="'+tab+'"]');
+  if(t){let b=t.querySelector('.tab-pend');
+    if(!state){if(b)b.remove()}
+    else{if(!b){b=document.createElement('span');b.className='tab-pend';t.appendChild(b)}
+      b.classList.toggle('fail',state==='failed');b.title=state==='failed'?(o.failText||'Not fully loaded'):(o.text||'Loading...')}}
+  const n=document.getElementById('pn-'+tab);if(!n)return;
+  if(!state){n.innerHTML='';return}
+  if(state==='loading'){n.innerHTML='<div class="alert a-info"><span class="tab-pend" style="margin:0"></span>'+h(o.text||'Loading...')+'</div>';return}
+  n.innerHTML='<div class="alert a-warn">'+h(o.failText||'Not fully loaded')+' \u2014 <a href="#" class="pn-retry">retry</a></div>';
+  const a=n.querySelector('.pn-retry');if(a)a.onclick=e=>{e.preventDefault();if(o.onRetry)o.onRetry()}}
 function err(id,e,fn){document.getElementById(id).innerHTML='<div class="err"><div>'+h(e.message||String(e))+'</div><button onclick="('+fn.name+')()">Retry</button></div>'}
 
 // ===== RESOURCE CHART (SVG) =====
@@ -3624,8 +3641,19 @@ async function rHealth(){const P='p-health';loading(P);try{
 
 // ===== TAB: PERFORMANCE =====
 let _perfInFlight=false;
-async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-performance';loading(P);try{
+// The hub answers Performance from its cached /logs/json copy and starts a read when it has none,
+// so stats can be null on a cold load: re-ask a few times, then offer a retry.
+const PERF_STATS_RETRIES=3,PERF_STATS_RETRY_MS=10000;let _perfStatsGen=0;
+const PERF_PARTIAL={text:'Loading app runtime stats\u2026',failText:'Runtime stats unavailable',onRetry:()=>{drop('performance');rPerf()}};
+function perfAwaitStats(gen,left){
+  setTimeout(async()=>{if(gen!==_perfStatsGen)return;
+    let d=null;try{drop('performance');d=await api('performance')}catch(e){}
+    if(gen!==_perfStatsGen)return;
+    if(d&&d.stats){rPerf();return}
+    if(left>1)perfAwaitStats(gen,left-1);else setPartial('performance','failed',PERF_PARTIAL)},PERF_STATS_RETRY_MS)}
+async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-performance';loading(P);const gen=++_perfStatsGen;try{
   const d=await api('performance');let o='';
+  const statsPending=!d.stats&&!REPORT&&!WORKBENCH;
   // Logic to determine which stats to show
   let s = d.stats;
   let res = d.resources;
@@ -3636,6 +3664,7 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
     title = 'Comparison: ' + h(activePerfComp.baselineLabel) + ' \u2192 ' + h(activePerfComp.checkpointLabel);
   }
 
+  o+=partialNote('performance');
   // Actions
   o+='<div class="actions">';
   o+='<button class="btn btn-p" id="btnCp">Take Perf Checkpoint</button>';
@@ -3666,7 +3695,8 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
 
   // Runtime stats
   if(s){
-    o+='<div class="card"><div class="card-h">'+title+'</div><div class="card-b"><div class="metrics">';
+    const asOf=!activePerfComp&&d.statsAgeMs>60000&&d.statsAtMs?' <span style="color:var(--muted);font-weight:400">as of '+fago(d.statsAtMs)+'</span>':'';
+    o+='<div class="card"><div class="card-h">'+title+asOf+'</div><div class="card-b"><div class="metrics">';
     if(s.uptime)o+=mc('Interval/Uptime',s.uptime);
     if(s.totalDevicesRuntime!=null)o+=mc('Devices Runtime',typeof s.totalDevicesRuntime==='number'?fmsDuration(s.totalDevicesRuntime):s.totalDevicesRuntime);
     if(s.devicePct)o+=mc('Devices % Busy',s.devicePct);
@@ -3676,7 +3706,7 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
   
   // Load breakdown: share of app CPU, device CPU, radio messages and cloud calls.
   {
-    const num=u=>v=>Math.round(v).toLocaleString()+' '+u,rsb=s?.radioStats||{};
+    const num=u=>v=>Math.round(v).toLocaleString()+' '+u,rsb=(activePerfComp?s?.radioStats:d.radioStats)||{};
     let b='';
     if(s?.appStats)b+=shareBar('App CPU, by app type',aggregateByType(s.appStats,d.appParentTypeById||{},'id','total'),v=>fmsDuration(v));
     if(s?.deviceStats)b+=shareBar('Device CPU, by device type',aggregateByType(s.deviceStats,d.deviceTypeById||{},'id','total'),v=>fmsDuration(v));
@@ -3718,10 +3748,14 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
     o+='<div class="card"><div class="card-h">Device Runtime Detail</div><div class="card-b"><div id="devStatsTbl"></div></div></div>'}
   if(s&&s.appStats&&s.appStats.length){
     o+='<div class="card"><div class="card-h">App Runtime Detail</div><div class="card-b"><div id="appStatsTbl"></div></div></div>'}
+  else if(statsPending&&!activePerfComp){
+    o+='<div class="card"><div class="card-h">App Runtime Detail</div><div class="card-b"><div class="loading" style="padding:20px"><div class="spinner"></div><div>Loading app runtime stats\u2026</div></div></div></div>'}
   // Radio message stats — compute msgPerMin for both current and comparison views
-  const rs=s?.radioStats;
   const isComp=activePerfComp!=null;
-  const uptimeMin=isComp?(s.radioElapsedMin||0):(s?.uptimeSeconds?s.uptimeSeconds/60:0);
+  // Current view: the radio counts and hub uptime come with every load, stats or not.
+  const rs=isComp?s?.radioStats:d.radioStats;
+  const upS=d.uptimeSeconds!=null?d.uptimeSeconds:s?.uptimeSeconds;
+  const uptimeMin=isComp?(s.radioElapsedMin||0):(upS?upS/60:0);
   if(rs&&uptimeMin>0){
     ['zwave','zigbee'].forEach(p=>{(rs[p]||[]).forEach(d=>{
       if(d.msgPerMin==null)d.msgPerMin=uptimeMin>0?(d.msgCount||0)/uptimeMin:0})});
@@ -3748,6 +3782,8 @@ async function rPerf(){if(_perfInFlight)return;_perfInFlight=true;const P='p-per
   const cloud=cloudCallsByHour(d);
   if(cloud.length)o+=cloudCallsCard(d,cloud);
   document.getElementById(P).innerHTML=o;
+  if(statsPending&&!activePerfComp){setPartial('performance','loading',PERF_PARTIAL);perfAwaitStats(gen,PERF_STATS_RETRIES)}
+  else setPartial('performance',null);
   if(cloud.length)cloudCallsTable();
   
   // Render checkpoint table
